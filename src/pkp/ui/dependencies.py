@@ -5,7 +5,7 @@ from typing import cast
 
 from fastapi import Request
 
-from pkp.bootstrap import load_settings
+from pkp.bootstrap import build_runtime_container, load_settings
 from pkp.runtime.container import RuntimeContainer
 
 _container_factory: Callable[[], RuntimeContainer] | None = None
@@ -16,16 +16,17 @@ def set_container_factory(factory: Callable[[], RuntimeContainer]) -> None:
     _container_factory = factory
 
 
+def clear_container_factory() -> None:
+    global _container_factory
+    _container_factory = None
+
+
 def build_container() -> RuntimeContainer:
     if _container_factory is not None:
         return _container_factory()
 
     settings = load_settings()
-    raise RuntimeError(
-        "No runtime container configured yet. "
-        f"Loaded settings for data dir {settings.runtime.data_dir!s}, "
-        "but bootstrap wiring is not complete."
-    )
+    return build_runtime_container(settings)
 
 
 def get_request_container(request: Request) -> RuntimeContainer:

@@ -105,6 +105,29 @@ class FakeEvidenceService:
         )
 
 
+@dataclass
+class ClockedRetrievalService:
+    clock: "FakeClock"
+    batches: list[list[EvidenceItem]]
+    calls: list[tuple[str, int]] = field(default_factory=list)
+
+    def retrieve(self, query: str, policy: ExecutionPolicy, mode: RuntimeMode, round_index: int) -> list[EvidenceItem]:
+        self.calls.append((query, round_index))
+        self.clock.advance(2.0)
+        return self.batches[round_index - 1]
+
+
+@dataclass
+class FakeClock:
+    value: float = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
 def test_deep_research_runtime_builds_evidence_matrix_and_stops_when_sufficient() -> None:
     runtime = DeepResearchRuntime(
         routing_service=FakeRoutingService(),
@@ -121,3 +144,51 @@ def test_deep_research_runtime_builds_evidence_matrix_and_stops_when_sufficient(
     assert len(session.evidence_matrix) == 1
     assert response.runtime_mode is RuntimeMode.DEEP
     assert response.preservation_suggestion.suggested is True
+
+
+def test_deep_research_runtime_stops_after_token_budget_is_exhausted() -> None:
+    runtime = DeepResearchRuntime(
+        routing_service=FakeRoutingService(),
+        retrieval_service=FakeRetrievalService(
+            batches=[
+                [hit("a", "doc-1", 0.9)],
+                [hit("b", "doc-2", 0.8)],
+            ]
+        ),
+        evidence_service=FakeEvidenceService(sufficient_after_round=99),
+        session_runtime=SessionRuntime(),
+        max_rounds=4,
+    )
+    policy = make_policy().model_copy(update={"token_budget": 3})
+
+    response = runtime.run("compare docs", policy, session_id="token-budget")
+
+    session = runtime.session_runtime.get("token-budget")
+    assert session.sub_questions == ["sub-q-1", "sub-q-2"]
+    assert len(session.evidence_matrix) == 1
+    assert response.runtime_mode is RuntimeMode.DEEP
+
+
+def test_deep_research_runtime_stops_after_wall_clock_budget_is_exhausted() -> None:
+    clock = FakeClock()
+    retrieval = ClockedRetrievalService(
+        clock=clock,
+        batches=[
+            [hit("a", "doc-1", 0.9)],
+            [hit("b", "doc-2", 0.8)],
+        ],
+    )
+    runtime = DeepResearchRuntime(
+        routing_service=FakeRoutingService(),
+        retrieval_service=retrieval,
+        evidence_service=FakeEvidenceService(sufficient_after_round=99),
+        session_runtime=SessionRuntime(),
+        max_rounds=4,
+        clock=clock,
+    )
+    policy = make_policy().model_copy(update={"latency_budget": 1})
+
+    response = runtime.run("compare docs", policy, session_id="wall-clock")
+
+    assert retrieval.calls == [("sub-q-1", 1), ("sub-q-2", 1)]
+    assert response.runtime_mode is RuntimeMode.DEEP

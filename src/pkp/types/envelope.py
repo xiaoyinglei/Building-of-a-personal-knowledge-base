@@ -47,6 +47,7 @@ class ExecutionPolicy(BaseModel):
     complexity_level: ComplexityLevel
     latency_budget: int
     cost_budget: float
+    token_budget: int | None = None
     execution_location_preference: ExecutionLocationPreference
     fallback_allowed: bool
     source_scope: list[str] = Field(default_factory=list)

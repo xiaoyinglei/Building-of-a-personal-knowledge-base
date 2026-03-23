@@ -32,6 +32,7 @@ def build_execution_policy(
     source_scope: list[str] | None = None,
     latency_budget: int = 30,
     cost_budget: float = 1.0,
+    token_budget: int | None = None,
     execution_location_preference: ExecutionLocationPreference = (ExecutionLocationPreference.CLOUD_FIRST),
     fallback_allowed: bool = True,
 ) -> ExecutionPolicy:
@@ -41,6 +42,7 @@ def build_execution_policy(
         complexity_level=complexity_level,
         latency_budget=latency_budget,
         cost_budget=cost_budget,
+        token_budget=token_budget,
         execution_location_preference=execution_location_preference,
         fallback_allowed=fallback_allowed,
         source_scope=source_scope or [],

@@ -14,6 +14,7 @@ def test_settings_parse_nested_env_values() -> None:
                 "execution_location_preference": "local_first",
                 "fallback_allowed": False,
                 "max_retrieval_rounds": 3,
+                "max_token_budget": 512,
             },
             "openai": {
                 "api_key": SecretStr("test-key"),
@@ -25,4 +26,5 @@ def test_settings_parse_nested_env_values() -> None:
     assert settings.runtime.data_dir.as_posix() == "var/data"
     assert settings.runtime.execution_location_preference is ExecutionLocationPreference.LOCAL_FIRST
     assert settings.runtime.max_retrieval_rounds == 3
+    assert settings.runtime.max_token_budget == 512
     assert settings.openai.api_key.get_secret_value() == "test-key"

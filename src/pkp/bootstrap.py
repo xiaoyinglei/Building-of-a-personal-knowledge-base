@@ -5,10 +5,20 @@ from pathlib import Path
 from typing import cast
 
 from pkp.config import AppSettings
+from pkp.config.policies import RoutingThresholds
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import OcrResult
+from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
+from pkp.repo.models.ollama_provider_repo import OllamaProviderRepo
+from pkp.repo.models.openai_provider_repo import OpenAIProviderRepo
+from pkp.repo.parse.image_parser_repo import ImageParserRepo
+from pkp.repo.parse.markdown_parser_repo import MarkdownParserRepo
+from pkp.repo.parse.pdf_parser_repo import PDFParserRepo
+from pkp.repo.parse.plain_text_parser_repo import PlainTextParserRepo
+from pkp.repo.parse.web_parser_repo import WebParserRepo
 from pkp.repo.search.in_memory_vector_repo import InMemoryVectorRepo
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
+from pkp.repo.storage.file_object_store import FileObjectStore
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
 from pkp.repo.vision.ocr_vision_repo import DeterministicOcrVisionRepo
 from pkp.runtime.adapters import (
@@ -26,28 +36,73 @@ from pkp.runtime.fast_query_runtime import FastQueryRuntime
 from pkp.runtime.ingest_runtime import IngestRuntime
 from pkp.runtime.session_runtime import SessionRuntime
 from pkp.service.artifact_service import ArtifactService
+from pkp.service.chunking_service import ChunkingService
 from pkp.service.evidence_service import CandidateLike, EvidenceService
 from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.ingest_service import IngestService
+from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.retrieval_service import RetrievalService
 from pkp.service.routing_service import RoutingService
+from pkp.service.toc_service import TOCService
 
 
 def load_settings() -> AppSettings:
     return AppSettings()
 
 
-def build_test_container(root: Path) -> RuntimeContainer:
-    root.mkdir(parents=True, exist_ok=True)
-    ocr_repo = DeterministicOcrVisionRepo(
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _sample_ocr_repo() -> DeterministicOcrVisionRepo:
+    sample_image = _project_root() / "data/samples/sample-ui.png"
+    return DeterministicOcrVisionRepo(
         mapping={
-            (Path.cwd() / "data/samples/sample-ui.png").as_posix(): OcrResult(
+            sample_image.as_posix(): OcrResult(
                 visible_text="Sample UI Fast Path Deep Path Preserve Artifact",
                 visual_semantics="application card with labels for Fast Path and Deep Path",
             )
         }
     )
-    ingest_service = IngestService.create_in_memory(root, ocr_repo=ocr_repo)
+
+
+def _build_ingest_service(
+    runtime_root: Path,
+    object_store_root: Path,
+    *,
+    ocr_repo: DeterministicOcrVisionRepo,
+) -> IngestService:
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    object_store_root.mkdir(parents=True, exist_ok=True)
+    return IngestService(
+        metadata_repo=SQLiteMetadataRepo(runtime_root / "metadata.sqlite3"),
+        fts_repo=SQLiteFTSRepo(runtime_root / "fts.sqlite3"),
+        vector_repo=InMemoryVectorRepo(),
+        graph_repo=SQLiteGraphRepo(runtime_root / "graph.sqlite3"),
+        object_store=FileObjectStore(object_store_root),
+        markdown_parser=MarkdownParserRepo(),
+        pdf_parser=PDFParserRepo(),
+        plain_text_parser=PlainTextParserRepo(),
+        image_parser=ImageParserRepo(ocr_repo),
+        web_parser=WebParserRepo(),
+        policy_resolution_service=PolicyResolutionService(),
+        toc_service=TOCService(),
+        chunking_service=ChunkingService(),
+        embedding_repo=FallbackEmbeddingRepo(),
+    )
+
+
+def _build_runtime_container(
+    *,
+    runtime_root: Path,
+    object_store_root: Path,
+    max_retrieval_rounds: int,
+    thresholds: RoutingThresholds,
+    ocr_repo: DeterministicOcrVisionRepo,
+    cloud_providers: Sequence[object] = (),
+    local_providers: Sequence[object] = (),
+) -> RuntimeContainer:
+    ingest_service = _build_ingest_service(runtime_root, object_store_root, ocr_repo=ocr_repo)
     metadata_repo: SQLiteMetadataRepo = ingest_service.metadata_repo
     fts_repo: SQLiteFTSRepo = ingest_service.fts_repo
     vector_repo: InMemoryVectorRepo = ingest_service.vector_repo
@@ -78,6 +133,8 @@ def build_test_container(root: Path) -> RuntimeContainer:
         Callable[[str, list[str]], Sequence[CandidateLike]],
         retrieval_factory.web_retriever,
     )
+    routing_service = RoutingService(thresholds)
+    evidence_service = EvidenceService(thresholds)
     retrieval_service = RetrievalService(
         full_text_retriever=standard_retriever,
         vector_retriever=vector_retriever,
@@ -88,17 +145,20 @@ def build_test_container(root: Path) -> RuntimeContainer:
             candidates,
             key=lambda candidate: (-candidate.score, candidate.chunk_id),
         ),
-        routing_service=RoutingService(),
-        evidence_service=EvidenceService(),
+        routing_service=routing_service,
+        evidence_service=evidence_service,
         graph_expansion_service=GraphExpansionService(),
         artifact_service=ArtifactService(),
+        thresholds=thresholds,
     )
     retrieval_adapter = RetrievalRuntimeAdapter(retrieval_service)
     evidence_adapter = RuntimeEvidenceAdapter(
-        evidence_service=EvidenceService(),
+        evidence_service=evidence_service,
         artifact_service=ArtifactService(),
         metadata_repo=metadata_repo,
         ingest_service=ingest_service,
+        cloud_providers=cloud_providers,
+        local_providers=local_providers,
     )
     session_runtime = SessionRuntime()
     deep_runtime = DeepResearchRuntime(
@@ -106,7 +166,7 @@ def build_test_container(root: Path) -> RuntimeContainer:
         retrieval_service=retrieval_adapter,
         evidence_service=evidence_adapter,
         session_runtime=session_runtime,
-        max_rounds=4,
+        max_rounds=max_retrieval_rounds,
     )
     fast_runtime = FastQueryRuntime(
         retrieval_service=retrieval_adapter,
@@ -117,7 +177,7 @@ def build_test_container(root: Path) -> RuntimeContainer:
         ArtifactApprovalAdapter(metadata_repo),
         ArtifactIndexerAdapter(ingest_service),
     )
-    ingest_runtime = IngestRuntime(ingest_service=ingest_service, base_path=Path.cwd())
+    ingest_runtime = IngestRuntime(ingest_service=ingest_service, base_path=_project_root())
     return RuntimeContainer(
         ingest_runtime=ingest_runtime,
         fast_query_runtime=fast_runtime,
@@ -125,4 +185,38 @@ def build_test_container(root: Path) -> RuntimeContainer:
         artifact_promotion_runtime=artifact_promotion_runtime,
         session_runtime=session_runtime,
         metadata_repo=metadata_repo,
+    )
+
+
+def build_runtime_container(settings: AppSettings) -> RuntimeContainer:
+    thresholds = RoutingThresholds(
+        fast_min_evidence_chunks=settings.runtime.fast_min_evidence_chunks,
+        fast_min_sections=1,
+        deep_min_evidence_chunks=settings.runtime.deep_min_evidence_chunks,
+        deep_min_supporting_units=2,
+        max_retrieval_rounds=settings.runtime.max_retrieval_rounds,
+        max_recursive_depth=settings.runtime.max_recursive_depth,
+        default_wall_clock_budget_seconds=settings.runtime.default_wall_clock_budget_seconds,
+        default_synthesis_retry_count=settings.runtime.default_synthesis_retry_count,
+    )
+    return _build_runtime_container(
+        runtime_root=settings.runtime.data_dir,
+        object_store_root=settings.runtime.object_store_dir,
+        max_retrieval_rounds=settings.runtime.max_retrieval_rounds,
+        thresholds=thresholds,
+        ocr_repo=_sample_ocr_repo(),
+        cloud_providers=(OpenAIProviderRepo(),),
+        local_providers=(OllamaProviderRepo(),),
+    )
+
+
+def build_test_container(root: Path) -> RuntimeContainer:
+    return _build_runtime_container(
+        runtime_root=root,
+        object_store_root=root / "objects",
+        max_retrieval_rounds=4,
+        thresholds=RoutingThresholds(),
+        ocr_repo=_sample_ocr_repo(),
+        cloud_providers=(OpenAIProviderRepo(),),
+        local_providers=(OllamaProviderRepo(),),
     )

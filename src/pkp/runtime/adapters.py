@@ -247,11 +247,15 @@ class RuntimeEvidenceAdapter:
         artifact_service: ArtifactService,
         metadata_repo: SQLiteMetadataRepo,
         ingest_service: IngestService,
+        cloud_providers: Sequence[object] = (),
+        local_providers: Sequence[object] = (),
     ) -> None:
         self._evidence_service = evidence_service
         self._artifact_service = artifact_service
         self._metadata_repo = metadata_repo
         self._ingest_service = ingest_service
+        self._cloud_providers = tuple(cloud_providers)
+        self._local_providers = tuple(local_providers)
         self._last_hits: list[EvidenceItem] = []
         self._last_policy: ExecutionPolicy | None = None
 
@@ -327,7 +331,6 @@ class RuntimeEvidenceAdapter:
         *,
         location: str,
     ) -> QueryResponse:
-        del location
         hits = self._last_hits
         conflicts = self.detect_conflicts(hits)
         summary_parts: list[str] = []
@@ -336,7 +339,8 @@ class RuntimeEvidenceAdapter:
             claim = self._row_claim(row)
             if sources and claim:
                 summary_parts.append(f"{sources[0]}: {claim}")
-        conclusion = " | ".join(summary_parts) if summary_parts else "Insufficient evidence."
+        summary = " | ".join(summary_parts) if summary_parts else "Insufficient evidence."
+        conclusion = self._synthesize_conclusion(query, summary, location)
         suggestion = self._persist_suggestion(query, RuntimeMode.DEEP, hits, conflicts)
         return QueryResponse(
             conclusion=conclusion,
@@ -410,6 +414,47 @@ class RuntimeEvidenceAdapter:
             last_reviewed_at=datetime.now(UTC),
             body_markdown="\n".join(body),
             source_scope=sorted({item.doc_id for item in hits}),
+        )
+
+    def _synthesize_conclusion(self, query: str, summary: str, location: str) -> str:
+        providers = self._provider_order(location)
+        if not providers:
+            return summary
+
+        prompt = self._build_synthesis_prompt(query, summary)
+        last_error: RuntimeError | None = None
+        for provider in providers:
+            chat = getattr(provider, "chat", None)
+            if not callable(chat):
+                continue
+            try:
+                response = chat(prompt)
+            except RuntimeError as exc:
+                last_error = exc
+                continue
+            if isinstance(response, str) and response.strip():
+                return response
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("No synthesis provider available")
+
+    def _provider_order(self, location: str) -> tuple[object, ...]:
+        if location == "cloud":
+            return (*self._cloud_providers, *self._local_providers)
+        if location == "local":
+            return tuple(self._local_providers)
+        return ()
+
+    @staticmethod
+    def _build_synthesis_prompt(query: str, summary: str) -> str:
+        return "\n".join(
+            [
+                query,
+                "",
+                "Synthesize the evidence into a concise answer.",
+                summary,
+            ]
         )
 
 

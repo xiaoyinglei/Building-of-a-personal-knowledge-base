@@ -20,6 +20,7 @@ class RuntimeSettings(BaseModel):
     deep_min_evidence_chunks: int = 4
     max_retrieval_rounds: int = 4
     max_recursive_depth: int = 2
+    max_token_budget: int | None = None
     default_wall_clock_budget_seconds: int = 180
     default_synthesis_retry_count: int = 1
 

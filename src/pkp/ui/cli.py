@@ -5,8 +5,9 @@ from typing import cast
 
 import typer
 
+from pkp.bootstrap import load_settings
 from pkp.config import build_execution_policy, default_access_policy
-from pkp.types import ComplexityLevel, ExecutionLocationPreference, TaskType
+from pkp.types import ComplexityLevel, TaskType
 from pkp.ui.dependencies import build_container, set_container_factory
 
 app = typer.Typer(add_completion=False)
@@ -33,6 +34,7 @@ def query(
     mode: str = typer.Option("fast", "--mode"),
 ) -> None:
     container = build_container()
+    settings = load_settings()
     runtime = container.deep_research_runtime if mode == "deep" else container.fast_query_runtime
     response = runtime.run(
         query,
@@ -40,7 +42,10 @@ def query(
             task_type=TaskType.RESEARCH if mode == "deep" else TaskType.LOOKUP,
             complexity_level=(ComplexityLevel.L4_RESEARCH if mode == "deep" else ComplexityLevel.L1_DIRECT),
             access_policy=default_access_policy(),
-            execution_location_preference=ExecutionLocationPreference.CLOUD_FIRST,
+            latency_budget=settings.runtime.default_wall_clock_budget_seconds,
+            token_budget=settings.runtime.max_token_budget,
+            execution_location_preference=settings.runtime.execution_location_preference,
+            fallback_allowed=settings.runtime.fallback_allowed,
         ),
     )
     typer.echo(response.conclusion)
