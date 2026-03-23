@@ -6,6 +6,7 @@ from typing import Protocol, cast
 from urllib.parse import urlparse
 
 from pkp.service.ingest_service import IngestResult
+from pkp.types import AccessPolicy
 
 
 class GenericIngestProtocol(Protocol):
@@ -20,6 +21,7 @@ class TypedIngestProtocol(Protocol):
         markdown: str,
         owner: str,
         title: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> IngestResult: ...
 
     def ingest_plain_text(
@@ -30,11 +32,26 @@ class TypedIngestProtocol(Protocol):
         owner: str,
         title: str | None = None,
         source_type: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> IngestResult: ...
 
-    def ingest_pdf(self, *, location: str, pdf_path: Path, owner: str) -> IngestResult: ...
+    def ingest_pdf(
+        self,
+        *,
+        location: str,
+        pdf_path: Path,
+        owner: str,
+        access_policy: AccessPolicy | None = None,
+    ) -> IngestResult: ...
 
-    def ingest_image(self, *, location: str, image_path: Path, owner: str) -> IngestResult: ...
+    def ingest_image(
+        self,
+        *,
+        location: str,
+        image_path: Path,
+        owner: str,
+        access_policy: AccessPolicy | None = None,
+    ) -> IngestResult: ...
 
     def ingest_web(
         self,
@@ -44,6 +61,7 @@ class TypedIngestProtocol(Protocol):
         owner: str,
         title: str | None = None,
         source_type: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> IngestResult: ...
 
     def ingest_web_url(
@@ -52,6 +70,7 @@ class TypedIngestProtocol(Protocol):
         location: str,
         owner: str,
         title: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> IngestResult: ...
 
 
@@ -72,13 +91,14 @@ class IngestRuntime:
         location: str | None = None,
         content: str | None = None,
         title: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> dict[str, int | str]:
         resolved_location = self._resolve_location(
             source_type=source_type,
             location=location,
             content=content,
         )
-        if content is None and title is None and hasattr(self._ingest_service, "ingest"):
+        if content is None and title is None and access_policy is None and hasattr(self._ingest_service, "ingest"):
             generic_service = cast(GenericIngestProtocol, self._ingest_service)
             return generic_service.ingest(source_type=source_type, location=resolved_location)
 
@@ -89,6 +109,7 @@ class IngestRuntime:
                 markdown=self._resolve_inline_or_file_content(location=resolved_location, content=content),
                 owner="user",
                 title=title,
+                access_policy=access_policy,
             )
         elif source_type in {"plain_text", "pasted_text"}:
             result = typed_service.ingest_plain_text(
@@ -97,6 +118,7 @@ class IngestRuntime:
                 owner="user",
                 title=title,
                 source_type=source_type,
+                access_policy=access_policy,
             )
         elif source_type == "pdf":
             if content is not None:
@@ -106,6 +128,7 @@ class IngestRuntime:
                 location=resolved_location,
                 pdf_path=path,
                 owner="user",
+                access_policy=access_policy,
             )
         elif source_type == "image":
             if content is not None:
@@ -115,6 +138,7 @@ class IngestRuntime:
                 location=resolved_location,
                 image_path=path,
                 owner="user",
+                access_policy=access_policy,
             )
         elif source_type in {"web", "browser_clip"}:
             if content is not None:
@@ -124,15 +148,21 @@ class IngestRuntime:
                     owner="user",
                     title=title,
                     source_type=source_type,
+                    access_policy=access_policy,
                 )
             elif source_type == "web" and self._is_remote_web_location(resolved_location):
                 if title is None:
-                    result = typed_service.ingest_web_url(location=resolved_location, owner="user")
+                    result = typed_service.ingest_web_url(
+                        location=resolved_location,
+                        owner="user",
+                        access_policy=access_policy,
+                    )
                 else:
                     result = typed_service.ingest_web_url(
                         location=resolved_location,
                         owner="user",
                         title=title,
+                        access_policy=access_policy,
                     )
             elif source_type == "browser_clip" and self._is_remote_web_location(resolved_location):
                 raise ValueError("browser_clip requires inline content or a local HTML file")
@@ -143,6 +173,7 @@ class IngestRuntime:
                     owner="user",
                     title=title,
                     source_type=source_type,
+                    access_policy=access_policy,
                 )
         else:
             raise ValueError(f"Unsupported source_type: {source_type}")

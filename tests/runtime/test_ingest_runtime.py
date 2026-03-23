@@ -3,6 +3,13 @@ from hashlib import sha256
 from pathlib import Path
 
 from pkp.runtime.ingest_runtime import IngestRuntime
+from pkp.types import (
+    AccessPolicy,
+    ExecutionLocation,
+    ExternalRetrievalPolicy,
+    Residency,
+    RuntimeMode,
+)
 
 
 @dataclass
@@ -28,8 +35,15 @@ def test_ingest_runtime_delegates_to_ingest_service() -> None:
 class FakeWebIngestService:
     calls: list[str]
 
-    def ingest_web_url(self, *, location: str, owner: str, title: str | None = None) -> object:
-        del title
+    def ingest_web_url(
+        self,
+        *,
+        location: str,
+        owner: str,
+        title: str | None = None,
+        access_policy: AccessPolicy | None = None,
+    ) -> object:
+        del title, access_policy
         self.calls.append(location)
         return type(
             "Result",
@@ -54,7 +68,7 @@ def test_ingest_runtime_routes_web_urls_without_local_file_reads(tmp_path) -> No
 
 @dataclass
 class FakeTypedIngestService:
-    calls: list[dict[str, str | None]]
+    calls: list[dict[str, object | None]]
 
     def ingest_markdown(
         self,
@@ -63,6 +77,7 @@ class FakeTypedIngestService:
         markdown: str,
         owner: str,
         title: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> object:
         self.calls.append(
             {
@@ -72,6 +87,7 @@ class FakeTypedIngestService:
                 "owner": owner,
                 "title": title,
                 "source_type": None,
+                "access_policy": access_policy,
             }
         )
         return _result("src-markdown", "doc-markdown")
@@ -84,6 +100,7 @@ class FakeTypedIngestService:
         owner: str,
         title: str | None = None,
         source_type: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> object:
         self.calls.append(
             {
@@ -93,6 +110,7 @@ class FakeTypedIngestService:
                 "owner": owner,
                 "title": title,
                 "source_type": source_type,
+                "access_policy": access_policy,
             }
         )
         return _result("src-plain", "doc-plain")
@@ -105,6 +123,7 @@ class FakeTypedIngestService:
         owner: str,
         title: str | None = None,
         source_type: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> object:
         self.calls.append(
             {
@@ -114,11 +133,19 @@ class FakeTypedIngestService:
                 "owner": owner,
                 "title": title,
                 "source_type": source_type,
+                "access_policy": access_policy,
             }
         )
         return _result("src-web-inline", "doc-web-inline")
 
-    def ingest_web_url(self, *, location: str, owner: str, title: str | None = None) -> object:
+    def ingest_web_url(
+        self,
+        *,
+        location: str,
+        owner: str,
+        title: str | None = None,
+        access_policy: AccessPolicy | None = None,
+    ) -> object:
         self.calls.append(
             {
                 "method": "web_url",
@@ -127,6 +154,7 @@ class FakeTypedIngestService:
                 "owner": owner,
                 "title": title,
                 "source_type": None,
+                "access_policy": access_policy,
             }
         )
         return _result("src-web-url", "doc-web-url")
@@ -163,6 +191,7 @@ def test_ingest_runtime_uses_inline_markdown_content_without_file_reads(tmp_path
             "owner": "user",
             "title": "Inline note",
             "source_type": None,
+            "access_policy": None,
         }
     ]
     assert result["source_id"] == "src-markdown"
@@ -187,6 +216,7 @@ def test_ingest_runtime_routes_pasted_text_into_plain_text_ingest(tmp_path: Path
             "owner": "user",
             "title": "Capture",
             "source_type": "pasted_text",
+            "access_policy": None,
         }
     ]
 
@@ -210,6 +240,28 @@ def test_ingest_runtime_routes_browser_clip_html_without_remote_fetch(tmp_path: 
             "owner": "user",
             "title": "Clip title",
             "source_type": "browser_clip",
+            "access_policy": None,
         }
     ]
     assert result["source_id"] == "src-web-inline"
+
+
+def test_ingest_runtime_passes_access_policy_into_typed_ingest_service(tmp_path: Path) -> None:
+    service = FakeTypedIngestService(calls=[])
+    runtime = IngestRuntime(ingest_service=service, base_path=tmp_path)
+    policy = AccessPolicy(
+        residency=Residency.LOCAL_REQUIRED,
+        external_retrieval=ExternalRetrievalPolicy.DENY,
+        allowed_runtimes=frozenset({RuntimeMode.FAST}),
+        allowed_locations=frozenset({ExecutionLocation.LOCAL}),
+        sensitivity_tags=frozenset({"private"}),
+    )
+
+    runtime.ingest_source(
+        source_type="pasted_text",
+        content="Sensitive note",
+        title="Sensitive",
+        access_policy=policy,
+    )
+
+    assert service.calls[0]["access_policy"] == policy

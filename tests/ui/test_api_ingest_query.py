@@ -2,11 +2,16 @@ from dataclasses import dataclass
 
 from fastapi.testclient import TestClient
 
+from pkp.runtime.session_runtime import SessionRuntime
 from pkp.types import (
+    AccessPolicy,
+    ExecutionLocation,
     ExecutionLocationPreference,
     ExecutionPolicy,
+    ExternalRetrievalPolicy,
     PreservationSuggestion,
     QueryResponse,
+    Residency,
     RuntimeMode,
 )
 from pkp.ui.api.app import create_app
@@ -14,7 +19,7 @@ from pkp.ui.api.app import create_app
 
 @dataclass
 class FakeIngestRuntime:
-    calls: list[dict[str, str | None]]
+    calls: list[dict[str, object | None]]
 
     def ingest_source(
         self,
@@ -23,6 +28,7 @@ class FakeIngestRuntime:
         location: str | None = None,
         content: str | None = None,
         title: str | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> dict[str, int | str]:
         self.calls.append(
             {
@@ -30,6 +36,7 @@ class FakeIngestRuntime:
                 "location": location,
                 "content": content,
                 "title": title,
+                "access_policy": access_policy,
             }
         )
         return {
@@ -44,9 +51,17 @@ class FakeIngestRuntime:
 class FakeQueryRuntime:
     mode: RuntimeMode
     last_policy: ExecutionPolicy | None = None
+    last_session_id: str | None = None
 
-    def run(self, query: str, policy: ExecutionPolicy) -> QueryResponse:
+    def run(
+        self,
+        query: str,
+        policy: ExecutionPolicy,
+        *,
+        session_id: str = "default",
+    ) -> QueryResponse:
         self.last_policy = policy
+        self.last_session_id = session_id
         return QueryResponse(
             conclusion=f"answer for {query}",
             evidence=[],
@@ -75,6 +90,7 @@ class FakeContainer:
     fast_query_runtime: FakeQueryRuntime
     deep_research_runtime: FakeQueryRuntime
     artifact_promotion_runtime: FakeArtifactRuntime
+    session_runtime: SessionRuntime
 
 
 def test_ingest_query_and_artifact_routes_use_runtime_facades() -> None:
@@ -86,6 +102,7 @@ def test_ingest_query_and_artifact_routes_use_runtime_facades() -> None:
                 fast_query_runtime=FakeQueryRuntime(mode=RuntimeMode.FAST),
                 deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
                 artifact_promotion_runtime=FakeArtifactRuntime(),
+                session_runtime=SessionRuntime(),
             )
         )
     )
@@ -105,6 +122,7 @@ def test_ingest_query_and_artifact_routes_use_runtime_facades() -> None:
             "location": "data/sample.md",
             "content": None,
             "title": None,
+            "access_policy": None,
         }
     ]
     assert fast_response.status_code == 200
@@ -128,6 +146,7 @@ def test_query_route_transmits_execution_controls_into_runtime_policy() -> None:
                 fast_query_runtime=fast_runtime,
                 deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
                 artifact_promotion_runtime=FakeArtifactRuntime(),
+                session_runtime=SessionRuntime(),
             )
         )
     )
@@ -156,6 +175,46 @@ def test_query_route_transmits_execution_controls_into_runtime_policy() -> None:
     assert fast_runtime.last_policy.cost_budget == 2.75
 
 
+def test_query_route_transmits_access_policy_into_runtime_policy() -> None:
+    fast_runtime = FakeQueryRuntime(mode=RuntimeMode.FAST)
+    client = TestClient(
+        create_app(
+            container_factory=lambda: FakeContainer(
+                ingest_runtime=FakeIngestRuntime(calls=[]),
+                fast_query_runtime=fast_runtime,
+                deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
+                artifact_promotion_runtime=FakeArtifactRuntime(),
+                session_runtime=SessionRuntime(),
+            )
+        )
+    )
+
+    response = client.post(
+        "/query",
+        json={
+            "query": "sensitive lookup",
+            "mode": "fast",
+            "access_policy": {
+                "residency": "local_required",
+                "external_retrieval": "deny",
+                "allowed_runtimes": ["fast"],
+                "allowed_locations": ["local"],
+                "sensitivity_tags": ["private", "regulated"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert fast_runtime.last_policy is not None
+    assert fast_runtime.last_policy.effective_access_policy == AccessPolicy(
+        residency=Residency.LOCAL_REQUIRED,
+        external_retrieval=ExternalRetrievalPolicy.DENY,
+        allowed_runtimes=frozenset({RuntimeMode.FAST}),
+        allowed_locations=frozenset({ExecutionLocation.LOCAL}),
+        sensitivity_tags=frozenset({"private", "regulated"}),
+    )
+
+
 def test_ingest_route_accepts_inline_content_and_optional_title() -> None:
     ingest_runtime = FakeIngestRuntime(calls=[])
     client = TestClient(
@@ -165,6 +224,7 @@ def test_ingest_route_accepts_inline_content_and_optional_title() -> None:
                 fast_query_runtime=FakeQueryRuntime(mode=RuntimeMode.FAST),
                 deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
                 artifact_promotion_runtime=FakeArtifactRuntime(),
+                session_runtime=SessionRuntime(),
             )
         )
     )
@@ -185,5 +245,101 @@ def test_ingest_route_accepts_inline_content_and_optional_title() -> None:
             "location": None,
             "content": "<html><body><article><h1>Clip</h1></article></body></html>",
             "title": "Saved Clip",
+            "access_policy": None,
         }
     ]
+
+
+def test_ingest_route_transmits_access_policy() -> None:
+    ingest_runtime = FakeIngestRuntime(calls=[])
+    client = TestClient(
+        create_app(
+            container_factory=lambda: FakeContainer(
+                ingest_runtime=ingest_runtime,
+                fast_query_runtime=FakeQueryRuntime(mode=RuntimeMode.FAST),
+                deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
+                artifact_promotion_runtime=FakeArtifactRuntime(),
+                session_runtime=SessionRuntime(),
+            )
+        )
+    )
+
+    response = client.post(
+        "/ingest",
+        json={
+            "source_type": "pasted_text",
+            "content": "local-only notes",
+            "access_policy": {
+                "residency": "local_required",
+                "external_retrieval": "deny",
+                "allowed_runtimes": ["fast"],
+                "allowed_locations": ["local"],
+                "sensitivity_tags": ["private"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert ingest_runtime.calls == [
+        {
+            "source_type": "pasted_text",
+            "location": None,
+            "content": "local-only notes",
+            "title": None,
+            "access_policy": AccessPolicy(
+                residency=Residency.LOCAL_REQUIRED,
+                external_retrieval=ExternalRetrievalPolicy.DENY,
+                allowed_runtimes=frozenset({RuntimeMode.FAST}),
+                allowed_locations=frozenset({ExecutionLocation.LOCAL}),
+                sensitivity_tags=frozenset({"private"}),
+            ),
+        }
+    ]
+
+
+def test_query_route_transmits_session_id_into_deep_runtime() -> None:
+    deep_runtime = FakeQueryRuntime(mode=RuntimeMode.DEEP)
+    client = TestClient(
+        create_app(
+            container_factory=lambda: FakeContainer(
+                ingest_runtime=FakeIngestRuntime(calls=[]),
+                fast_query_runtime=FakeQueryRuntime(mode=RuntimeMode.FAST),
+                deep_research_runtime=deep_runtime,
+                artifact_promotion_runtime=FakeArtifactRuntime(),
+                session_runtime=SessionRuntime(),
+            )
+        )
+    )
+
+    response = client.post(
+        "/query",
+        json={"query": "compare docs", "mode": "deep", "session_id": "research-1"},
+    )
+
+    assert response.status_code == 200
+    assert deep_runtime.last_session_id == "research-1"
+
+
+def test_session_route_returns_session_snapshot() -> None:
+    session_runtime = SessionRuntime()
+    session_runtime.store_sub_questions("research-1", ["What changed?", "Why?"])
+    session_runtime.store_evidence_matrix("research-1", [{"claim": "A", "sources": ["doc-1"]}])
+    client = TestClient(
+        create_app(
+            container_factory=lambda: FakeContainer(
+                ingest_runtime=FakeIngestRuntime(calls=[]),
+                fast_query_runtime=FakeQueryRuntime(mode=RuntimeMode.FAST),
+                deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
+                artifact_promotion_runtime=FakeArtifactRuntime(),
+                session_runtime=session_runtime,
+            )
+        )
+    )
+
+    response = client.get("/sessions/research-1")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sub_questions": ["What changed?", "Why?"],
+        "evidence_matrix": [{"claim": "A", "sources": ["doc-1"]}],
+    }

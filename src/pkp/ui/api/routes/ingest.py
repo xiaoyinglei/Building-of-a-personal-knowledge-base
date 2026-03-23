@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, model_validator
 
+from pkp.types import AccessPolicy
 from pkp.ui.dependencies import get_request_container
 
 router = APIRouter()
@@ -13,6 +14,7 @@ class IngestRequest(BaseModel):
     location: str | None = None
     content: str | None = None
     title: str | None = None
+    access_policy: AccessPolicy | None = None
 
     @model_validator(mode="after")
     def validate_source_input(self) -> IngestRequest:
@@ -29,4 +31,5 @@ def ingest(payload: IngestRequest, request: Request) -> dict[str, int | str]:
         location=payload.location,
         content=payload.content,
         title=payload.title,
+        access_policy=payload.access_policy,
     )
