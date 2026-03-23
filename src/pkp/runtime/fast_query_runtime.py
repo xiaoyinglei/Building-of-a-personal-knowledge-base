@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from pkp.service.telemetry_service import TelemetryService
 from pkp.types import EvidenceItem, ExecutionPolicy, QueryResponse, RuntimeMode
 
 
@@ -43,10 +44,12 @@ class FastQueryRuntime:
         retrieval_service: RetrievalServiceProtocol,
         evidence_service: EvidenceServiceProtocol,
         deep_runtime: DeepRuntimeProtocol,
+        telemetry_service: TelemetryService | None = None,
     ) -> None:
         self._retrieval_service = retrieval_service
         self._evidence_service = evidence_service
         self._deep_runtime = deep_runtime
+        self._telemetry_service = telemetry_service
 
     def run(self, query: str, policy: ExecutionPolicy) -> QueryResponse:
         hits = self._retrieval_service.retrieve(query, policy, RuntimeMode.FAST, round_index=1)
@@ -54,9 +57,19 @@ class FastQueryRuntime:
         conflicts = self._evidence_service.detect_conflicts(reranked)
         sufficient = self._evidence_service.fast_path_sufficient(reranked, policy)
         if conflicts or not sufficient:
+            if self._telemetry_service is not None:
+                self._telemetry_service.record_fast_to_deep_escalation(
+                    reason="conflict" if conflicts else "insufficient_evidence"
+                )
             return self._deep_runtime.run(query, policy)
 
         response = self._evidence_service.build_fast_response(query, reranked)
         if not self._evidence_service.claim_citation_aligned(response):
+            if self._telemetry_service is not None:
+                self._telemetry_service.record_claim_citation_failure(
+                    response_mode=response.runtime_mode.value,
+                    evidence_count=len(response.evidence),
+                )
+                self._telemetry_service.record_fast_to_deep_escalation(reason="claim_citation_failure")
             return self._deep_runtime.run(query, policy)
         return response

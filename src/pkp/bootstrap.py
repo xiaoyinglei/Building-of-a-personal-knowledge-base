@@ -43,6 +43,7 @@ from pkp.service.ingest_service import IngestService
 from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.retrieval_service import RetrievalService
 from pkp.service.routing_service import RoutingService
+from pkp.service.telemetry_service import TelemetryService
 from pkp.service.toc_service import TOCService
 
 
@@ -64,6 +65,12 @@ def _sample_ocr_repo() -> DeterministicOcrVisionRepo:
             )
         }
     )
+
+
+class _DeterministicChatProvider:
+    def chat(self, prompt: str) -> str:
+        query = next((line.strip() for line in prompt.splitlines() if line.strip()), "summary")
+        return f"Deterministic synthesis for: {query}"
 
 
 def _build_ingest_service(
@@ -103,6 +110,7 @@ def _build_runtime_container(
     local_providers: Sequence[object] = (),
 ) -> RuntimeContainer:
     ingest_service = _build_ingest_service(runtime_root, object_store_root, ocr_repo=ocr_repo)
+    telemetry_service = TelemetryService.create_jsonl(runtime_root / "telemetry" / "events.jsonl")
     metadata_repo: SQLiteMetadataRepo = ingest_service.metadata_repo
     fts_repo: SQLiteFTSRepo = ingest_service.fts_repo
     vector_repo: InMemoryVectorRepo = ingest_service.vector_repo
@@ -149,6 +157,7 @@ def _build_runtime_container(
         evidence_service=evidence_service,
         graph_expansion_service=GraphExpansionService(),
         artifact_service=ArtifactService(),
+        telemetry_service=telemetry_service,
         thresholds=thresholds,
     )
     retrieval_adapter = RetrievalRuntimeAdapter(retrieval_service)
@@ -157,6 +166,7 @@ def _build_runtime_container(
         artifact_service=ArtifactService(),
         metadata_repo=metadata_repo,
         ingest_service=ingest_service,
+        telemetry_service=telemetry_service,
         cloud_providers=cloud_providers,
         local_providers=local_providers,
     )
@@ -172,10 +182,12 @@ def _build_runtime_container(
         retrieval_service=retrieval_adapter,
         evidence_service=evidence_adapter,
         deep_runtime=deep_runtime,
+        telemetry_service=telemetry_service,
     )
     artifact_promotion_runtime = ArtifactPromotionRuntime(
         ArtifactApprovalAdapter(metadata_repo),
         ArtifactIndexerAdapter(ingest_service),
+        telemetry_service=telemetry_service,
     )
     ingest_runtime = IngestRuntime(ingest_service=ingest_service, base_path=_project_root())
     return RuntimeContainer(
@@ -185,6 +197,7 @@ def _build_runtime_container(
         artifact_promotion_runtime=artifact_promotion_runtime,
         session_runtime=session_runtime,
         metadata_repo=metadata_repo,
+        telemetry_service=telemetry_service,
     )
 
 
@@ -217,6 +230,6 @@ def build_test_container(root: Path) -> RuntimeContainer:
         max_retrieval_rounds=4,
         thresholds=RoutingThresholds(),
         ocr_repo=_sample_ocr_repo(),
-        cloud_providers=(OpenAIProviderRepo(),),
-        local_providers=(OllamaProviderRepo(),),
+        cloud_providers=(),
+        local_providers=(_DeterministicChatProvider(),),
     )

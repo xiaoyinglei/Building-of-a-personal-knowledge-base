@@ -16,6 +16,7 @@ from pkp.service.evidence_service import (
 )
 from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.routing_service import RoutingDecision, RoutingService
+from pkp.service.telemetry_service import TelemetryService
 from pkp.types.access import AccessPolicy
 from pkp.types.envelope import PreservationSuggestion
 
@@ -58,6 +59,7 @@ class RetrievalService:
         evidence_service: EvidenceService | None = None,
         graph_expansion_service: GraphExpansionService | None = None,
         artifact_service: ArtifactService | None = None,
+        telemetry_service: TelemetryService | None = None,
         thresholds: RoutingThresholds | None = None,
     ) -> None:
         self._full_text_retriever = full_text_retriever or (lambda _query, _scope: [])
@@ -70,6 +72,7 @@ class RetrievalService:
         self._evidence_service = evidence_service or EvidenceService(thresholds)
         self._graph_expansion_service = graph_expansion_service or GraphExpansionService()
         self._artifact_service = artifact_service or ArtifactService()
+        self._telemetry_service = telemetry_service
         self._thresholds = thresholds or RoutingThresholds()
 
     @staticmethod
@@ -120,18 +123,21 @@ class RetrievalService:
             access_policy=access_policy,
             runtime_mode=decision.runtime_mode,
         )
+        self._record_branch_usage("full_text", full_text_candidates, decision.runtime_mode.value)
         vector_candidates = self._evidence_service.filter_candidates(
             self._vector_retriever(query, scope),
             source_scope=scope,
             access_policy=access_policy,
             runtime_mode=decision.runtime_mode,
         )
+        self._record_branch_usage("vector", vector_candidates, decision.runtime_mode.value)
         section_candidates = self._evidence_service.filter_candidates(
             self._section_retriever(query, scope),
             source_scope=scope,
             access_policy=access_policy,
             runtime_mode=decision.runtime_mode,
         )
+        self._record_branch_usage("section", section_candidates, decision.runtime_mode.value)
         branch_candidates.extend([full_text_candidates, vector_candidates, section_candidates])
 
         if decision.web_search_allowed and access_policy.external_retrieval.value == "allow":
@@ -141,12 +147,30 @@ class RetrievalService:
                 access_policy=access_policy,
                 runtime_mode=decision.runtime_mode,
             )
+            self._record_branch_usage("web", web_candidates, decision.runtime_mode.value)
             branch_candidates.append(web_candidates)
 
+        candidate_count = sum(len(branch) for branch in branch_candidates)
         fused_candidates = self._rrf_fuse(branch_candidates)
+        if self._telemetry_service is not None:
+            self._telemetry_service.record_rrf_fusion(
+                branch_count=len(branch_candidates),
+                candidate_count=candidate_count,
+                fused_count=len(fused_candidates),
+                duplicate_count=max(0, candidate_count - len(fused_candidates)),
+            )
         if self._reranker is None:
             raise ValueError("reranker is required for retrieval")
         reranked_candidates = list(self._reranker(query, fused_candidates))
+        if self._telemetry_service is not None:
+            fused_ids = [candidate.chunk_id for candidate in fused_candidates]
+            reranked_ids = [candidate.chunk_id for candidate in reranked_candidates]
+            self._telemetry_service.record_rerank_effectiveness(
+                input_count=len(fused_candidates),
+                output_count=len(reranked_candidates),
+                reordered=fused_ids != reranked_ids,
+                top1_changed=(fused_ids[:1] != reranked_ids[:1]),
+            )
 
         evidence = self._evidence_service.assemble_bundle(reranked_candidates)
         graph_expanded = False
@@ -162,6 +186,11 @@ class RetrievalService:
                 access_policy=access_policy,
             )
             if graph_candidates:
+                if self._telemetry_service is not None:
+                    self._telemetry_service.record_graph_expansion(
+                        seed_count=len(internal_candidates),
+                        added_count=len(graph_candidates),
+                    )
                 graph_expanded = True
                 graph_items = self._evidence_service.assemble_bundle(graph_candidates).graph
                 evidence = EvidenceBundle(
@@ -181,6 +210,13 @@ class RetrievalService:
             evidence=evidence.all,
             differences_or_conflicts=[],
         )
+        if self._telemetry_service is not None and preservation_suggestion.suggested:
+            self._telemetry_service.record_preservation_suggestion(
+                artifact_type=preservation_suggestion.artifact_type or "unknown",
+                runtime_mode=decision.runtime_mode.value,
+                evidence_count=len(evidence.all),
+                conflict_count=0,
+            )
 
         return RetrievalResult(
             decision=decision,
@@ -189,4 +225,18 @@ class RetrievalService:
             reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
             graph_expanded=graph_expanded,
             preservation_suggestion=preservation_suggestion,
+        )
+
+    def _record_branch_usage(
+        self,
+        branch: str,
+        candidates: Sequence[CandidateLike],
+        runtime_mode: str,
+    ) -> None:
+        if self._telemetry_service is None:
+            return
+        self._telemetry_service.record_branch_usage(
+            branch=branch,
+            hit_count=len(candidates),
+            runtime_mode=runtime_mode,
         )

@@ -7,6 +7,7 @@ from pkp.runtime.deep_research_runtime import DeepResearchRuntime
 from pkp.runtime.session_runtime import SessionRuntime
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import EvidenceService
+from pkp.service.telemetry_service import TelemetryService
 from pkp.types import (
     AccessPolicy,
     EvidenceItem,
@@ -115,6 +116,7 @@ def test_runtime_evidence_adapter_uses_backup_cloud_provider() -> None:
 
 
 def test_deep_research_runtime_falls_back_from_cloud_to_local_provider() -> None:
+    telemetry = TelemetryService.create_in_memory()
     adapter = RuntimeEvidenceAdapter(
         evidence_service=EvidenceService(),
         artifact_service=ArtifactService(),
@@ -122,6 +124,7 @@ def test_deep_research_runtime_falls_back_from_cloud_to_local_provider() -> None
         ingest_service=StubIngestService(),
         cloud_providers=[FailingProvider(), FailingProvider()],
         local_providers=[EchoProvider("local")],
+        telemetry_service=telemetry,
     )
     runtime = DeepResearchRuntime(
         routing_service=FakeRoutingService(),
@@ -135,3 +138,5 @@ def test_deep_research_runtime_falls_back_from_cloud_to_local_provider() -> None
 
     assert response.conclusion.startswith("local:")
     assert response.runtime_mode is RuntimeMode.DEEP
+    assert [event.name for event in telemetry.list_events()] == ["runtime.local_fallback"]
+    assert telemetry.list_events()[0].payload["to_location"] == "local"

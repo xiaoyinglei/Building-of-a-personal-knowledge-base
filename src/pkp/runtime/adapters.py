@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from hashlib import sha256
 from typing import Protocol, cast
 
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
@@ -15,9 +13,9 @@ from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService
 from pkp.service.ingest_service import IngestService
 from pkp.service.retrieval_service import RetrievalResult, RetrievalService
+from pkp.service.telemetry_service import TelemetryService
 from pkp.types import (
     ArtifactStatus,
-    ArtifactType,
     Document,
     EvidenceItem,
     ExecutionPolicy,
@@ -247,6 +245,7 @@ class RuntimeEvidenceAdapter:
         artifact_service: ArtifactService,
         metadata_repo: SQLiteMetadataRepo,
         ingest_service: IngestService,
+        telemetry_service: TelemetryService | None = None,
         cloud_providers: Sequence[object] = (),
         local_providers: Sequence[object] = (),
     ) -> None:
@@ -254,6 +253,7 @@ class RuntimeEvidenceAdapter:
         self._artifact_service = artifact_service
         self._metadata_repo = metadata_repo
         self._ingest_service = ingest_service
+        self._telemetry_service = telemetry_service
         self._cloud_providers = tuple(cloud_providers)
         self._local_providers = tuple(local_providers)
         self._last_hits: list[EvidenceItem] = []
@@ -384,37 +384,14 @@ class RuntimeEvidenceAdapter:
         if not suggestion.suggested:
             return suggestion
 
-        artifact = self._build_artifact(query, suggestion, hits, conflicts)
+        artifact = self._artifact_service.build_artifact(
+            query=query,
+            suggestion=suggestion,
+            evidence=hits,
+            differences_or_conflicts=conflicts,
+        )
         self._metadata_repo.save_artifact(artifact)
         return suggestion.model_copy(update={"artifact_id": artifact.artifact_id})
-
-    def _build_artifact(
-        self,
-        query: str,
-        suggestion: PreservationSuggestion,
-        hits: list[EvidenceItem],
-        conflicts: list[str],
-    ) -> KnowledgeArtifact:
-        artifact_seed = query + "|" + "|".join(item.chunk_id for item in hits)
-        artifact_id = f"artifact-{sha256(artifact_seed.encode()).hexdigest()[:12]}"
-        title = suggestion.title or query
-        body = [f"# {title}", "", "## Key Evidence"]
-        for item in hits:
-            body.append(f"- {item.doc_id}: {item.text}")
-        if conflicts:
-            body.extend(["", "## Differences or Conflicts", *[f"- {item}" for item in conflicts]])
-        artifact_type = ArtifactType(suggestion.artifact_type or ArtifactType.TOPIC_PAGE.value)
-        return KnowledgeArtifact(
-            artifact_id=artifact_id,
-            artifact_type=artifact_type,
-            title=title,
-            supported_chunk_ids=[item.chunk_id for item in hits],
-            confidence=0.8 if conflicts else 0.9,
-            status=ArtifactStatus.SUGGESTED,
-            last_reviewed_at=datetime.now(UTC),
-            body_markdown="\n".join(body),
-            source_scope=sorted({item.doc_id for item in hits}),
-        )
 
     def _synthesize_conclusion(self, query: str, summary: str, location: str) -> str:
         providers = self._provider_order(location)
@@ -423,6 +400,7 @@ class RuntimeEvidenceAdapter:
 
         prompt = self._build_synthesis_prompt(query, summary)
         last_error: RuntimeError | None = None
+        failed_cloud_provider_count = 0
         for provider in providers:
             chat = getattr(provider, "chat", None)
             if not callable(chat):
@@ -431,8 +409,21 @@ class RuntimeEvidenceAdapter:
                 response = chat(prompt)
             except RuntimeError as exc:
                 last_error = exc
+                if location == "cloud" and provider in self._cloud_providers:
+                    failed_cloud_provider_count += 1
                 continue
             if isinstance(response, str) and response.strip():
+                if (
+                    self._telemetry_service is not None
+                    and location == "cloud"
+                    and failed_cloud_provider_count > 0
+                    and provider in self._local_providers
+                ):
+                    self._telemetry_service.record_local_fallback(
+                        from_location="cloud",
+                        to_location="local",
+                        failed_provider_count=failed_cloud_provider_count,
+                    )
                 return response
 
         if last_error is not None:

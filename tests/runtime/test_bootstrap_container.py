@@ -44,6 +44,8 @@ def test_build_runtime_container_supports_real_ingest_and_query(tmp_path) -> Non
     assert ingest_result["chunk_count"] > 0
     assert response.evidence
     assert container.metadata_repo is not None
+    assert container.telemetry_service is not None
+    assert container.telemetry_service.count_by_name("retrieval.branch_used") >= 1
 
 
 def test_create_app_bootstraps_default_container_from_settings(tmp_path, monkeypatch) -> None:

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from pkp.runtime.fast_query_runtime import FastQueryRuntime
+from pkp.service.telemetry_service import TelemetryService
 from pkp.types import (
     AccessPolicy,
     EvidenceItem,
@@ -135,3 +136,27 @@ def test_fast_query_runtime_escalates_on_conflict_or_failed_claim_alignment() ->
 
     assert deep_runtime.calls == ["why conflict"]
     assert response.runtime_mode is RuntimeMode.DEEP
+
+
+def test_fast_query_runtime_records_claim_citation_failure_and_escalation() -> None:
+    deep_runtime = FakeDeepRuntime()
+    telemetry = TelemetryService.create_in_memory()
+    runtime = FastQueryRuntime(
+        retrieval_service=FakeRetrievalService(hits=[make_hit()]),
+        evidence_service=FakeEvidenceService(
+            sufficient=True,
+            claim_aligned=False,
+            conflicts=[],
+        ),
+        deep_runtime=deep_runtime,
+        telemetry_service=telemetry,
+    )
+
+    response = runtime.run("why unsupported", make_policy())
+
+    assert response.runtime_mode is RuntimeMode.DEEP
+    assert [event.name for event in telemetry.list_events()] == [
+        "runtime.claim_citation_failed",
+        "runtime.escalated_to_deep",
+    ]
+    assert telemetry.list_events()[1].payload["reason"] == "claim_citation_failure"
