@@ -1,0 +1,117 @@
+<h2>核心模块与边界</h2>
+<p class="subtitle">目标：高可靠、可演进、单机能起步，未来无缝迁云</p>
+
+<div class="section">
+  <h3>必须独立的 6 个模块</h3>
+  <div class="cards">
+    <div class="card" data-choice="ingest" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">1</div>
+        <h3>Ingest Pipeline</h3>
+        <p>负责文件接入、OCR、解析、切块、去重、增量更新。</p>
+        <p><strong>边界</strong>：只生产结构化知识对象，不负责回答。</p>
+      </div>
+    </div>
+    <div class="card" data-choice="index" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">2</div>
+        <h3>Index Layer</h3>
+        <p>管理全文索引、向量索引、元数据索引。</p>
+        <p><strong>边界</strong>：只负责召回，不做最终推理。</p>
+      </div>
+    </div>
+    <div class="card" data-choice="gateway" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">3</div>
+        <h3>Model Gateway</h3>
+        <p>统一封装云模型、本地模型、embedding、rerank、vision。</p>
+        <p><strong>边界</strong>：模型供应层，不知道业务上下文。</p>
+      </div>
+    </div>
+    <div class="card" data-choice="retrieval" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">4</div>
+        <h3>Retrieval Orchestrator</h3>
+        <p>决定走快路径还是深路径，组合全文、向量、元数据、图谱检索。</p>
+        <p><strong>边界</strong>：核心可靠性中枢。</p>
+      </div>
+    </div>
+    <div class="card" data-choice="agent" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">5</div>
+        <h3>Research Agent</h3>
+        <p>负责多轮问题拆解、改写查询、跨文档比较、不确定性说明。</p>
+        <p><strong>边界</strong>：不能直接绕过检索编排器拿答案。</p>
+      </div>
+    </div>
+    <div class="card" data-choice="knowledge" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">6</div>
+        <h3>Knowledge Layer</h3>
+        <p>保存摘要、对比页、专题页、实体关系和引用索引。</p>
+        <p><strong>边界</strong>：沉淀资产，不污染原始证据层。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">云 / 本地路由</div>
+    <div class="mockup-body">
+      <p><strong>默认策略</strong></p>
+      <ul>
+        <li>复杂推理与高质量总结：云优先</li>
+        <li>Embedding / rerank / OCR：优先本地或可替换</li>
+        <li>敏感目录/标签：强制本地模型与本地索引</li>
+        <li>云失败或超时：自动降级到本地回答链路</li>
+      </ul>
+      <p><strong>关键点</strong>：路由决策只在网关和策略层做，业务层不直接绑死某个模型。</p>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">GraphRAG 放置位置</div>
+    <div class="mockup-body">
+      <p><strong>正确位置</strong>：检索增强层和知识沉淀层之间。</p>
+      <ul>
+        <li>用于扩展候选证据</li>
+        <li>用于发现实体关系和跨文档桥接</li>
+        <li>用于生成专题页和关系视图</li>
+      </ul>
+      <p><strong>禁止位置</strong>：不能直接替代原文检索，不能单独主导最终回答。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>为什么 Agent 不能吞掉主链路</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>分开的好处</h4>
+      <ul>
+        <li>简单问题不被复杂规划拖慢</li>
+        <li>Agent 出错时不会直接破坏基础问答</li>
+        <li>检索质量可以独立评估和优化</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>混在一起的风险</h4>
+      <ul>
+        <li>每个问题都像开研究任务，延迟失控</li>
+        <li>错误更难定位：是检索错还是规划错</li>
+        <li>本地兜底链路会变得很重</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">我建议的部署演进</div>
+    <div class="mockup-body">
+      <p><strong>阶段 1：本地单机</strong>：6 个模块可以先合并成 2 到 3 个进程。</p>
+      <p><strong>阶段 2：云主部署</strong>：Ingest、Index、Gateway、Agent、Knowledge 逐步拆开，客户端继续保持轻量。</p>
+    </div>
+  </div>
+</div>

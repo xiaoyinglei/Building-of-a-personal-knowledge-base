@@ -1,0 +1,118 @@
+<h2>查询执行流程与可靠性机制</h2>
+<p class="subtitle">先判断问题类型，再决定走快路径还是深路径；所有路径都必须回到证据校验</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">统一入口</div>
+    <div class="mockup-body">
+      <p><strong>用户问题</strong> → <strong>任务分类器</strong> → <strong>快路径 / 深路径</strong> → <strong>回答合成</strong> → <strong>引用校验</strong> → <strong>返回结果</strong></p>
+    </div>
+  </div>
+</div>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Fast Path</div>
+    <div class="mockup-body">
+      <ol>
+        <li>问题标准化与元数据过滤</li>
+        <li>全文 + 向量 + 标签混合召回</li>
+        <li>rerank 形成证据包</li>
+        <li>生成带引用回答</li>
+        <li>做 claim-citation 对齐校验</li>
+      </ol>
+      <p><strong>适用</strong>：直接问答、单点事实、单文档定位</p>
+      <p><strong>退出条件</strong>：证据稀疏、问题明显跨文档、存在冲突或歧义时，升级到深路径</p>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Deep Path</div>
+    <div class="mockup-body">
+      <ol>
+        <li>问题拆解成 2-5 个子查询</li>
+        <li>多轮检索与查询改写</li>
+        <li>按文档/观点/时间维度建立证据矩阵</li>
+        <li>必要时用图谱做扩展召回</li>
+        <li>输出结论 + 分歧 + 不确定性</li>
+      </ol>
+      <p><strong>适用</strong>：跨文档比较、观点冲突、研究型问题</p>
+      <p><strong>约束</strong>：必须有轮数上限、token/时间预算、证据阈值</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>任务分类规则</h3>
+  <div class="cards">
+    <div class="card" data-choice="route-fast" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">Route to Fast</div>
+        <h3>快路径信号</h3>
+        <p>问题短、目标明确、限定在单资料或单主题、历史上已有高相似查询。</p>
+      </div>
+    </div>
+    <div class="card" data-choice="route-deep" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">Route to Deep</div>
+        <h3>深路径信号</h3>
+        <p>出现“比较、冲突、为什么、趋势、多个来源、综合判断”等模式，或首轮证据不足。</p>
+      </div>
+    </div>
+    <div class="card" data-choice="route-web" onclick="toggleSelect(this)">
+      <div class="card-body">
+        <div class="label">Web Search Gate</div>
+        <h3>联网补充条件</h3>
+        <p>本地知识库证据不足，且问题允许公网补充；外部资料必须与内部资料分开标注。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>GraphRAG 介入时机</h3>
+  <div class="mockup">
+    <div class="mockup-header">只在第二轮以后增强召回</div>
+    <div class="mockup-body">
+      <p><strong>规则</strong>：先做原文混合检索；只有当首轮证据指向若干实体、主题或关系，但覆盖不完整时，才让图谱扩展候选集合。</p>
+      <p><strong>好处</strong>：GraphRAG 帮你“找漏掉的关联”，但不会取代原文证据的主导权。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>可靠性护栏</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>必须执行</h4>
+      <ul>
+        <li>回答前做 claim-citation 对齐校验</li>
+        <li>区分“结论”“证据”“推断”三层输出</li>
+        <li>证据冲突时显式展示冲突，而不是强行统一</li>
+        <li>证据不足时允许回答“暂不足以判断”</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>必须限制</h4>
+      <ul>
+        <li>深路径轮数无限增长</li>
+        <li>让 Agent 自己决定是否引用</li>
+        <li>把外部网页内容和内部资料混成一个证据池</li>
+        <li>为了流畅而掩盖不确定性</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">我建议的默认输出结构</div>
+    <div class="mockup-body">
+      <p><strong>结论</strong>：直接回答你的问题</p>
+      <p><strong>依据</strong>：列出关键引用与出处</p>
+      <p><strong>差异/冲突</strong>：如果不同文档说法不同，单独列出来</p>
+      <p><strong>不确定性</strong>：说明缺口在哪里</p>
+      <p><strong>沉淀建议</strong>：是否生成对比页或专题页</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,95 @@
+<h2>个人知识库系统路线对比</h2>
+<p class="subtitle">目标约束：云主，本地敏感隔离，复杂任务优先，简单检索不能慢，长期沉淀专题知识库</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <div class="label">A</div>
+      <h3>单体智能 RAG</h3>
+      <p>一个服务里做入库、索引、聊天、Agent、总结。</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>优点</h4>
+          <ul>
+            <li>最快做出来</li>
+            <li>前期维护简单</li>
+            <li>适合先验证基本问答</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>缺点</h4>
+          <ul>
+            <li>复杂任务和快路径容易互相拖累</li>
+            <li>云和本地双路切换会越来越乱</li>
+            <li>后续专题沉淀能力偏弱</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>适合</strong>：先做一个能用版本</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <div class="label">B · Recommended</div>
+      <h3>双速度知识平台</h3>
+      <p>把系统拆成文档管线、混合检索、模型网关、快问答路径、深度研究 Agent 路径、专题沉淀层。</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>优点</h4>
+          <ul>
+            <li>简单问题快，复杂问题深</li>
+            <li>云优先但能对敏感目录强制本地</li>
+            <li>天然适合沉淀摘要、对比页、专题页</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>缺点</h4>
+          <ul>
+            <li>设计比 A 复杂</li>
+            <li>需要明确模块边界和路由策略</li>
+            <li>首版要克制，不能一次做太满</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>适合</strong>：你现在的目标和未来演进</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <div class="label">C</div>
+      <h3>图谱优先研究系统</h3>
+      <p>一开始就强调实体抽取、关系图谱、主题网络和研究工作流。</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>优点</h4>
+          <ul>
+            <li>跨文档关系表达最强</li>
+            <li>专题知识库形态最完整</li>
+            <li>适合长期演化成研究工作台</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>缺点</h4>
+          <ul>
+            <li>前期工程和调参成本最高</li>
+            <li>冷启动效果未必比 B 更好</li>
+            <li>容易把重点放到结构化而不是可用性</li>
+          </ul>
+        </div>
+      </div>
+      <p><strong>适合</strong>：团队化、长期研究平台</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我的建议</h3>
+  <div class="mockup">
+    <div class="mockup-header">推荐 B 的原因</div>
+    <div class="mockup-body">
+      <p>它最匹配你的核心诉求：复杂问题可以像研究助手一样多轮检索和比较，简单问题仍然走快路径；同时，它还能把结果沉淀成可复用的专题知识页，而不是只产生一次性回答。</p>
+    </div>
+  </div>
+</div>
