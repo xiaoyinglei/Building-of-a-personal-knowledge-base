@@ -1,5 +1,8 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
+import pkp.bootstrap as bootstrap_module
 from pkp.bootstrap import build_runtime_container
 from pkp.config import AppSettings, build_execution_policy, default_access_policy
 from pkp.types import ComplexityLevel, ExecutionLocationPreference, TaskType
@@ -71,3 +74,60 @@ def test_create_app_bootstraps_default_container_from_settings(tmp_path, monkeyp
     assert ingest_response.json()["chunk_count"] > 0
     assert query_response.status_code == 200
     assert query_response.json()["evidence"]
+
+
+def test_build_runtime_container_wires_model_provider_settings(tmp_path, monkeypatch) -> None:
+    settings = AppSettings.model_validate(
+        {
+            "runtime": {
+                "data_dir": str(tmp_path / "runtime"),
+                "object_store_dir": str(tmp_path / "runtime" / "objects"),
+            },
+            "openai": {
+                "api_key": "provider-key",
+                "base_url": "https://openai.test/v1",
+                "model": "gpt-test",
+                "embedding_model": "embed-test",
+            },
+            "ollama": {
+                "base_url": "http://ollama.test:11434",
+                "chat_model": "llama-test",
+                "embedding_model": "nomic-test",
+            },
+        }
+    )
+    captured: dict[str, object] = {}
+
+    def fake_openai_provider(**kwargs: object) -> object:
+        captured["openai_kwargs"] = kwargs
+        return SimpleNamespace(name="openai")
+
+    def fake_ollama_provider(**kwargs: object) -> object:
+        captured["ollama_kwargs"] = kwargs
+        return SimpleNamespace(name="ollama")
+
+    def fake_build_container(**kwargs: object) -> object:
+        captured["cloud_providers"] = kwargs["cloud_providers"]
+        captured["local_providers"] = kwargs["local_providers"]
+        return SimpleNamespace()
+
+    monkeypatch.setattr(bootstrap_module, "OpenAIProviderRepo", fake_openai_provider)
+    monkeypatch.setattr(bootstrap_module, "OllamaProviderRepo", fake_ollama_provider)
+    monkeypatch.setattr(bootstrap_module, "_build_runtime_container", fake_build_container)
+
+    result = build_runtime_container(settings)
+
+    assert isinstance(result, SimpleNamespace)
+    assert captured["openai_kwargs"] == {
+        "api_key": "provider-key",
+        "base_url": "https://openai.test/v1",
+        "model": "gpt-test",
+        "embedding_model": "embed-test",
+    }
+    assert captured["ollama_kwargs"] == {
+        "base_url": "http://ollama.test:11434",
+        "chat_model": "llama-test",
+        "embedding_model": "nomic-test",
+    }
+    assert len(captured["cloud_providers"]) == 1
+    assert len(captured["local_providers"]) == 1

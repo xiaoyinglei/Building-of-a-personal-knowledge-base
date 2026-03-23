@@ -28,3 +28,23 @@ def test_settings_parse_nested_env_values() -> None:
     assert settings.runtime.max_retrieval_rounds == 3
     assert settings.runtime.max_token_budget == 512
     assert settings.openai.api_key.get_secret_value() == "test-key"
+
+
+def test_settings_load_dotenv_file_from_current_workdir(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PKP_OPENAI__API_KEY", raising=False)
+    monkeypatch.delenv("PKP_RUNTIME__MAX_TOKEN_BUDGET", raising=False)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "PKP_OPENAI__API_KEY=dotenv-key",
+                "PKP_RUNTIME__MAX_TOKEN_BUDGET=321",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = AppSettings()
+
+    assert settings.openai.api_key.get_secret_value() == "dotenv-key"
+    assert settings.runtime.max_token_budget == 321

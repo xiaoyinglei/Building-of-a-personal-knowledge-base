@@ -245,8 +245,21 @@ def build_runtime_container(settings: AppSettings) -> RuntimeContainer:
         thresholds=thresholds,
         ocr_repo=_sample_ocr_repo(),
         web_fetch_repo=HttpWebFetchRepo(),
-        cloud_providers=(OpenAIProviderRepo(),),
-        local_providers=(OllamaProviderRepo(),),
+        cloud_providers=(
+            OpenAIProviderRepo(
+                api_key=settings.openai.api_key.get_secret_value(),
+                base_url=settings.openai.base_url,
+                model=settings.openai.model,
+                embedding_model=settings.openai.embedding_model,
+            ),
+        ),
+        local_providers=(
+            OllamaProviderRepo(
+                base_url=settings.ollama.base_url,
+                chat_model=settings.ollama.chat_model,
+                embedding_model=settings.ollama.embedding_model,
+            ),
+        ),
     )
 
 
