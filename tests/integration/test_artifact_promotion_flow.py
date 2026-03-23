@@ -1,0 +1,31 @@
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from pkp.bootstrap import build_test_container
+from pkp.ui.api.app import create_app
+
+
+def test_artifact_promotion_flow_reindexes_approved_artifact(tmp_path: Path) -> None:
+    app = create_app(container_factory=lambda: build_test_container(tmp_path))
+    client = TestClient(app)
+
+    client.post("/ingest", json={"source_type": "plain_text", "location": "data/samples/conflict-a.txt"})
+    client.post("/ingest", json={"source_type": "plain_text", "location": "data/samples/conflict-b.txt"})
+    query = client.post(
+        "/query",
+        json={"query": "Compare the default retrieval path in the two documents", "mode": "deep"},
+    )
+    suggestion = query.json()["preservation_suggestion"]
+    approve = client.post("/artifacts/approve", json={"artifact_id": suggestion["artifact_id"]})
+    follow_up = client.post(
+        "/query",
+        json={"query": suggestion["title"], "mode": "fast"},
+    )
+
+    assert suggestion["suggested"] is True
+    assert suggestion["artifact_id"]
+    assert approve.status_code == 200
+    assert approve.json()["status"] == "approved"
+    assert follow_up.status_code == 200
+    assert follow_up.json()["evidence"]
