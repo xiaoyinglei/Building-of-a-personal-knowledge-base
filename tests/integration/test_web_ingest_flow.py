@@ -12,7 +12,7 @@ def test_web_ingest_flow(tmp_path: Path) -> None:
 
     ingest = client.post(
         "/ingest",
-        json={"source_type": "web", "location": "data/samples/sample-article.html"},
+        json={"source_type": "web", "location": "https://example.com/article"},
     )
     query = client.post(
         "/query",

@@ -4,6 +4,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
+import httpx
+
 from pkp.config import AppSettings
 from pkp.config.policies import RoutingThresholds
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
@@ -15,6 +17,7 @@ from pkp.repo.parse.image_parser_repo import ImageParserRepo
 from pkp.repo.parse.markdown_parser_repo import MarkdownParserRepo
 from pkp.repo.parse.pdf_parser_repo import PDFParserRepo
 from pkp.repo.parse.plain_text_parser_repo import PlainTextParserRepo
+from pkp.repo.parse.web_fetch_repo import WebFetchRepo as HttpWebFetchRepo
 from pkp.repo.parse.web_parser_repo import WebParserRepo
 from pkp.repo.search.in_memory_vector_repo import InMemoryVectorRepo
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
@@ -67,6 +70,21 @@ def _sample_ocr_repo() -> DeterministicOcrVisionRepo:
     )
 
 
+def _sample_web_fetch_repo() -> HttpWebFetchRepo:
+    sample_html = (_project_root() / "data/samples/sample-article.html").read_text(encoding="utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            content=sample_html.encode("utf-8"),
+            headers={"content-type": "text/html; charset=utf-8"},
+        )
+
+    transport = httpx.MockTransport(handler)
+    return HttpWebFetchRepo(http_client=httpx.Client(transport=transport))
+
+
 class _DeterministicChatProvider:
     def chat(self, prompt: str) -> str:
         query = next((line.strip() for line in prompt.splitlines() if line.strip()), "summary")
@@ -78,6 +96,7 @@ def _build_ingest_service(
     object_store_root: Path,
     *,
     ocr_repo: DeterministicOcrVisionRepo,
+    web_fetch_repo: HttpWebFetchRepo,
 ) -> IngestService:
     runtime_root.mkdir(parents=True, exist_ok=True)
     object_store_root.mkdir(parents=True, exist_ok=True)
@@ -92,6 +111,7 @@ def _build_ingest_service(
         plain_text_parser=PlainTextParserRepo(),
         image_parser=ImageParserRepo(ocr_repo),
         web_parser=WebParserRepo(),
+        web_fetch_repo=web_fetch_repo,
         policy_resolution_service=PolicyResolutionService(),
         toc_service=TOCService(),
         chunking_service=ChunkingService(),
@@ -106,10 +126,16 @@ def _build_runtime_container(
     max_retrieval_rounds: int,
     thresholds: RoutingThresholds,
     ocr_repo: DeterministicOcrVisionRepo,
+    web_fetch_repo: HttpWebFetchRepo,
     cloud_providers: Sequence[object] = (),
     local_providers: Sequence[object] = (),
 ) -> RuntimeContainer:
-    ingest_service = _build_ingest_service(runtime_root, object_store_root, ocr_repo=ocr_repo)
+    ingest_service = _build_ingest_service(
+        runtime_root,
+        object_store_root,
+        ocr_repo=ocr_repo,
+        web_fetch_repo=web_fetch_repo,
+    )
     telemetry_service = TelemetryService.create_jsonl(runtime_root / "telemetry" / "events.jsonl")
     metadata_repo: SQLiteMetadataRepo = ingest_service.metadata_repo
     fts_repo: SQLiteFTSRepo = ingest_service.fts_repo
@@ -218,6 +244,7 @@ def build_runtime_container(settings: AppSettings) -> RuntimeContainer:
         max_retrieval_rounds=settings.runtime.max_retrieval_rounds,
         thresholds=thresholds,
         ocr_repo=_sample_ocr_repo(),
+        web_fetch_repo=HttpWebFetchRepo(),
         cloud_providers=(OpenAIProviderRepo(),),
         local_providers=(OllamaProviderRepo(),),
     )
@@ -230,6 +257,7 @@ def build_test_container(root: Path) -> RuntimeContainer:
         max_retrieval_rounds=4,
         thresholds=RoutingThresholds(),
         ocr_repo=_sample_ocr_repo(),
+        web_fetch_repo=_sample_web_fetch_repo(),
         cloud_providers=(),
         local_providers=(_DeterministicChatProvider(),),
     )

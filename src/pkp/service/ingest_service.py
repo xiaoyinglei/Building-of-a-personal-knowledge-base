@@ -6,12 +6,13 @@ from hashlib import sha256
 from pathlib import Path
 
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import OcrVisionRepo, ParsedDocument
+from pkp.repo.interfaces import OcrVisionRepo, ParsedDocument, WebFetchRepo
 from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
 from pkp.repo.parse.image_parser_repo import ImageParserRepo
 from pkp.repo.parse.markdown_parser_repo import MarkdownParserRepo
 from pkp.repo.parse.pdf_parser_repo import PDFParserRepo
 from pkp.repo.parse.plain_text_parser_repo import PlainTextParserRepo
+from pkp.repo.parse.web_fetch_repo import WebFetchRepo as HttpWebFetchRepo
 from pkp.repo.parse.web_parser_repo import WebParserRepo
 from pkp.repo.search.in_memory_vector_repo import InMemoryVectorRepo
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
@@ -51,6 +52,7 @@ class IngestService:
         plain_text_parser: PlainTextParserRepo,
         image_parser: ImageParserRepo,
         web_parser: WebParserRepo,
+        web_fetch_repo: WebFetchRepo,
         policy_resolution_service: PolicyResolutionService,
         toc_service: TOCService,
         chunking_service: ChunkingService,
@@ -66,6 +68,7 @@ class IngestService:
         self.plain_text_parser = plain_text_parser
         self.image_parser = image_parser
         self.web_parser = web_parser
+        self.web_fetch_repo = web_fetch_repo
         self.policy_resolution_service = policy_resolution_service
         self.toc_service = toc_service
         self.chunking_service = chunking_service
@@ -77,9 +80,11 @@ class IngestService:
         root: Path,
         *,
         ocr_repo: OcrVisionRepo | None = None,
+        web_fetch_repo: WebFetchRepo | None = None,
     ) -> IngestService:
         root.mkdir(parents=True, exist_ok=True)
         resolved_ocr_repo = ocr_repo or DeterministicOcrVisionRepo()
+        resolved_web_fetch_repo = web_fetch_repo or HttpWebFetchRepo()
         return cls(
             metadata_repo=SQLiteMetadataRepo(root / "metadata.sqlite3"),
             fts_repo=SQLiteFTSRepo(root / "fts.sqlite3"),
@@ -91,6 +96,7 @@ class IngestService:
             plain_text_parser=PlainTextParserRepo(),
             image_parser=ImageParserRepo(resolved_ocr_repo),
             web_parser=WebParserRepo(),
+            web_fetch_repo=resolved_web_fetch_repo,
             policy_resolution_service=PolicyResolutionService(),
             toc_service=TOCService(),
             chunking_service=ChunkingService(),
@@ -200,6 +206,23 @@ class IngestService:
             parsed=parsed,
             owner=owner,
             access_policy=access_policy,
+        )
+
+    def ingest_web_url(
+        self,
+        *,
+        location: str,
+        owner: str,
+        access_policy: AccessPolicy | None = None,
+        title: str | None = None,
+    ) -> IngestResult:
+        html = self.web_fetch_repo.fetch(location)
+        return self.ingest_web(
+            location=location,
+            html=html,
+            owner=owner,
+            access_policy=access_policy,
+            title=title,
         )
 
     def _ingest_parsed_document(

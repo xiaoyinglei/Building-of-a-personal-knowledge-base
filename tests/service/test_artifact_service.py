@@ -178,3 +178,212 @@ def test_artifact_service_builds_comparison_page_with_stable_sections() -> None:
     assert "## Disagreements" in artifact.body_markdown
     assert "Alpha and Beta diverge on retention" in artifact.body_markdown
     assert "## Confidence and Coverage" in artifact.body_markdown
+
+
+def test_artifact_service_suggests_document_summary_for_single_document_summary_queries() -> None:
+    service = ArtifactService()
+
+    suggestion = service.suggest_preservation(
+        query="Summarize this document",
+        runtime_mode=RuntimeMode.DEEP,
+        evidence=[_evidence("chunk-a", "doc-a")],
+    )
+
+    assert suggestion.suggested is True
+    assert suggestion.artifact_type == ArtifactType.DOCUMENT_SUMMARY.value
+
+
+def test_artifact_service_suggests_section_summary_for_section_scoped_queries() -> None:
+    service = ArtifactService()
+
+    suggestion = service.suggest_preservation(
+        query="Summarize section 2",
+        runtime_mode=RuntimeMode.DEEP,
+        evidence=[_evidence("chunk-a", "doc-a")],
+    )
+
+    assert suggestion.suggested is True
+    assert suggestion.artifact_type == ArtifactType.SECTION_SUMMARY.value
+
+
+def test_artifact_service_suggests_timeline_for_temporal_queries() -> None:
+    service = ArtifactService()
+
+    suggestion = service.suggest_preservation(
+        query="Build a timeline of Alpha",
+        runtime_mode=RuntimeMode.DEEP,
+        evidence=[
+            _evidence("chunk-a", "doc-a"),
+            _evidence("chunk-b", "doc-b"),
+        ],
+    )
+
+    assert suggestion.suggested is True
+    assert suggestion.artifact_type == ArtifactType.TIMELINE.value
+
+
+def test_artifact_service_suggests_open_question_page_for_unknowns() -> None:
+    service = ArtifactService()
+
+    suggestion = service.suggest_preservation(
+        query="What open questions remain?",
+        runtime_mode=RuntimeMode.DEEP,
+        evidence=[
+            _evidence("chunk-a", "doc-a"),
+            _evidence("chunk-b", "doc-b"),
+        ],
+    )
+
+    assert suggestion.suggested is True
+    assert suggestion.artifact_type == ArtifactType.OPEN_QUESTION_PAGE.value
+
+
+def test_artifact_service_builds_document_summary_with_stable_sections() -> None:
+    service = ArtifactService()
+    reviewed_at = datetime(2026, 2, 3, 4, 5, tzinfo=UTC)
+    suggestion = service.suggest_preservation(
+        query="Summarize this document",
+        runtime_mode=RuntimeMode.DEEP,
+        evidence=[_evidence("chunk-a", "doc-a")],
+    )
+
+    artifact = service.build_artifact(
+        query="Summarize this document",
+        suggestion=suggestion,
+        evidence=[_evidence("chunk-a", "doc-a")],
+        differences_or_conflicts=[],
+        reviewed_at=reviewed_at,
+    )
+
+    sections = [
+        "## Document Definition",
+        "## Summary",
+        "## Key Evidence",
+        "## Open Questions",
+        "## Last Reviewed",
+        "## Confidence and Coverage",
+    ]
+
+    assert artifact.artifact_type is ArtifactType.DOCUMENT_SUMMARY
+    assert [artifact.body_markdown.index(section) for section in sections] == sorted(
+        artifact.body_markdown.index(section) for section in sections
+    )
+    assert "Summarize this document" in artifact.body_markdown
+    assert "doc-a" in artifact.body_markdown
+    assert "text for chunk-a" in artifact.body_markdown
+
+
+def test_artifact_service_builds_section_summary_with_stable_sections() -> None:
+    service = ArtifactService()
+    reviewed_at = datetime(2026, 2, 3, 4, 5, tzinfo=UTC)
+    suggestion = service.suggest_preservation(
+        query="Summarize section 2",
+        runtime_mode=RuntimeMode.DEEP,
+        evidence=[_evidence("chunk-a", "doc-a")],
+    )
+
+    artifact = service.build_artifact(
+        query="Summarize section 2",
+        suggestion=suggestion,
+        evidence=[_evidence("chunk-a", "doc-a")],
+        differences_or_conflicts=[],
+        reviewed_at=reviewed_at,
+    )
+
+    sections = [
+        "## Section Definition",
+        "## Section Summary",
+        "## Key Evidence",
+        "## Open Questions",
+        "## Last Reviewed",
+        "## Confidence and Coverage",
+    ]
+
+    assert artifact.artifact_type is ArtifactType.SECTION_SUMMARY
+    assert [artifact.body_markdown.index(section) for section in sections] == sorted(
+        artifact.body_markdown.index(section) for section in sections
+    )
+    assert "Summarize section 2" in artifact.body_markdown
+    assert "doc-a" in artifact.body_markdown
+
+
+def test_artifact_service_builds_timeline_with_stable_sections() -> None:
+    service = ArtifactService()
+    reviewed_at = datetime(2026, 2, 3, 4, 5, tzinfo=UTC)
+    suggestion = service.suggest_preservation(
+        query="Build a timeline of Alpha",
+        runtime_mode=RuntimeMode.DEEP,
+        evidence=[
+            _evidence("chunk-a", "doc-a"),
+            _evidence("chunk-b", "doc-b"),
+        ],
+    )
+
+    artifact = service.build_artifact(
+        query="Build a timeline of Alpha",
+        suggestion=suggestion,
+        evidence=[
+            _evidence("chunk-a", "doc-a"),
+            _evidence("chunk-b", "doc-b"),
+        ],
+        differences_or_conflicts=[],
+        reviewed_at=reviewed_at,
+    )
+
+    sections = [
+        "## Timeline Definition",
+        "## Timeline",
+        "## Key Evidence",
+        "## Open Questions",
+        "## Last Reviewed",
+        "## Confidence and Coverage",
+    ]
+
+    assert artifact.artifact_type is ArtifactType.TIMELINE
+    assert [artifact.body_markdown.index(section) for section in sections] == sorted(
+        artifact.body_markdown.index(section) for section in sections
+    )
+    assert "Build a timeline of Alpha" in artifact.body_markdown
+    assert "doc-a" in artifact.body_markdown
+    assert "doc-b" in artifact.body_markdown
+
+
+def test_artifact_service_builds_open_question_page_with_stable_sections() -> None:
+    service = ArtifactService()
+    reviewed_at = datetime(2026, 2, 3, 4, 5, tzinfo=UTC)
+    suggestion = service.suggest_preservation(
+        query="What open questions remain?",
+        runtime_mode=RuntimeMode.DEEP,
+        evidence=[
+            _evidence("chunk-a", "doc-a"),
+            _evidence("chunk-b", "doc-b"),
+        ],
+    )
+
+    artifact = service.build_artifact(
+        query="What open questions remain?",
+        suggestion=suggestion,
+        evidence=[
+            _evidence("chunk-a", "doc-a"),
+            _evidence("chunk-b", "doc-b"),
+        ],
+        differences_or_conflicts=[],
+        reviewed_at=reviewed_at,
+    )
+
+    sections = [
+        "## Open Question Definition",
+        "## Questions",
+        "## Candidate Answers",
+        "## Key Evidence",
+        "## Last Reviewed",
+        "## Confidence and Coverage",
+    ]
+
+    assert artifact.artifact_type is ArtifactType.OPEN_QUESTION_PAGE
+    assert [artifact.body_markdown.index(section) for section in sections] == sorted(
+        artifact.body_markdown.index(section) for section in sections
+    )
+    assert "What open questions remain?" in artifact.body_markdown
+    assert "doc-a" in artifact.body_markdown
+    assert "doc-b" in artifact.body_markdown

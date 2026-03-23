@@ -20,3 +20,30 @@ def test_ingest_runtime_delegates_to_ingest_service() -> None:
 
     assert service.calls == [("markdown", "data/example.md")]
     assert result["chunk_count"] == 4
+
+
+@dataclass
+class FakeWebIngestService:
+    calls: list[str]
+
+    def ingest_web_url(self, *, location: str, owner: str) -> object:
+        self.calls.append(location)
+        return type(
+            "Result",
+            (),
+            {
+                "source": type("Source", (), {"source_id": "src-web"})(),
+                "document": type("Document", (), {"doc_id": "doc-web"})(),
+                "chunks": [object()],
+            },
+        )()
+
+
+def test_ingest_runtime_routes_web_urls_without_local_file_reads(tmp_path) -> None:
+    service = FakeWebIngestService(calls=[])
+    runtime = IngestRuntime(ingest_service=service, base_path=tmp_path)
+
+    result = runtime.ingest_source(source_type="web", location="https://example.com/article")
+
+    assert service.calls == ["https://example.com/article"]
+    assert result["source_id"] == "src-web"

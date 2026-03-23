@@ -85,7 +85,21 @@ class ArtifactService:
                 break
         return conclusions
 
-    def _render_body(
+    @staticmethod
+    def _bullet_lines(values: Sequence[str], empty_message: str) -> list[str]:
+        return [f"- {value}" for value in values] or [f"- {empty_message}"]
+
+    @staticmethod
+    def _evidence_lines(evidence: Sequence[EvidenceItem]) -> list[str]:
+        return [f"- {item.doc_id} | {item.citation_anchor}: {item.text}" for item in evidence] or [
+            "- No supporting evidence captured."
+        ]
+
+    @staticmethod
+    def _normalized_query(query: str) -> str:
+        return re.sub(r"\s+", " ", query.strip().lower())
+
+    def _render_topic_or_comparison_body(
         self,
         *,
         query: str,
@@ -99,27 +113,19 @@ class ArtifactService:
         doc_ids = sorted(self._unique_docs(evidence))
         related_concepts = self._related_concepts(title, query)
         key_conclusions = self._key_conclusions(evidence, differences_or_conflicts)
-        conclusion_lines = [f"- {item}" for item in key_conclusions] or ["- No conclusions extracted."]
-        evidence_lines = [f"- {item.doc_id} | {item.citation_anchor}: {item.text}" for item in evidence] or [
-            "- No supporting evidence captured."
-        ]
+        conclusion_lines = self._bullet_lines(key_conclusions, "No conclusions extracted.")
+        evidence_lines = self._evidence_lines(evidence)
         boundaries = [f"- Coverage is limited to the cited evidence from {len(doc_ids)} document(s)."]
         if differences_or_conflicts:
             boundaries.append("- Conflicting evidence means downstream answers should preserve ambiguity.")
         else:
             boundaries.append("- Failure cases are not exhaustively enumerated in the current evidence set.")
-        disagreements = [f"- {item}" for item in differences_or_conflicts] or [
-            "- No material disagreements identified in current evidence."
-        ]
-        related_documents = [f"- {doc_id}" for doc_id in doc_ids] or ["- No related documents captured."]
-        related_entities = [f"- {concept}" for concept in related_concepts] or [
-            "- Not extracted from the current evidence."
-        ]
-        open_questions = ["- What additional evidence would strengthen, refine, or falsify this page?"]
-        confidence_and_coverage = [
-            f"- Confidence: {confidence:.2f}",
-            f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
-        ]
+        disagreements = self._bullet_lines(
+            differences_or_conflicts,
+            "No material disagreements identified in current evidence.",
+        )
+        related_documents = self._bullet_lines(doc_ids, "No related documents captured.")
+        related_entities = self._bullet_lines(related_concepts, "Not extracted from the current evidence.")
         sections = [
             f"# {title}",
             "",
@@ -145,15 +151,231 @@ class ArtifactService:
             *related_entities,
             "",
             "## Open Questions",
-            *open_questions,
+            "- What additional evidence would strengthen, refine, or falsify this page?",
             "",
             "## Last Reviewed",
             f"- {reviewed_at.isoformat()}",
             "",
             "## Confidence and Coverage",
-            *confidence_and_coverage,
+            f"- Confidence: {confidence:.2f}",
+            f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
         ]
         return "\n".join(sections)
+
+    def _render_document_summary_body(
+        self,
+        *,
+        query: str,
+        title: str,
+        evidence: Sequence[EvidenceItem],
+        reviewed_at: datetime,
+        confidence: float,
+    ) -> str:
+        doc_ids = sorted(self._unique_docs(evidence))
+        summary_lines = self._bullet_lines(
+            self._key_conclusions(evidence, []),
+            "No summary extracted.",
+        )
+        sections = [
+            f"# {title}",
+            "",
+            f"## {self._definition_heading(ArtifactType.DOCUMENT_SUMMARY)}",
+            f"- Query focus: {query}",
+            f"- Document scope: {', '.join(doc_ids) if doc_ids else 'No related documents captured.'}",
+            "",
+            "## Summary",
+            *summary_lines,
+            "",
+            "## Key Evidence",
+            *self._evidence_lines(evidence),
+            "",
+            "## Open Questions",
+            "- What parts of this document still need validation or follow-up evidence?",
+            "",
+            "## Last Reviewed",
+            f"- {reviewed_at.isoformat()}",
+            "",
+            "## Confidence and Coverage",
+            f"- Confidence: {confidence:.2f}",
+            f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
+        ]
+        return "\n".join(sections)
+
+    def _render_section_summary_body(
+        self,
+        *,
+        query: str,
+        title: str,
+        evidence: Sequence[EvidenceItem],
+        reviewed_at: datetime,
+        confidence: float,
+    ) -> str:
+        doc_ids = sorted(self._unique_docs(evidence))
+        summary_lines = self._bullet_lines(
+            self._key_conclusions(evidence, []),
+            "No section summary extracted.",
+        )
+        sections = [
+            f"# {title}",
+            "",
+            f"## {self._definition_heading(ArtifactType.SECTION_SUMMARY)}",
+            f"- Query focus: {query}",
+            f"- Section scope: {', '.join(doc_ids) if doc_ids else 'No related documents captured.'}",
+            "",
+            "## Section Summary",
+            *summary_lines,
+            "",
+            "## Key Evidence",
+            *self._evidence_lines(evidence),
+            "",
+            "## Open Questions",
+            "- What section-level detail still needs corroboration?",
+            "",
+            "## Last Reviewed",
+            f"- {reviewed_at.isoformat()}",
+            "",
+            "## Confidence and Coverage",
+            f"- Confidence: {confidence:.2f}",
+            f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
+        ]
+        return "\n".join(sections)
+
+    def _render_timeline_body(
+        self,
+        *,
+        query: str,
+        title: str,
+        evidence: Sequence[EvidenceItem],
+        reviewed_at: datetime,
+        confidence: float,
+    ) -> str:
+        doc_ids = sorted(self._unique_docs(evidence))
+        event_lines = [
+            f"- {index + 1}. {item.doc_id} | {item.citation_anchor}: {item.text}" for index, item in enumerate(evidence)
+        ] or ["- No temporal events captured."]
+        sections = [
+            f"# {title}",
+            "",
+            f"## {self._definition_heading(ArtifactType.TIMELINE)}",
+            f"- Query focus: {query}",
+            f"- Timeline scope: {', '.join(doc_ids) if doc_ids else 'No related documents captured.'}",
+            "",
+            "## Timeline",
+            *event_lines,
+            "",
+            "## Key Evidence",
+            *self._evidence_lines(evidence),
+            "",
+            "## Open Questions",
+            "- What date, order, or milestone is still missing from this timeline?",
+            "",
+            "## Last Reviewed",
+            f"- {reviewed_at.isoformat()}",
+            "",
+            "## Confidence and Coverage",
+            f"- Confidence: {confidence:.2f}",
+            f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
+        ]
+        return "\n".join(sections)
+
+    def _render_open_question_body(
+        self,
+        *,
+        query: str,
+        title: str,
+        evidence: Sequence[EvidenceItem],
+        reviewed_at: datetime,
+        confidence: float,
+    ) -> str:
+        doc_ids = sorted(self._unique_docs(evidence))
+        question_lines = self._bullet_lines(
+            [query.strip().rstrip("?")] if query.strip() else [],
+            "No open questions captured.",
+        )
+        candidate_answers = self._bullet_lines(
+            self._key_conclusions(evidence, []),
+            "No candidate answers extracted.",
+        )
+        sections = [
+            f"# {title}",
+            "",
+            f"## {self._definition_heading(ArtifactType.OPEN_QUESTION_PAGE)}",
+            f"- Query focus: {query}",
+            f"- Evidence scope: {', '.join(doc_ids) if doc_ids else 'No related documents captured.'}",
+            "",
+            "## Questions",
+            *question_lines,
+            "",
+            "## Candidate Answers",
+            *candidate_answers,
+            "",
+            "## Key Evidence",
+            *self._evidence_lines(evidence),
+            "",
+            "## Open Questions",
+            "- Which unresolved point should be investigated next?",
+            "",
+            "## Last Reviewed",
+            f"- {reviewed_at.isoformat()}",
+            "",
+            "## Confidence and Coverage",
+            f"- Confidence: {confidence:.2f}",
+            f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
+        ]
+        return "\n".join(sections)
+
+    def _render_body(
+        self,
+        *,
+        query: str,
+        title: str,
+        artifact_type: ArtifactType,
+        evidence: Sequence[EvidenceItem],
+        differences_or_conflicts: Sequence[str],
+        reviewed_at: datetime,
+        confidence: float,
+    ) -> str:
+        if artifact_type is ArtifactType.DOCUMENT_SUMMARY:
+            return self._render_document_summary_body(
+                query=query,
+                title=title,
+                evidence=evidence,
+                reviewed_at=reviewed_at,
+                confidence=confidence,
+            )
+        if artifact_type is ArtifactType.SECTION_SUMMARY:
+            return self._render_section_summary_body(
+                query=query,
+                title=title,
+                evidence=evidence,
+                reviewed_at=reviewed_at,
+                confidence=confidence,
+            )
+        if artifact_type is ArtifactType.TIMELINE:
+            return self._render_timeline_body(
+                query=query,
+                title=title,
+                evidence=evidence,
+                reviewed_at=reviewed_at,
+                confidence=confidence,
+            )
+        if artifact_type is ArtifactType.OPEN_QUESTION_PAGE:
+            return self._render_open_question_body(
+                query=query,
+                title=title,
+                evidence=evidence,
+                reviewed_at=reviewed_at,
+                confidence=confidence,
+            )
+        return self._render_topic_or_comparison_body(
+            query=query,
+            title=title,
+            artifact_type=artifact_type,
+            evidence=evidence,
+            differences_or_conflicts=differences_or_conflicts,
+            reviewed_at=reviewed_at,
+            confidence=confidence,
+        )
 
     def suggest_preservation(
         self,
@@ -165,15 +387,39 @@ class ArtifactService:
     ) -> PreservationSuggestion:
         doc_count = len(self._unique_docs(evidence))
         conflict_count = len(differences_or_conflicts or ())
-        reusable = runtime_mode is RuntimeMode.DEEP and (doc_count >= 2 or conflict_count > 0 or len(evidence) >= 4)
+        normalized = self._normalized_query(query)
+        is_timeline_query = any(token in normalized for token in ("timeline", "trend", "chronology", "over time"))
+        is_open_question_query = any(
+            token in normalized for token in ("open question", "open questions", "unknown", "unresolved", "gap")
+        )
+        is_section_summary_query = "section" in normalized and any(
+            token in normalized for token in ("summarize", "summary", "recap", "overview")
+        )
+        is_document_summary_query = "document" in normalized and any(
+            token in normalized for token in ("summarize", "summary", "recap", "overview")
+        )
+        reusable = runtime_mode is RuntimeMode.DEEP and (
+            doc_count >= 2
+            or conflict_count > 0
+            or len(evidence) >= 4
+            or is_timeline_query
+            or is_open_question_query
+            or is_section_summary_query
+            or is_document_summary_query
+        )
         if not reusable:
             return PreservationSuggestion(suggested=False)
 
-        lowered = query.lower()
-        if "compare" in lowered or conflict_count > 0:
+        if "compare" in normalized or conflict_count > 0:
             artifact_type = ArtifactType.COMPARISON_PAGE.value
-        elif "timeline" in lowered or "trend" in lowered:
+        elif is_timeline_query:
             artifact_type = ArtifactType.TIMELINE.value
+        elif is_open_question_query:
+            artifact_type = ArtifactType.OPEN_QUESTION_PAGE.value
+        elif is_section_summary_query:
+            artifact_type = ArtifactType.SECTION_SUMMARY.value
+        elif is_document_summary_query:
+            artifact_type = ArtifactType.DOCUMENT_SUMMARY.value
         else:
             artifact_type = ArtifactType.TOPIC_PAGE.value
 
@@ -181,6 +427,15 @@ class ArtifactService:
         rationale = "Evidence spans multiple documents and is likely reusable."
         if conflict_count > 0:
             rationale = "Evidence captures a stable comparison or conflict map."
+        elif artifact_type == ArtifactType.TIMELINE.value:
+            rationale = "Evidence is organized around a temporal sequence."
+        elif artifact_type == ArtifactType.OPEN_QUESTION_PAGE.value:
+            rationale = "Evidence captures unresolved questions worth preserving."
+        elif artifact_type in {
+            ArtifactType.DOCUMENT_SUMMARY.value,
+            ArtifactType.SECTION_SUMMARY.value,
+        }:
+            rationale = "Evidence is concentrated enough to preserve a reusable summary."
 
         return PreservationSuggestion(
             suggested=True,

@@ -87,6 +87,10 @@ class OcrVisionRepo(Protocol):
     def extract(self, image_path: Path) -> OcrResult: ...
 
 
+class WebFetchRepo(Protocol):
+    def fetch(self, location: str) -> str: ...
+
+
 class WebSearchRepo(Protocol):
     def search(self, query: str, *, limit: int = 5) -> list[SearchResult]: ...
 
