@@ -7,6 +7,10 @@ from pkp.types.artifact import KnowledgeArtifact
 
 
 class ArtifactServiceProtocol(Protocol):
+    def list_artifacts(self) -> list[KnowledgeArtifact]: ...
+
+    def get_artifact(self, artifact_id: str) -> KnowledgeArtifact | None: ...
+
     def approve(self, artifact_id: str) -> KnowledgeArtifact: ...
 
 
@@ -24,6 +28,15 @@ class ArtifactPromotionRuntime:
         self._artifact_service = artifact_service
         self._artifact_index = artifact_index
         self._telemetry_service = telemetry_service
+
+    def list_artifacts(self) -> list[KnowledgeArtifact]:
+        return self._artifact_service.list_artifacts()
+
+    def get_artifact(self, artifact_id: str) -> KnowledgeArtifact:
+        artifact = self._artifact_service.get_artifact(artifact_id)
+        if artifact is None:
+            raise ValueError(f"Unknown artifact: {artifact_id}")
+        return artifact
 
     def approve(self, artifact_id: str) -> KnowledgeArtifact:
         artifact = self._artifact_service.approve(artifact_id)

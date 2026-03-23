@@ -466,6 +466,12 @@ class ArtifactApprovalAdapter:
     def __init__(self, metadata_repo: SQLiteMetadataRepo) -> None:
         self._metadata_repo = metadata_repo
 
+    def list_artifacts(self) -> list[KnowledgeArtifact]:
+        return self._metadata_repo.list_artifacts()
+
+    def get_artifact(self, artifact_id: str) -> KnowledgeArtifact | None:
+        return self._metadata_repo.get_artifact(artifact_id)
+
     def approve(self, artifact_id: str) -> KnowledgeArtifact:
         artifact = self._metadata_repo.get_artifact(artifact_id)
         if artifact is None:

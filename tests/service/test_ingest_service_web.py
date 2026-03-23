@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pkp.service.ingest_service import IngestService
+from pkp.types.content import SourceType
 
 
 @dataclass
@@ -55,3 +56,23 @@ def test_web_ingest_url_fetches_html_before_parsing(tmp_path: Path) -> None:
     assert fetch_repo.calls == ["https://example.com/article"]
     assert result.source.location == "https://example.com/article"
     assert result.document.title == "Remote Article"
+
+
+def test_browser_clip_ingest_preserves_source_type_and_title(tmp_path: Path) -> None:
+    service = IngestService.create_in_memory(tmp_path)
+
+    html = (
+        "<html><head><title>Original Page</title></head>"
+        "<body><article><h1>Clipped Heading</h1><p>Captured body.</p></article></body></html>"
+    )
+    result = service.ingest_web(
+        location="https://example.com/clipped",
+        html=html,
+        owner="user",
+        title="Saved Clip",
+        source_type=SourceType.BROWSER_CLIP,
+    )
+
+    assert result.source.source_type is SourceType.BROWSER_CLIP
+    assert result.document.title == "Saved Clip"
+    assert result.segments[0].toc_path == ["Clipped Heading"]

@@ -1,35 +1,50 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+from typer.testing import CliRunner
 
 from pkp.bootstrap import build_test_container
-from pkp.ui.api.app import create_app
+from pkp.config import build_execution_policy, default_access_policy
+from pkp.types import ComplexityLevel, ExecutionLocationPreference, TaskType
+from pkp.ui.cli import app as cli_app
+from pkp.ui.dependencies import clear_container_factory, set_container_factory
+
+runner = CliRunner()
 
 
-def test_markdown_query_flow(tmp_path: Path) -> None:
-    app = create_app(container_factory=lambda: build_test_container(tmp_path))
-    client = TestClient(app)
+def test_markdown_query_flow_with_inline_markdown_ingest(
+    tmp_path: Path,
+) -> None:
+    container = build_test_container(tmp_path)
+    clear_container_factory()
+    set_container_factory(lambda: container)
 
-    ingest = client.post(
-        "/ingest",
-        json={
-            "source_type": "markdown",
-            "location": "data/samples/agent-rag-overview.md",
-        },
+    ingest = runner.invoke(
+        cli_app,
+        [
+            "ingest",
+            "--source-type",
+            "markdown",
+            "--title",
+            "Agent RAG Overview",
+            "--content",
+            "# Reliability First\n\nEvidence quality is more important than fluent synthesis.",
+        ],
     )
-    query = client.post(
-        "/query",
-        json={
-            "query": "What is more important than fluent synthesis?",
-            "mode": "fast",
-        },
+    response = container.fast_query_runtime.run(
+        "What is more important than fluent synthesis?",
+        build_execution_policy(
+            task_type=TaskType.LOOKUP,
+            complexity_level=ComplexityLevel.L1_DIRECT,
+            access_policy=default_access_policy(),
+            execution_location_preference=ExecutionLocationPreference.LOCAL_FIRST,
+        ),
     )
 
-    assert ingest.status_code == 200
-    assert query.status_code == 200
-    payload = query.json()
-    assert "Conclusion" not in payload  # API returns structured fields, not a rendered string blob
-    assert payload["conclusion"]
-    assert payload["evidence"]
-    assert "uncertainty" in payload
-    assert "preservation_suggestion" in payload
+    assert ingest.exit_code == 0
+    assert response.conclusion
+    assert response.evidence
+    assert any(
+        "evidence quality is more important than fluent synthesis" in item.text.lower() for item in response.evidence
+    )
+    assert response.uncertainty
+    assert response.preservation_suggestion is not None

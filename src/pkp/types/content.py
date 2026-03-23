@@ -14,6 +14,8 @@ class SourceType(StrEnum):
     IMAGE = "image"
     WEB = "web"
     PLAIN_TEXT = "plain_text"
+    PASTED_TEXT = "pasted_text"
+    BROWSER_CLIP = "browser_clip"
 
 
 class DocumentType(StrEnum):

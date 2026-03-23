@@ -135,6 +135,7 @@ class IngestService:
         owner: str,
         access_policy: AccessPolicy | None = None,
         title: str | None = None,
+        source_type: SourceType | str = SourceType.PLAIN_TEXT,
     ) -> IngestResult:
         parsed = self.plain_text_parser.parse(
             text,
@@ -144,7 +145,7 @@ class IngestService:
         )
         return self._ingest_parsed_document(
             location=location,
-            source_type=SourceType.PLAIN_TEXT,
+            source_type=SourceType(source_type),
             raw_bytes=text.replace("\r\n", "\n").encode("utf-8"),
             parsed=parsed,
             owner=owner,
@@ -197,11 +198,12 @@ class IngestService:
         owner: str,
         access_policy: AccessPolicy | None = None,
         title: str | None = None,
+        source_type: SourceType | str = SourceType.WEB,
     ) -> IngestResult:
         parsed = self.web_parser.parse(html, location=location, title=title, owner=owner)
         return self._ingest_parsed_document(
             location=location,
-            source_type=SourceType.WEB,
+            source_type=SourceType(source_type),
             raw_bytes=html.encode("utf-8"),
             parsed=parsed,
             owner=owner,
@@ -413,6 +415,8 @@ class IngestService:
             SourceType.IMAGE: ".png",
             SourceType.WEB: ".html",
             SourceType.PLAIN_TEXT: ".txt",
+            SourceType.PASTED_TEXT: ".txt",
+            SourceType.BROWSER_CLIP: ".html",
         }[source_type]
 
     @staticmethod
