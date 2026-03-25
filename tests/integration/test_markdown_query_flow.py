@@ -85,3 +85,49 @@ def test_deep_query_session_can_be_read_back_via_api(tmp_path: Path) -> None:
     payload = session.json()
     assert payload["sub_questions"]
     assert payload["evidence_matrix"]
+
+
+def test_deep_query_recalls_prior_episode_memory_on_later_runs(tmp_path: Path) -> None:
+    container = build_test_container(tmp_path)
+    clear_container_factory()
+    set_container_factory(lambda: container)
+
+    runner.invoke(
+        cli_app,
+        [
+            "ingest",
+            "--source-type",
+            "markdown",
+            "--title",
+            "Path Comparison",
+            "--content",
+            "# Fast Path\n\nFast Path prioritizes latency.\n\n# Deep Path\n\nDeep Path supports iterative research.",
+        ],
+    )
+    policy = build_execution_policy(
+        task_type=TaskType.RESEARCH,
+        complexity_level=ComplexityLevel.L4_RESEARCH,
+        access_policy=default_access_policy(),
+        execution_location_preference=ExecutionLocationPreference.LOCAL_FIRST,
+    )
+
+    first = container.deep_research_runtime.run(
+        "compare Fast Path and Deep Path",
+        policy,
+        session_id="research-1",
+    )
+    second = container.deep_research_runtime.run(
+        "compare Fast Path and Deep Path",
+        policy,
+        session_id="research-2",
+    )
+
+    first_session = container.session_runtime.get("research-1")
+    second_session = container.session_runtime.get("research-2")
+
+    assert first.runtime_mode.value == "deep"
+    assert second.runtime_mode.value == "deep"
+    assert first_session.episode_id
+    assert second_session.memory_hints == [
+        "Episode [compare Fast Path and Deep Path]: Deterministic synthesis for: Fast Path prioritizes latency."
+    ]

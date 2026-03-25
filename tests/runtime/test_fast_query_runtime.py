@@ -120,6 +120,22 @@ def test_fast_query_runtime_escalates_when_evidence_is_insufficient() -> None:
     assert response.runtime_mode is RuntimeMode.DEEP
 
 
+def test_fast_query_runtime_returns_retrieval_only_response_when_no_hits_exist() -> None:
+    deep_runtime = FakeDeepRuntime()
+    runtime = FastQueryRuntime(
+        retrieval_service=FakeRetrievalService(hits=[]),
+        evidence_service=FakeEvidenceService(sufficient=False, claim_aligned=False),
+        deep_runtime=deep_runtime,
+    )
+
+    response = runtime.run("missing question", make_policy())
+
+    assert deep_runtime.calls == []
+    assert response.runtime_mode is RuntimeMode.FAST
+    assert response.evidence == []
+    assert response.uncertainty == "high"
+
+
 def test_fast_query_runtime_escalates_on_conflict_or_failed_claim_alignment() -> None:
     deep_runtime = FakeDeepRuntime()
     runtime = FastQueryRuntime(

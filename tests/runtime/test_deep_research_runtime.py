@@ -106,6 +106,39 @@ class FakeEvidenceService:
 
 
 @dataclass
+class FakeMemoryService:
+    recalled_hints: list[str]
+    recall_calls: list[tuple[str, list[str]]] = field(default_factory=list)
+    recorded_episodes: list[dict[str, object]] = field(default_factory=list)
+
+    def recall(self, query: str, source_scope: list[str]) -> list[str]:
+        self.recall_calls.append((query, list(source_scope)))
+        return list(self.recalled_hints)
+
+    def record_episode(
+        self,
+        *,
+        session_id: str,
+        query: str,
+        response: QueryResponse,
+        evidence_matrix: list[dict[str, object]],
+        source_scope: list[str],
+    ) -> str:
+        episode_id = f"episode-{len(self.recorded_episodes) + 1}"
+        self.recorded_episodes.append(
+            {
+                "episode_id": episode_id,
+                "session_id": session_id,
+                "query": query,
+                "response": response.conclusion,
+                "evidence_matrix": list(evidence_matrix),
+                "source_scope": list(source_scope),
+            }
+        )
+        return episode_id
+
+
+@dataclass
 class ClockedRetrievalService:
     clock: "FakeClock"
     batches: list[list[EvidenceItem]]
@@ -141,7 +174,7 @@ def test_deep_research_runtime_builds_evidence_matrix_and_stops_when_sufficient(
 
     session = runtime.session_runtime.get("session-1")
     assert session.sub_questions == ["sub-q-1", "sub-q-2"]
-    assert len(session.evidence_matrix) == 1
+    assert len(session.evidence_matrix) == 2
     assert response.runtime_mode is RuntimeMode.DEEP
     assert response.preservation_suggestion.suggested is True
 
@@ -192,3 +225,61 @@ def test_deep_research_runtime_stops_after_wall_clock_budget_is_exhausted() -> N
 
     assert retrieval.calls == [("sub-q-1", 1), ("sub-q-2", 1)]
     assert response.runtime_mode is RuntimeMode.DEEP
+
+
+def test_deep_research_runtime_recalls_memory_hints_and_records_episode() -> None:
+    memory_service = FakeMemoryService(recalled_hints=["fast path", "deep path"])
+    runtime = DeepResearchRuntime(
+        routing_service=FakeRoutingService(),
+        retrieval_service=FakeRetrievalService(batches=[[hit("a", "doc-1", 0.9)], [hit("b", "doc-2", 0.8)]]),
+        evidence_service=FakeEvidenceService(sufficient_after_round=2),
+        session_runtime=SessionRuntime(),
+        memory_service=memory_service,
+        max_rounds=4,
+    )
+    policy = make_policy().model_copy(update={"source_scope": ["doc-1", "doc-2"]})
+
+    response = runtime.run("compare docs", policy, session_id="memory-session")
+
+    session = runtime.session_runtime.get("memory-session")
+    assert response.runtime_mode is RuntimeMode.DEEP
+    assert memory_service.recall_calls == [("compare docs", ["doc-1", "doc-2"])]
+    assert session.memory_hints == ["fast path", "deep path"]
+    assert session.episode_id == "episode-1"
+    assert memory_service.recorded_episodes == [
+        {
+            "episode_id": "episode-1",
+            "session_id": "memory-session",
+            "query": "compare docs",
+            "response": "deep answer for compare docs",
+            "evidence_matrix": [
+                {"claim": "evidence from doc-1", "sources": ["doc-1"]},
+                {"claim": "evidence from doc-2", "sources": ["doc-2"]},
+            ],
+            "source_scope": ["doc-1", "doc-2"],
+        }
+    ]
+
+
+def test_deep_research_runtime_respects_recursive_depth_limit() -> None:
+    routing = FakeRoutingService(expansions=[["sub-q-1"], ["sub-q-2"], ["sub-q-3"], ["sub-q-4"]])
+    retrieval = FakeRetrievalService(
+        batches=[
+            [hit("a", "doc-1", 0.9)],
+            [hit("b", "doc-2", 0.8)],
+            [hit("c", "doc-3", 0.7)],
+            [hit("d", "doc-4", 0.6)],
+        ]
+    )
+    runtime = DeepResearchRuntime(
+        routing_service=routing,
+        retrieval_service=retrieval,
+        evidence_service=FakeEvidenceService(sufficient_after_round=99),
+        session_runtime=SessionRuntime(),
+        max_rounds=4,
+        max_recursive_depth=1,
+    )
+
+    runtime.run("compare docs", make_policy(), session_id="depth-limited")
+
+    assert retrieval.calls == [("sub-q-1", 1), ("sub-q-2", 2)]

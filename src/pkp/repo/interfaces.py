@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -101,3 +101,21 @@ class ModelProviderRepo(Protocol):
     def chat(self, prompt: str) -> str: ...
 
     def rerank(self, query: str, candidates: Sequence[str]) -> list[int]: ...
+
+
+class VectorRepo(Protocol):
+    def upsert(
+        self,
+        item_id: str,
+        vector: Iterable[float],
+        *,
+        metadata: dict[str, str] | None = None,
+    ) -> None: ...
+
+    def search(
+        self,
+        query: Iterable[float],
+        *,
+        limit: int = 10,
+        doc_ids: list[str] | None = None,
+    ) -> list[VectorSearchResult]: ...

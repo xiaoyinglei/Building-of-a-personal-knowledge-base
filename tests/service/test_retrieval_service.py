@@ -174,3 +174,35 @@ def test_retrieval_service_blocks_web_search_when_policy_denies() -> None:
     assert result.self_check.retrieve_more is True
     assert result.self_check.evidence_sufficient is False
     assert result.evidence.external == []
+
+
+def test_retrieval_service_skips_web_search_when_internal_evidence_is_already_sufficient() -> None:
+    service, calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate("chunk-a", "doc-a", "alpha", "#a", 0.9, 1),
+            FakeCandidate("chunk-b", "doc-b", "beta", "#b", 0.85, 2),
+            FakeCandidate("chunk-c", "doc-c", "gamma", "#c", 0.8, 3),
+            FakeCandidate("chunk-d", "doc-d", "delta", "#d", 0.75, 4),
+        ],
+        web_candidates=[
+            FakeCandidate(
+                "chunk-web",
+                "web-doc",
+                "external alpha",
+                "#web",
+                0.7,
+                1,
+                source_kind="external",
+                source_id="web",
+            )
+        ],
+    )
+
+    result = service.retrieve(
+        "compare Alpha and Beta",
+        access_policy=AccessPolicy.default(),
+    )
+
+    assert result.self_check.evidence_sufficient is True
+    assert calls["web_calls"] == 0
+    assert result.evidence.external == []

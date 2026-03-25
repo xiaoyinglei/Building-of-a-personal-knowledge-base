@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -15,6 +15,7 @@ from pkp.service.ingest_service import IngestService
 from pkp.service.retrieval_service import RetrievalResult, RetrievalService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.types import (
+    AccessPolicy,
     ArtifactStatus,
     Document,
     EvidenceItem,
@@ -23,6 +24,14 @@ from pkp.types import (
     PreservationSuggestion,
     QueryResponse,
     RuntimeMode,
+)
+from pkp.types.text import (
+    keyword_overlap,
+    looks_command_like,
+    looks_definition_query,
+    looks_definition_text,
+    search_terms,
+    split_sentences,
 )
 
 
@@ -37,12 +46,13 @@ class RetrievedCandidate:
     source_kind: str = "internal"
     source_id: str | None = None
     section_path: tuple[str, ...] = ()
+    effective_access_policy: AccessPolicy | None = None
 
 
 class VectorSearchRepoProtocol(Protocol):
     def search(
         self,
-        query: str,
+        query: Iterable[float],
         *,
         limit: int = 10,
         doc_ids: list[str] | None = None,
@@ -73,15 +83,15 @@ class SearchBackedRetrievalFactory:
         return []
 
     def section_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
-        keywords = {token.lower() for token in query.split() if len(token) > 3}
+        query_terms = search_terms(query)
         candidates: list[RetrievedCandidate] = []
         for document in self._iter_documents(source_scope):
             for chunk in self._metadata_repo.list_chunks(document.doc_id):
                 segment = self._metadata_repo.get_segment(chunk.segment_id)
                 if segment is None:
                     continue
-                section_text = " ".join(segment.toc_path).lower()
-                overlap = sum(1 for token in keywords if token in section_text)
+                section_text = " ".join(segment.toc_path)
+                overlap = keyword_overlap(query_terms, section_text)
                 if overlap == 0:
                     continue
                 candidates.append(
@@ -94,6 +104,7 @@ class SearchBackedRetrievalFactory:
                         score=float(overlap),
                         rank=1,
                         section_path=tuple(segment.toc_path),
+                        effective_access_policy=chunk.effective_access_policy,
                     )
                 )
         candidates.sort(key=lambda item: (-item.score, item.chunk_id))
@@ -125,19 +136,26 @@ class SearchBackedRetrievalFactory:
                 source_id=result.url,
                 text=result.snippet,
                 citation_anchor=result.title,
-                score=result.score or 0.5,
-                rank=index,
-                source_kind="external",
-            )
+                    score=result.score or 0.5,
+                    rank=index,
+                    source_kind="external",
+                )
             for index, result in enumerate(results, start=1)
         ]
 
     def vector_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
+        embed_query: Callable[[Sequence[str]], list[list[float]]],
     ) -> Callable[[str, list[str]], Sequence[RetrievedCandidate]]:
         def _retrieve(query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
-            results = vector_repo.search(query, limit=12, doc_ids=source_scope or None)
+            try:
+                query_vectors = embed_query([query])
+            except RuntimeError:
+                return []
+            if not query_vectors:
+                return []
+            results = vector_repo.search(query_vectors[0], limit=12, doc_ids=source_scope or None)
             ordered_chunk_ids = [result.chunk_id for result in results]
             score_map = {result.chunk_id: float(result.score) for result in results}
             candidates = self._build_candidates_from_chunk_ids(
@@ -201,6 +219,7 @@ class SearchBackedRetrievalFactory:
                     rank=rank,
                     source_kind=source_kind,
                     section_path=tuple(segment.toc_path) if segment is not None else (),
+                    effective_access_policy=chunk.effective_access_policy,
                 )
             )
         return candidates
@@ -280,7 +299,7 @@ class RuntimeEvidenceAdapter:
 
     def build_fast_response(self, query: str, hits: list[EvidenceItem]) -> QueryResponse:
         conflicts = self.detect_conflicts(hits)
-        conclusion = hits[0].text if hits else "Insufficient evidence."
+        conclusion = self._extractive_conclusion(query, hits)
         suggestion = self._persist_suggestion(query, RuntimeMode.FAST, hits, conflicts)
         return QueryResponse(
             conclusion=conclusion,
@@ -292,7 +311,21 @@ class RuntimeEvidenceAdapter:
         )
 
     def claim_citation_aligned(self, response: QueryResponse) -> bool:
-        return bool(response.evidence)
+        if not response.evidence:
+            return response.conclusion.lower().startswith("insufficient evidence")
+
+        conclusion = response.conclusion.strip()
+        if not conclusion:
+            return False
+
+        candidates = [conclusion]
+        if ":" in conclusion:
+            _, suffix = conclusion.split(":", 1)
+            normalized_suffix = suffix.strip()
+            if normalized_suffix:
+                candidates.append(normalized_suffix)
+
+        return any(self._text_supported_by_evidence(candidate, response.evidence) for candidate in candidates)
 
     def build_evidence_matrix(self, hits: list[EvidenceItem]) -> list[dict[str, object]]:
         self._last_hits = list(hits)
@@ -340,16 +373,26 @@ class RuntimeEvidenceAdapter:
             if sources and claim:
                 summary_parts.append(f"{sources[0]}: {claim}")
         summary = " | ".join(summary_parts) if summary_parts else "Insufficient evidence."
-        conclusion = self._synthesize_conclusion(query, summary, location)
-        suggestion = self._persist_suggestion(query, RuntimeMode.DEEP, hits, conflicts)
-        return QueryResponse(
+        grounded_candidate = self._extractive_conclusion(query, hits)
+        conclusion = self._synthesize_conclusion(query, summary, location, grounded_candidate)
+        response = QueryResponse(
             conclusion=conclusion,
             evidence=hits,
             differences_or_conflicts=conflicts,
             uncertainty="medium" if conflicts else "low",
-            preservation_suggestion=suggestion,
+            preservation_suggestion=PreservationSuggestion(suggested=False),
             runtime_mode=RuntimeMode.DEEP,
         )
+        if not self.claim_citation_aligned(response):
+            if self._telemetry_service is not None:
+                self._telemetry_service.record_claim_citation_failure(
+                    response_mode=RuntimeMode.DEEP.value,
+                    evidence_count=len(hits),
+                )
+            return self.build_retrieval_only_response(query, hits)
+
+        suggestion = self._persist_suggestion(query, RuntimeMode.DEEP, hits, conflicts)
+        return response.model_copy(update={"preservation_suggestion": suggestion})
 
     def build_retrieval_only_response(self, query: str, hits: list[EvidenceItem]) -> QueryResponse:
         del query
@@ -390,15 +433,32 @@ class RuntimeEvidenceAdapter:
             evidence=hits,
             differences_or_conflicts=conflicts,
         )
-        self._metadata_repo.save_artifact(artifact)
+        list_artifacts = getattr(self._metadata_repo, "list_artifacts", None)
+        existing_artifacts = list_artifacts() if callable(list_artifacts) else []
+        lifecycle_artifacts = self._artifact_service.apply_lifecycle(
+            proposed=artifact,
+            existing_artifacts=[
+                item
+                for item in existing_artifacts
+                if item.artifact_type is artifact.artifact_type and item.title == artifact.title
+            ],
+        )
+        for item in lifecycle_artifacts:
+            self._metadata_repo.save_artifact(item)
         return suggestion.model_copy(update={"artifact_id": artifact.artifact_id})
 
-    def _synthesize_conclusion(self, query: str, summary: str, location: str) -> str:
+    def _synthesize_conclusion(
+        self,
+        query: str,
+        summary: str,
+        location: str,
+        grounded_candidate: str,
+    ) -> str:
         providers = self._provider_order(location)
         if not providers:
-            return summary
+            return grounded_candidate
 
-        prompt = self._build_synthesis_prompt(query, summary)
+        prompt = self._build_synthesis_prompt(query, summary, grounded_candidate)
         last_error: RuntimeError | None = None
         failed_cloud_provider_count = 0
         for provider in providers:
@@ -438,28 +498,88 @@ class RuntimeEvidenceAdapter:
         return ()
 
     @staticmethod
-    def _build_synthesis_prompt(query: str, summary: str) -> str:
+    def _build_synthesis_prompt(query: str, summary: str, grounded_candidate: str) -> str:
         return "\n".join(
             [
-                query,
+                grounded_candidate,
                 "",
-                "Synthesize the evidence into a concise answer.",
+                f"Question: {query}",
+                "Synthesize the evidence into a concise answer without introducing unsupported claims.",
                 summary,
             ]
         )
 
+    @staticmethod
+    def _text_supported_by_evidence(conclusion: str, evidence: list[EvidenceItem]) -> bool:
+        conclusion_terms = search_terms(conclusion)
+        required_overlap = max(2, (len(conclusion_terms) + 1) // 2) if conclusion_terms else 0
+        return any(
+            conclusion in item.text
+            or (
+                required_overlap > 0
+                and keyword_overlap(conclusion_terms, item.text) >= required_overlap
+            )
+            for item in evidence
+        )
+
+    @staticmethod
+    def _extractive_conclusion(query: str, hits: list[EvidenceItem]) -> str:
+        if not hits:
+            return "Insufficient evidence in indexed sources."
+
+        query_terms = search_terms(query)
+        query_is_command_like = looks_command_like(query)
+        query_is_definition_like = looks_definition_query(query)
+        normalized_query = query.strip().lower()
+        sentences = [sentence for item in hits[:5] for sentence in split_sentences(item.text)]
+        if not sentences:
+            return hits[0].text
+
+        def _score(sentence: str) -> float:
+            score = float(keyword_overlap(query_terms, sentence))
+            if normalized_query and normalized_query in sentence.lower():
+                score += 2.0
+            if not query_is_command_like and looks_command_like(sentence):
+                score -= 5.0
+            if query_is_definition_like and not looks_command_like(sentence) and looks_definition_text(sentence):
+                score += 4.0
+            return score
+
+        non_command_sentences = [sentence for sentence in sentences if not looks_command_like(sentence)]
+        candidate_pool = (
+            non_command_sentences
+            if (query_is_definition_like or not query_is_command_like) and non_command_sentences
+            else sentences
+        )
+        return max(candidate_pool, key=_score)
+
 
 class ResearchPlannerAdapter:
-    def decompose(self, query: str) -> list[str]:
+    def decompose(self, query: str, memory_hints: Sequence[str] = ()) -> list[str]:
         lowered = query.lower()
-        if "compare" in lowered or "difference" in lowered or "conflict" in lowered:
+        if (
+            "compare" in lowered
+            or "difference" in lowered
+            or "conflict" in lowered
+            or "比较" in query
+            or "差异" in query
+            or "冲突" in query
+        ):
             return [query, f"{query} evidence"]
         return [query]
 
-    def expand(self, query: str, evidence_matrix: list[dict[str, object]], round_index: int) -> list[str]:
+    def expand(
+        self,
+        query: str,
+        evidence_matrix: list[dict[str, object]],
+        round_index: int,
+        memory_hints: Sequence[str] = (),
+    ) -> list[str]:
         if evidence_matrix or round_index >= 2:
             return []
-        return [f"{query} details"]
+        expansions = [f"{query} details"]
+        expansions.extend(f"{query} {hint}" for hint in memory_hints[:2] if hint)
+        return expansions
 
 
 class ArtifactApprovalAdapter:

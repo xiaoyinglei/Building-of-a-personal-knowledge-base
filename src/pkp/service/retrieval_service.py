@@ -116,7 +116,7 @@ class RetrievalService:
             access_policy=access_policy,
         )
 
-        branch_candidates: list[list[CandidateLike]] = []
+        internal_branches: list[list[CandidateLike]] = []
         full_text_candidates = self._evidence_service.filter_candidates(
             self._full_text_retriever(query, scope),
             source_scope=scope,
@@ -138,23 +138,13 @@ class RetrievalService:
             runtime_mode=decision.runtime_mode,
         )
         self._record_branch_usage("section", section_candidates, decision.runtime_mode.value)
-        branch_candidates.extend([full_text_candidates, vector_candidates, section_candidates])
+        internal_branches.extend([full_text_candidates, vector_candidates, section_candidates])
 
-        if decision.web_search_allowed and access_policy.external_retrieval.value == "allow":
-            web_candidates = self._evidence_service.filter_candidates(
-                self._web_retriever(query, scope),
-                source_scope=scope,
-                access_policy=access_policy,
-                runtime_mode=decision.runtime_mode,
-            )
-            self._record_branch_usage("web", web_candidates, decision.runtime_mode.value)
-            branch_candidates.append(web_candidates)
-
-        candidate_count = sum(len(branch) for branch in branch_candidates)
-        fused_candidates = self._rrf_fuse(branch_candidates)
+        fused_candidates = self._rrf_fuse(internal_branches)
+        candidate_count = sum(len(branch) for branch in internal_branches)
         if self._telemetry_service is not None:
             self._telemetry_service.record_rrf_fusion(
-                branch_count=len(branch_candidates),
+                branch_count=len(internal_branches),
                 candidate_count=candidate_count,
                 fused_count=len(fused_candidates),
                 duplicate_count=max(0, candidate_count - len(fused_candidates)),
@@ -171,6 +161,48 @@ class RetrievalService:
                 reordered=fused_ids != reranked_ids,
                 top1_changed=(fused_ids[:1] != reranked_ids[:1]),
             )
+
+        internal_evidence = self._evidence_service.assemble_bundle(reranked_candidates)
+        internal_self_check = self._evidence_service.evaluate_self_check(
+            bundle=internal_evidence,
+            task_type=decision.task_type,
+            complexity_level=decision.complexity_level,
+        )
+        web_candidates: list[CandidateLike] = []
+        if (
+            decision.web_search_allowed
+            and access_policy.external_retrieval.value == "allow"
+            and internal_self_check.retrieve_more
+        ):
+            retrieved_web_candidates = self._evidence_service.filter_candidates(
+                self._web_retriever(query, scope),
+                source_scope=scope,
+                access_policy=access_policy,
+                runtime_mode=decision.runtime_mode,
+            )
+            self._record_branch_usage("web", retrieved_web_candidates, decision.runtime_mode.value)
+            if retrieved_web_candidates:
+                web_candidates = retrieved_web_candidates
+                combined_branches = [*internal_branches, web_candidates]
+                combined_candidate_count = sum(len(branch) for branch in combined_branches)
+                fused_candidates = self._rrf_fuse(combined_branches)
+                if self._telemetry_service is not None:
+                    self._telemetry_service.record_rrf_fusion(
+                        branch_count=len(combined_branches),
+                        candidate_count=combined_candidate_count,
+                        fused_count=len(fused_candidates),
+                        duplicate_count=max(0, combined_candidate_count - len(fused_candidates)),
+                    )
+                reranked_candidates = list(self._reranker(query, fused_candidates))
+                if self._telemetry_service is not None:
+                    fused_ids = [candidate.chunk_id for candidate in fused_candidates]
+                    reranked_ids = [candidate.chunk_id for candidate in reranked_candidates]
+                    self._telemetry_service.record_rerank_effectiveness(
+                        input_count=len(fused_candidates),
+                        output_count=len(reranked_candidates),
+                        reordered=fused_ids != reranked_ids,
+                        top1_changed=(fused_ids[:1] != reranked_ids[:1]),
+                    )
 
         evidence = self._evidence_service.assemble_bundle(reranked_candidates)
         graph_expanded = False
