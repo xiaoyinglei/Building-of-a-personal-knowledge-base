@@ -53,6 +53,16 @@ class TypedIngestProtocol(Protocol):
         access_policy: AccessPolicy | None = None,
     ) -> IngestResult: ...
 
+    def ingest_docx(
+        self,
+        *,
+        location: str,
+        docx_path: Path,
+        owner: str,
+        access_policy: AccessPolicy | None = None,
+        title: str | None = None,
+    ) -> IngestResult: ...
+
     def ingest_web(
         self,
         *,
@@ -68,6 +78,16 @@ class TypedIngestProtocol(Protocol):
         self,
         *,
         location: str,
+        owner: str,
+        title: str | None = None,
+        access_policy: AccessPolicy | None = None,
+    ) -> IngestResult: ...
+
+    def ingest_file(
+        self,
+        *,
+        location: str,
+        file_path: Path,
         owner: str,
         title: str | None = None,
         access_policy: AccessPolicy | None = None,
@@ -130,6 +150,17 @@ class IngestRuntime:
                 owner="user",
                 access_policy=access_policy,
             )
+        elif source_type == "docx":
+            if content is not None:
+                raise ValueError("Inline content is not supported for docx sources")
+            path = self._base_path / resolved_location
+            result = typed_service.ingest_docx(
+                location=resolved_location,
+                docx_path=path,
+                owner="user",
+                title=title,
+                access_policy=access_policy,
+            )
         elif source_type == "image":
             if content is not None:
                 raise ValueError("Inline content is not supported for image sources")
@@ -186,6 +217,40 @@ class IngestRuntime:
             "location": resolved_location,
         }
 
+    def process_file(
+        self,
+        *,
+        location: str,
+        title: str | None = None,
+        access_policy: AccessPolicy | None = None,
+    ) -> dict[str, object]:
+        typed_service = cast(TypedIngestProtocol, self._ingest_service)
+        path = self._base_path / location
+        result = typed_service.ingest_file(
+            location=location,
+            file_path=path,
+            owner="user",
+            title=title,
+            access_policy=access_policy,
+        )
+        processing = getattr(result, "processing", None)
+        return {
+            "source_id": result.source.source_id,
+            "doc_id": result.document.doc_id,
+            "source_type": str(getattr(result.source, "source_type", "")),
+            "location": location,
+            "processing": None if processing is None else processing.model_dump(mode="json"),
+        }
+
+    def repair_indexes(self) -> dict[str, int]:
+        repair = getattr(self._ingest_service, "repair_indexes", None)
+        if not callable(repair):
+            raise ValueError("ingest service does not support index repair")
+        result = repair()
+        if not isinstance(result, dict):
+            raise RuntimeError("repair_indexes must return a result dictionary")
+        return result
+
     @staticmethod
     def _is_remote_web_location(location: str) -> bool:
         parsed = urlparse(location)
@@ -195,7 +260,10 @@ class IngestRuntime:
         if content is not None:
             return content
         path = self._base_path / location
-        return path.read_text(encoding="utf-8")
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"{location} is not UTF-8 text; choose the correct source type before uploading.") from exc
 
     @staticmethod
     def _resolve_location(*, source_type: str, location: str | None, content: str | None) -> str:

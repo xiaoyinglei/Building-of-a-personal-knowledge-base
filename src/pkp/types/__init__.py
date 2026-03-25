@@ -11,6 +11,7 @@ from pkp.types.access import (
 from pkp.types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
 from pkp.types.content import (
     Chunk,
+    ChunkRole,
     Document,
     DocumentType,
     GraphEdge,
@@ -18,6 +19,16 @@ from pkp.types.content import (
     Segment,
     Source,
     SourceType,
+)
+from pkp.types.diagnostics import (
+    CapabilityHealth,
+    HealthReport,
+    IndexHealth,
+    ModelDiagnostics,
+    ProviderAttempt,
+    ProviderHealth,
+    QueryDiagnostics,
+    RetrievalDiagnostics,
 )
 from pkp.types.envelope import EvidenceItem, ExecutionPolicy, PreservationSuggestion, QueryResponse
 from pkp.types.memory import (
@@ -28,6 +39,13 @@ from pkp.types.memory import (
     UserMemory,
     UserProfile,
 )
+from pkp.types.processing import (
+    ChunkingStrategy,
+    ChunkRoutingDecision,
+    ChunkStatistics,
+    DocumentFeatures,
+    DocumentProcessingPackage,
+)
 from pkp.types.query import ComplexityLevel, QueryRequest, ResearchSubQuestion, TaskType
 
 __all__ = [
@@ -35,9 +53,16 @@ __all__ = [
     "ArtifactStatus",
     "ArtifactType",
     "Chunk",
+    "ChunkingStrategy",
+    "ChunkRole",
+    "ChunkRoutingDecision",
+    "ChunkStatistics",
     "ComplexityLevel",
+    "CapabilityHealth",
     "Document",
+    "DocumentFeatures",
     "DocumentType",
+    "DocumentProcessingPackage",
     "EvidenceItem",
     "ExecutionLocation",
     "ExecutionLocationPreference",
@@ -45,14 +70,21 @@ __all__ = [
     "ExternalRetrievalPolicy",
     "GraphEdge",
     "GraphNode",
+    "HealthReport",
+    "IndexHealth",
     "KnowledgeArtifact",
     "MemoryEvidenceLink",
     "MemoryKind",
+    "ModelDiagnostics",
     "PreservationSuggestion",
+    "ProviderAttempt",
+    "ProviderHealth",
     "QueryRequest",
+    "QueryDiagnostics",
     "QueryResponse",
     "ResearchSubQuestion",
     "ResearchEpisode",
+    "RetrievalDiagnostics",
     "Residency",
     "RuntimeMode",
     "Segment",

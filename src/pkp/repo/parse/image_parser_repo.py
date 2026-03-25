@@ -6,7 +6,7 @@ from PIL import Image
 
 from pkp.repo.interfaces import OcrVisionRepo, ParsedDocument, ParsedSection
 from pkp.repo.parse._util import default_title_from_location, slugify
-from pkp.types.content import DocumentType
+from pkp.types.content import DocumentType, SourceType
 
 
 class ImageParserRepo:
@@ -47,6 +47,7 @@ class ImageParserRepo:
         )
         return ParsedDocument(
             title=document_title,
+            source_type=SourceType.IMAGE,
             doc_type=DocumentType.IMAGE,
             authors=[owner],
             language="en",

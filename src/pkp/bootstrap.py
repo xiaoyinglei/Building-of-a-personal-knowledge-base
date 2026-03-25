@@ -9,10 +9,11 @@ import httpx
 from pkp.config import AppSettings
 from pkp.config.policies import RoutingThresholds
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import ModelProviderRepo, OcrResult, VectorRepo
+from pkp.repo.interfaces import EmbeddingProviderBinding, OcrResult, VectorRepo
 from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
 from pkp.repo.models.ollama_provider_repo import OllamaProviderRepo
 from pkp.repo.models.openai_provider_repo import OpenAIProviderRepo
+from pkp.repo.parse.docling_parser_repo import DoclingParserRepo
 from pkp.repo.parse.image_parser_repo import ImageParserRepo
 from pkp.repo.parse.markdown_parser_repo import MarkdownParserRepo
 from pkp.repo.parse.pdf_parser_repo import PDFParserRepo
@@ -28,6 +29,7 @@ from pkp.repo.vision.ocr_vision_repo import DeterministicOcrVisionRepo
 from pkp.runtime.adapters import (
     ArtifactApprovalAdapter,
     ArtifactIndexerAdapter,
+    InstrumentedReranker,
     ResearchPlannerAdapter,
     RetrievalRuntimeAdapter,
     RuntimeEvidenceAdapter,
@@ -36,11 +38,14 @@ from pkp.runtime.adapters import (
 from pkp.runtime.artifact_promotion_runtime import ArtifactPromotionRuntime
 from pkp.runtime.container import RuntimeContainer
 from pkp.runtime.deep_research_runtime import DeepResearchRuntime
+from pkp.runtime.diagnostics_runtime import DiagnosticsRuntime, ProviderBinding
 from pkp.runtime.fast_query_runtime import FastQueryRuntime
 from pkp.runtime.ingest_runtime import IngestRuntime
+from pkp.runtime.provider_metadata import embedding_space
 from pkp.runtime.session_runtime import SessionRuntime
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.chunking_service import ChunkingService
+from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.evidence_service import CandidateLike, EvidenceService
 from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.ingest_service import IngestService
@@ -91,6 +96,12 @@ def _sample_web_fetch_repo() -> HttpWebFetchRepo:
 class _DeterministicModelProvider:
     def __init__(self) -> None:
         self._fallback = FallbackEmbeddingRepo()
+        self.provider_name = "deterministic"
+        self.chat_model_name = "deterministic-chat"
+        self.embedding_model_name = "deterministic-embed"
+        self.is_chat_configured = True
+        self.is_embed_configured = True
+        self.is_rerank_configured = False
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         return self._fallback.embed(texts)
@@ -104,16 +115,35 @@ class _DeterministicModelProvider:
         return list(range(len(candidates)))
 
 
-def _select_embedding_provider(
+def _embedding_bindings(
     *,
     local_providers: Sequence[object],
     cloud_providers: Sequence[object],
-) -> ModelProviderRepo:
-    for provider in (*local_providers, *cloud_providers):
+) -> tuple[EmbeddingProviderBinding, ...]:
+    bindings: list[EmbeddingProviderBinding] = []
+    for provider in cloud_providers:
         embed = getattr(provider, "embed", None)
         if callable(embed):
-            return cast(ModelProviderRepo, provider)
-    return FallbackEmbeddingRepo()
+            bindings.append(
+                EmbeddingProviderBinding(
+                    provider=provider,
+                    space=embedding_space(provider),
+                    location="cloud",
+                )
+            )
+    for provider in local_providers:
+        embed = getattr(provider, "embed", None)
+        if callable(embed):
+            bindings.append(
+                EmbeddingProviderBinding(
+                    provider=provider,
+                    space=embedding_space(provider),
+                    location="local",
+                )
+            )
+    if bindings:
+        return tuple(bindings)
+    return (EmbeddingProviderBinding(provider=FallbackEmbeddingRepo(), space="default", location="runtime"),)
 
 
 def _build_ingest_service(
@@ -122,14 +152,14 @@ def _build_ingest_service(
     *,
     ocr_repo: DeterministicOcrVisionRepo,
     web_fetch_repo: HttpWebFetchRepo,
-    embedding_repo: ModelProviderRepo,
+    embedding_bindings: tuple[EmbeddingProviderBinding, ...],
 ) -> IngestService:
     runtime_root.mkdir(parents=True, exist_ok=True)
     object_store_root.mkdir(parents=True, exist_ok=True)
     return IngestService(
         metadata_repo=SQLiteMetadataRepo(runtime_root / "metadata.sqlite3"),
         fts_repo=SQLiteFTSRepo(runtime_root / "fts.sqlite3"),
-        vector_repo=SQLiteVectorRepo(runtime_root / "vectors.sqlite3"),
+        vector_repo=cast(VectorRepo, SQLiteVectorRepo(runtime_root / "vectors.sqlite3")),
         graph_repo=SQLiteGraphRepo(runtime_root / "graph.sqlite3"),
         object_store=FileObjectStore(object_store_root),
         markdown_parser=MarkdownParserRepo(),
@@ -138,10 +168,12 @@ def _build_ingest_service(
         image_parser=ImageParserRepo(ocr_repo),
         web_parser=WebParserRepo(),
         web_fetch_repo=web_fetch_repo,
+        docling_parser=DoclingParserRepo(ocr_repo),
         policy_resolution_service=PolicyResolutionService(),
         toc_service=TOCService(),
         chunking_service=ChunkingService(),
-        embedding_repo=embedding_repo,
+        document_processing_service=DocumentProcessingService(toc_service=TOCService()),
+        embedding_bindings=embedding_bindings,
     )
 
 
@@ -157,7 +189,7 @@ def _build_runtime_container(
     cloud_providers: Sequence[object] = (),
     local_providers: Sequence[object] = (),
 ) -> RuntimeContainer:
-    embedding_repo = _select_embedding_provider(
+    embedding_bindings = _embedding_bindings(
         local_providers=local_providers,
         cloud_providers=cloud_providers,
     )
@@ -166,12 +198,13 @@ def _build_runtime_container(
         object_store_root,
         ocr_repo=ocr_repo,
         web_fetch_repo=web_fetch_repo,
-        embedding_repo=embedding_repo,
+        embedding_bindings=embedding_bindings,
     )
+    ingest_service.repair_indexes()
     telemetry_service = TelemetryService.create_jsonl(runtime_root / "telemetry" / "events.jsonl")
     metadata_repo: SQLiteMetadataRepo = ingest_service.metadata_repo
     fts_repo: SQLiteFTSRepo = ingest_service.fts_repo
-    vector_repo: VectorRepo = ingest_service.vector_repo
+    vector_repo = cast(SQLiteVectorRepo, ingest_service.vector_repo)
     graph_repo: SQLiteGraphRepo = ingest_service.graph_repo
 
     retrieval_factory = SearchBackedRetrievalFactory(
@@ -185,7 +218,10 @@ def _build_runtime_container(
     )
     vector_retriever = cast(
         Callable[[str, list[str]], Sequence[CandidateLike]],
-        retrieval_factory.vector_retriever_from_repo(vector_repo, embedding_repo.embed),
+        retrieval_factory.vector_retriever_from_repo(
+            vector_repo,
+            embedding_bindings,
+        ),
     )
     section_retriever = cast(
         Callable[[str, list[str]], Sequence[CandidateLike]],
@@ -202,13 +238,14 @@ def _build_runtime_container(
     routing_service = RoutingService(thresholds)
     evidence_service = EvidenceService(thresholds)
     rerank_service = HeuristicRerankService()
+    instrumented_reranker = InstrumentedReranker(rerank_service)
     retrieval_service = RetrievalService(
         full_text_retriever=standard_retriever,
         vector_retriever=vector_retriever,
         section_retriever=section_retriever,
         graph_expander=graph_expander,
         web_retriever=web_retriever,
-        reranker=cast(Reranker, rerank_service.rerank),
+        reranker=cast(Reranker, instrumented_reranker),
         routing_service=routing_service,
         evidence_service=evidence_service,
         graph_expansion_service=GraphExpansionService(),
@@ -249,12 +286,22 @@ def _build_runtime_container(
         telemetry_service=telemetry_service,
     )
     ingest_runtime = IngestRuntime(ingest_service=ingest_service, base_path=_project_root())
+    diagnostics_runtime = DiagnosticsRuntime(
+        providers=[
+            *[ProviderBinding(provider=provider, location="cloud") for provider in cloud_providers],
+            *[ProviderBinding(provider=provider, location="local") for provider in local_providers],
+            ProviderBinding(provider=instrumented_reranker, location="runtime"),
+        ],
+        metadata_repo=metadata_repo,
+        vector_repo=vector_repo,
+    )
     return RuntimeContainer(
         ingest_runtime=ingest_runtime,
         fast_query_runtime=fast_runtime,
         deep_research_runtime=deep_runtime,
         artifact_promotion_runtime=artifact_promotion_runtime,
         session_runtime=session_runtime,
+        diagnostics_runtime=diagnostics_runtime,
         metadata_repo=metadata_repo,
         telemetry_service=telemetry_service,
     )

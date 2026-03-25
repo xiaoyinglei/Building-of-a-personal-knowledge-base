@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 from pkp.runtime.ingest_runtime import IngestRuntime
 from pkp.types import (
     AccessPolicy,
@@ -56,6 +58,50 @@ class FakeWebIngestService:
         )()
 
 
+@dataclass
+class FakeFilePipelineService:
+    calls: list[dict[str, object | None]]
+
+    def ingest_file(
+        self,
+        *,
+        location: str,
+        file_path: Path,
+        owner: str,
+        title: str | None = None,
+        access_policy: AccessPolicy | None = None,
+    ) -> object:
+        self.calls.append(
+            {
+                "location": location,
+                "file_path": file_path,
+                "owner": owner,
+                "title": title,
+                "access_policy": access_policy,
+            }
+        )
+        processing = type(
+            "Processing",
+            (),
+            {
+                "model_dump": lambda self, mode="json": {
+                    "analysis": {"source_type": "docx"},
+                    "routing": {"selected_strategy": "hierarchical"},
+                    "stats": {"total_chunks": 6},
+                },
+            },
+        )()
+        return type(
+            "Result",
+            (),
+            {
+                "source": type("Source", (), {"source_id": "src-file", "source_type": "docx"})(),
+                "document": type("Document", (), {"doc_id": "doc-file"})(),
+                "processing": processing,
+            },
+        )()
+
+
 def test_ingest_runtime_routes_web_urls_without_local_file_reads(tmp_path) -> None:
     service = FakeWebIngestService(calls=[])
     runtime = IngestRuntime(ingest_service=service, base_path=tmp_path)
@@ -64,6 +110,27 @@ def test_ingest_runtime_routes_web_urls_without_local_file_reads(tmp_path) -> No
 
     assert service.calls == ["https://example.com/article"]
     assert result["source_id"] == "src-web"
+
+
+def test_ingest_runtime_process_file_uses_unified_pipeline_entry(tmp_path: Path) -> None:
+    service = FakeFilePipelineService(calls=[])
+    runtime = IngestRuntime(ingest_service=service, base_path=tmp_path)
+    file_path = tmp_path / "report.docx"
+    file_path.write_bytes(b"docx")
+
+    result = runtime.process_file(location="report.docx")
+
+    assert service.calls == [
+        {
+            "location": "report.docx",
+            "file_path": tmp_path / "report.docx",
+            "owner": "user",
+            "title": None,
+            "access_policy": None,
+        }
+    ]
+    assert result["source_id"] == "src-file"
+    assert result["processing"]["routing"]["selected_strategy"] == "hierarchical"
 
 
 @dataclass
@@ -265,3 +332,13 @@ def test_ingest_runtime_passes_access_policy_into_typed_ingest_service(tmp_path:
     )
 
     assert service.calls[0]["access_policy"] == policy
+
+
+def test_ingest_runtime_rejects_non_utf8_plain_text_files(tmp_path: Path) -> None:
+    service = FakeTypedIngestService(calls=[])
+    runtime = IngestRuntime(ingest_service=service, base_path=tmp_path)
+    binary_path = tmp_path / "notes.bin"
+    binary_path.write_bytes(b"\xff\xfe\x00\x87")
+
+    with pytest.raises(ValueError, match="not UTF-8 text"):
+        runtime.ingest_source(source_type="plain_text", location="notes.bin")

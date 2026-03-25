@@ -84,6 +84,7 @@ PKP_RUNTIME__EXECUTION_LOCATION_PREFERENCE=cloud_first
 
 - `markdown`
 - `pdf`
+- `docx`
 - `plain_text`
 - `pasted_text`
 - `image`
@@ -99,7 +100,14 @@ uv run python -m pkp.ui.cli health
 uv run python -m pkp.ui.cli ingest --source-type markdown --location README.md
 uv run python -m pkp.ui.cli ingest --source-type plain_text --location data/samples/plain-notes.txt
 uv run python -m pkp.ui.cli ingest --source-type pdf --location /absolute/path/demo.pdf
+uv run python -m pkp.ui.cli ingest --source-type docx --location /absolute/path/demo.docx
 uv run python -m pkp.ui.cli ingest --source-type image --location /absolute/path/screenshot.png
+
+# 统一文档解析与切分入口
+uv run python -m pkp.ui.cli process-file --location /absolute/path/demo.pdf
+uv run python -m pkp.ui.cli process-file --location /absolute/path/demo.md
+uv run python -m pkp.ui.cli process-file --location /absolute/path/demo.docx
+uv run python -m pkp.ui.cli process-file --location /absolute/path/demo.png
 
 # 远程网页
 uv run python -m pkp.ui.cli ingest --source-type web --location https://example.com/article

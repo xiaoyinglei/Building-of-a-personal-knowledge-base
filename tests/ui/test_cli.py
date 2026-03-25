@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from typer.testing import CliRunner
 
@@ -9,9 +9,13 @@ from pkp.types import (
     ExecutionLocationPreference,
     ExecutionPolicy,
     ExternalRetrievalPolicy,
+    ModelDiagnostics,
     PreservationSuggestion,
+    ProviderAttempt,
+    QueryDiagnostics,
     QueryResponse,
     Residency,
+    RetrievalDiagnostics,
     RuntimeMode,
 )
 from pkp.ui.cli import app, set_container_factory
@@ -22,6 +26,7 @@ runner = CliRunner()
 @dataclass
 class FakeIngestRuntime:
     calls: list[dict[str, object | None]]
+    file_calls: list[dict[str, object | None]] = field(default_factory=list)
 
     def ingest_source(
         self,
@@ -48,6 +53,37 @@ class FakeIngestRuntime:
             "location": location or f"inline://{source_type}/generated",
         }
 
+    def repair_indexes(self) -> dict[str, int]:
+        return {
+            "document_count": 1,
+            "chunk_count": 2,
+            "repaired_vector_count": 2,
+        }
+
+    def process_file(
+        self,
+        *,
+        location: str,
+        title: str | None = None,
+        access_policy: AccessPolicy | None = None,
+    ) -> dict[str, object]:
+        self.file_calls.append(
+            {
+                "location": location,
+                "title": title,
+                "access_policy": access_policy,
+            }
+        )
+        return {
+            "source_id": "src-file",
+            "doc_id": "doc-file",
+            "processing": {
+                "analysis": {"source_type": "docx"},
+                "routing": {"selected_strategy": "hierarchical"},
+                "stats": {"total_chunks": 6},
+            },
+        }
+
 
 @dataclass
 class FakeQueryRuntime:
@@ -71,6 +107,27 @@ class FakeQueryRuntime:
             uncertainty="low",
             preservation_suggestion=PreservationSuggestion(suggested=False),
             runtime_mode=self.mode,
+            diagnostics=QueryDiagnostics(
+                retrieval=RetrievalDiagnostics(
+                    branch_hits={"full_text": 1, "vector": 1},
+                    reranked_chunk_ids=["chunk-a"],
+                    embedding_provider="ollama",
+                    rerank_provider="heuristic",
+                ),
+                model=ModelDiagnostics(
+                    synthesis_provider="local" if self.mode is RuntimeMode.DEEP else None,
+                    attempts=[
+                        ProviderAttempt(
+                            stage="embedding",
+                            capability="embed",
+                            provider="ollama",
+                            location="local",
+                            model="embed-test",
+                            status="success",
+                        )
+                    ],
+                ),
+            ),
         )
 
 
@@ -87,12 +144,36 @@ class FakeArtifactRuntime:
 
 
 @dataclass
+class FakeDiagnosticsRuntime:
+    def report(self) -> dict[str, object]:
+        return {
+            "status": "degraded",
+            "providers": [
+                {
+                    "provider": "openai",
+                    "location": "cloud",
+                    "capabilities": {
+                        "chat": {
+                            "configured": True,
+                            "available": False,
+                            "model": "gpt-test",
+                            "error": "404",
+                        }
+                    },
+                }
+            ],
+            "indices": {"documents": 1, "chunks": 2, "vectors": 2, "missing_vectors": 0},
+        }
+
+
+@dataclass
 class FakeContainer:
     ingest_runtime: FakeIngestRuntime
     fast_query_runtime: FakeQueryRuntime
     deep_research_runtime: FakeQueryRuntime
     artifact_promotion_runtime: FakeArtifactRuntime
     session_runtime: SessionRuntime
+    diagnostics_runtime: FakeDiagnosticsRuntime = field(default_factory=FakeDiagnosticsRuntime)
 
 
 def test_cli_supports_health_ingest_query_and_artifact_commands() -> None:
@@ -103,13 +184,20 @@ def test_cli_supports_health_ingest_query_and_artifact_commands() -> None:
             deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
             artifact_promotion_runtime=FakeArtifactRuntime(),
             session_runtime=SessionRuntime(),
+            diagnostics_runtime=FakeDiagnosticsRuntime(),
         )
     )
 
     assert runner.invoke(app, ["health"]).exit_code == 0
-    assert "ok" in runner.invoke(app, ["health"]).stdout
+    assert "degraded" in runner.invoke(app, ["health"]).stdout
+    assert "openai" in runner.invoke(app, ["health", "--json"]).stdout
     assert "src-1" in runner.invoke(app, ["ingest", "--source-type", "markdown", "--location", "data/a.md"]).stdout
+    assert "repaired_vector_count" in runner.invoke(app, ["repair-indexes"]).stdout
     assert "fast:hello" in runner.invoke(app, ["query", "--query", "hello", "--mode", "fast"]).stdout
+    assert '"embedding_provider": "ollama"' in runner.invoke(
+        app,
+        ["query", "--query", "hello", "--mode", "fast", "--json"],
+    ).stdout
     assert "artifact-1" in runner.invoke(app, ["list-artifacts"]).stdout
     assert "artifact-1" in runner.invoke(app, ["show-artifact", "--artifact-id", "artifact-1"]).stdout
     assert "approved" in runner.invoke(app, ["approve-artifact", "--artifact-id", "artifact-1"]).stdout
@@ -124,6 +212,7 @@ def test_cli_query_transmits_execution_controls_into_runtime_policy() -> None:
             deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
             artifact_promotion_runtime=FakeArtifactRuntime(),
             session_runtime=SessionRuntime(),
+            diagnostics_runtime=FakeDiagnosticsRuntime(),
         )
     )
 
@@ -170,6 +259,7 @@ def test_cli_ingest_supports_inline_pasted_text_and_browser_clip_content() -> No
             deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
             artifact_promotion_runtime=FakeArtifactRuntime(),
             session_runtime=SessionRuntime(),
+            diagnostics_runtime=FakeDiagnosticsRuntime(),
         )
     )
 
@@ -231,6 +321,7 @@ def test_cli_query_transmits_access_policy_into_runtime_policy() -> None:
             deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
             artifact_promotion_runtime=FakeArtifactRuntime(),
             session_runtime=SessionRuntime(),
+            diagnostics_runtime=FakeDiagnosticsRuntime(),
         )
     )
 
@@ -275,6 +366,7 @@ def test_cli_ingest_transmits_access_policy() -> None:
             deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
             artifact_promotion_runtime=FakeArtifactRuntime(),
             session_runtime=SessionRuntime(),
+            diagnostics_runtime=FakeDiagnosticsRuntime(),
         )
     )
 
@@ -313,6 +405,32 @@ def test_cli_ingest_transmits_access_policy() -> None:
                 allowed_locations=frozenset({ExecutionLocation.LOCAL}),
                 sensitivity_tags=frozenset({"private"}),
             ),
+        }
+    ]
+
+
+def test_cli_exposes_process_file_entry() -> None:
+    ingest_runtime = FakeIngestRuntime(calls=[])
+    set_container_factory(
+        lambda: FakeContainer(
+            ingest_runtime=ingest_runtime,
+            fast_query_runtime=FakeQueryRuntime(mode=RuntimeMode.FAST),
+            deep_research_runtime=FakeQueryRuntime(mode=RuntimeMode.DEEP),
+            artifact_promotion_runtime=FakeArtifactRuntime(),
+            session_runtime=SessionRuntime(),
+            diagnostics_runtime=FakeDiagnosticsRuntime(),
+        )
+    )
+
+    result = runner.invoke(app, ["process-file", "--location", "data/samples/example.docx"])
+
+    assert result.exit_code == 0
+    assert '"source_id": "src-file"' in result.stdout
+    assert ingest_runtime.file_calls == [
+        {
+            "location": "data/samples/example.docx",
+            "title": None,
+            "access_policy": None,
         }
     ]
 
