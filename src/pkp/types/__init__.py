@@ -20,6 +20,14 @@ from pkp.types.content import (
     SourceType,
 )
 from pkp.types.envelope import EvidenceItem, ExecutionPolicy, PreservationSuggestion, QueryResponse
+from pkp.types.memory import (
+    EpisodicMemory,
+    MemoryEvidenceLink,
+    MemoryKind,
+    ResearchEpisode,
+    UserMemory,
+    UserProfile,
+)
 from pkp.types.query import ComplexityLevel, QueryRequest, ResearchSubQuestion, TaskType
 
 __all__ = [
@@ -38,14 +46,20 @@ __all__ = [
     "GraphEdge",
     "GraphNode",
     "KnowledgeArtifact",
+    "MemoryEvidenceLink",
+    "MemoryKind",
     "PreservationSuggestion",
     "QueryRequest",
     "QueryResponse",
     "ResearchSubQuestion",
+    "ResearchEpisode",
     "Residency",
     "RuntimeMode",
     "Segment",
     "Source",
     "SourceType",
     "TaskType",
+    "UserMemory",
+    "UserProfile",
+    "EpisodicMemory",
 ]

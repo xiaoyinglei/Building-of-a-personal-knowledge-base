@@ -32,3 +32,18 @@ def test_sqlite_fts_repo_indexes_chunks_and_returns_ranked_matches(tmp_path: Pat
 
     assert [item.chunk_id for item in results] == ["chunk-a"]
     assert results[0].score > 0
+
+
+def test_sqlite_fts_repo_supports_cjk_term_queries(tmp_path: Path) -> None:
+    repo = SQLiteFTSRepo(tmp_path / "fts.sqlite3")
+    repo.index_chunks(
+        [
+            _chunk("chunk-cn", "doc-cn", "这个项目优先保证检索可靠性和证据质量"),
+            _chunk("chunk-en", "doc-en", "fast path answer with citation"),
+        ]
+    )
+
+    results = repo.search("项目", limit=5, doc_ids=["doc-cn", "doc-en"])
+
+    assert [item.chunk_id for item in results] == ["chunk-cn"]
+    assert results[0].score > 0

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from pkp.service.telemetry_service import TelemetryService
-from pkp.types import EvidenceItem, ExecutionPolicy, QueryResponse, RuntimeMode
+from pkp.types import EvidenceItem, ExecutionPolicy, PreservationSuggestion, QueryResponse, RuntimeMode
 
 
 class RetrievalServiceProtocol(Protocol):
@@ -54,6 +54,15 @@ class FastQueryRuntime:
     def run(self, query: str, policy: ExecutionPolicy) -> QueryResponse:
         hits = self._retrieval_service.retrieve(query, policy, RuntimeMode.FAST, round_index=1)
         reranked = self._retrieval_service.rerank(query, hits, policy)
+        if not reranked:
+            return QueryResponse(
+                conclusion="Insufficient evidence in indexed sources.",
+                evidence=[],
+                differences_or_conflicts=[],
+                uncertainty="high",
+                preservation_suggestion=PreservationSuggestion(suggested=False),
+                runtime_mode=RuntimeMode.FAST,
+            )
         conflicts = self._evidence_service.detect_conflicts(reranked)
         sufficient = self._evidence_service.fast_path_sufficient(reranked, policy)
         if conflicts or not sufficient:

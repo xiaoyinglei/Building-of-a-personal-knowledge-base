@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from pathlib import Path
 from typing import Protocol
 
 from pkp.repo.interfaces import ChunkSearchResult
+from pkp.types.text import build_fts_query, search_terms
 
 
 class FtsChunkRecord(Protocol):
@@ -36,19 +36,72 @@ class SQLiteFTSRepo:
                 toc_path TEXT NOT NULL,
                 text TEXT NOT NULL
             );
-
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-                title,
-                toc_path,
-                text,
-                chunk_pk UNINDEXED,
-                chunk_id UNINDEXED,
-                doc_id UNINDEXED,
-                source_id UNINDEXED
-            );
             """
         )
+        if self._fts_schema_needs_rebuild():
+            self._conn.execute("DROP TABLE IF EXISTS chunks_fts")
+            self._conn.execute(
+                """
+                CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                    title,
+                    toc_path,
+                    text,
+                    search_terms,
+                    chunk_pk UNINDEXED,
+                    chunk_id UNINDEXED,
+                    doc_id UNINDEXED,
+                    source_id UNINDEXED
+                )
+                """
+            )
+            self._rebuild_fts_from_chunks()
         self._conn.commit()
+
+    def _fts_schema_needs_rebuild(self) -> bool:
+        row = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'"
+        ).fetchone()
+        if row is None:
+            return True
+        columns = {
+            item["name"]
+            for item in self._conn.execute("PRAGMA table_info(chunks_fts)").fetchall()
+        }
+        return "search_terms" not in columns
+
+    def _rebuild_fts_from_chunks(self) -> None:
+        rows = self._conn.execute(
+            "SELECT chunk_pk, chunk_id, doc_id, source_id, title, toc_path, text FROM chunks ORDER BY chunk_pk"
+        ).fetchall()
+        for row in rows:
+            toc_path = json.loads(row["toc_path"])
+            self._conn.execute(
+                """
+                INSERT INTO chunks_fts (
+                    rowid,
+                    title,
+                    toc_path,
+                    text,
+                    search_terms,
+                    chunk_pk,
+                    chunk_id,
+                    doc_id,
+                    source_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["chunk_pk"],
+                    row["title"],
+                    " ".join(toc_path),
+                    row["text"],
+                    self._search_terms_blob(row["title"], toc_path, row["text"]),
+                    row["chunk_pk"],
+                    row["chunk_id"],
+                    row["doc_id"],
+                    row["source_id"],
+                ),
+            )
 
     def index_chunk(
         self,
@@ -88,18 +141,20 @@ class SQLiteFTSRepo:
                 title,
                 toc_path,
                 text,
+                search_terms,
                 chunk_pk,
                 chunk_id,
                 doc_id,
                 source_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 chunk_pk,
                 title,
                 " ".join(toc_path),
                 text,
+                self._search_terms_blob(title, toc_path, text),
                 chunk_pk,
                 chunk_id,
                 doc_id,
@@ -173,7 +228,9 @@ class SQLiteFTSRepo:
 
     @staticmethod
     def _normalize_query(query: str) -> str:
-        tokens = re.findall(r"[a-zA-Z0-9]+", query.lower())
-        if not tokens:
-            return ""
-        return " OR ".join(tokens)
+        return build_fts_query(query)
+
+    @staticmethod
+    def _search_terms_blob(title: str, toc_path: list[str], text: str) -> str:
+        parts = [title, *toc_path, text]
+        return " ".join(search_terms(" ".join(parts)))

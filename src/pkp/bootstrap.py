@@ -9,7 +9,7 @@ import httpx
 from pkp.config import AppSettings
 from pkp.config.policies import RoutingThresholds
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import OcrResult
+from pkp.repo.interfaces import ModelProviderRepo, OcrResult, VectorRepo
 from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
 from pkp.repo.models.ollama_provider_repo import OllamaProviderRepo
 from pkp.repo.models.openai_provider_repo import OpenAIProviderRepo
@@ -19,9 +19,10 @@ from pkp.repo.parse.pdf_parser_repo import PDFParserRepo
 from pkp.repo.parse.plain_text_parser_repo import PlainTextParserRepo
 from pkp.repo.parse.web_fetch_repo import WebFetchRepo as HttpWebFetchRepo
 from pkp.repo.parse.web_parser_repo import WebParserRepo
-from pkp.repo.search.in_memory_vector_repo import InMemoryVectorRepo
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
+from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
+from pkp.repo.storage.sqlite_memory_repo import SQLiteMemoryRepo
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
 from pkp.repo.vision.ocr_vision_repo import DeterministicOcrVisionRepo
 from pkp.runtime.adapters import (
@@ -43,8 +44,10 @@ from pkp.service.chunking_service import ChunkingService
 from pkp.service.evidence_service import CandidateLike, EvidenceService
 from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.ingest_service import IngestService
+from pkp.service.memory_service import MemoryService
 from pkp.service.policy_resolution_service import PolicyResolutionService
-from pkp.service.retrieval_service import RetrievalService
+from pkp.service.rerank_service import HeuristicRerankService
+from pkp.service.retrieval_service import Reranker, RetrievalService
 from pkp.service.routing_service import RoutingService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.service.toc_service import TOCService
@@ -85,10 +88,32 @@ def _sample_web_fetch_repo() -> HttpWebFetchRepo:
     return HttpWebFetchRepo(http_client=httpx.Client(transport=transport))
 
 
-class _DeterministicChatProvider:
+class _DeterministicModelProvider:
+    def __init__(self) -> None:
+        self._fallback = FallbackEmbeddingRepo()
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return self._fallback.embed(texts)
+
     def chat(self, prompt: str) -> str:
         query = next((line.strip() for line in prompt.splitlines() if line.strip()), "summary")
         return f"Deterministic synthesis for: {query}"
+
+    def rerank(self, query: str, candidates: Sequence[str]) -> list[int]:
+        del query
+        return list(range(len(candidates)))
+
+
+def _select_embedding_provider(
+    *,
+    local_providers: Sequence[object],
+    cloud_providers: Sequence[object],
+) -> ModelProviderRepo:
+    for provider in (*local_providers, *cloud_providers):
+        embed = getattr(provider, "embed", None)
+        if callable(embed):
+            return cast(ModelProviderRepo, provider)
+    return FallbackEmbeddingRepo()
 
 
 def _build_ingest_service(
@@ -97,13 +122,14 @@ def _build_ingest_service(
     *,
     ocr_repo: DeterministicOcrVisionRepo,
     web_fetch_repo: HttpWebFetchRepo,
+    embedding_repo: ModelProviderRepo,
 ) -> IngestService:
     runtime_root.mkdir(parents=True, exist_ok=True)
     object_store_root.mkdir(parents=True, exist_ok=True)
     return IngestService(
         metadata_repo=SQLiteMetadataRepo(runtime_root / "metadata.sqlite3"),
         fts_repo=SQLiteFTSRepo(runtime_root / "fts.sqlite3"),
-        vector_repo=InMemoryVectorRepo(),
+        vector_repo=SQLiteVectorRepo(runtime_root / "vectors.sqlite3"),
         graph_repo=SQLiteGraphRepo(runtime_root / "graph.sqlite3"),
         object_store=FileObjectStore(object_store_root),
         markdown_parser=MarkdownParserRepo(),
@@ -115,7 +141,7 @@ def _build_ingest_service(
         policy_resolution_service=PolicyResolutionService(),
         toc_service=TOCService(),
         chunking_service=ChunkingService(),
-        embedding_repo=FallbackEmbeddingRepo(),
+        embedding_repo=embedding_repo,
     )
 
 
@@ -124,22 +150,28 @@ def _build_runtime_container(
     runtime_root: Path,
     object_store_root: Path,
     max_retrieval_rounds: int,
+    max_recursive_depth: int,
     thresholds: RoutingThresholds,
     ocr_repo: DeterministicOcrVisionRepo,
     web_fetch_repo: HttpWebFetchRepo,
     cloud_providers: Sequence[object] = (),
     local_providers: Sequence[object] = (),
 ) -> RuntimeContainer:
+    embedding_repo = _select_embedding_provider(
+        local_providers=local_providers,
+        cloud_providers=cloud_providers,
+    )
     ingest_service = _build_ingest_service(
         runtime_root,
         object_store_root,
         ocr_repo=ocr_repo,
         web_fetch_repo=web_fetch_repo,
+        embedding_repo=embedding_repo,
     )
     telemetry_service = TelemetryService.create_jsonl(runtime_root / "telemetry" / "events.jsonl")
     metadata_repo: SQLiteMetadataRepo = ingest_service.metadata_repo
     fts_repo: SQLiteFTSRepo = ingest_service.fts_repo
-    vector_repo: InMemoryVectorRepo = ingest_service.vector_repo
+    vector_repo: VectorRepo = ingest_service.vector_repo
     graph_repo: SQLiteGraphRepo = ingest_service.graph_repo
 
     retrieval_factory = SearchBackedRetrievalFactory(
@@ -153,7 +185,7 @@ def _build_runtime_container(
     )
     vector_retriever = cast(
         Callable[[str, list[str]], Sequence[CandidateLike]],
-        retrieval_factory.vector_retriever_from_repo(vector_repo),
+        retrieval_factory.vector_retriever_from_repo(vector_repo, embedding_repo.embed),
     )
     section_retriever = cast(
         Callable[[str, list[str]], Sequence[CandidateLike]],
@@ -169,16 +201,14 @@ def _build_runtime_container(
     )
     routing_service = RoutingService(thresholds)
     evidence_service = EvidenceService(thresholds)
+    rerank_service = HeuristicRerankService()
     retrieval_service = RetrievalService(
         full_text_retriever=standard_retriever,
         vector_retriever=vector_retriever,
         section_retriever=section_retriever,
         graph_expander=graph_expander,
         web_retriever=web_retriever,
-        reranker=lambda _query, candidates: sorted(
-            candidates,
-            key=lambda candidate: (-candidate.score, candidate.chunk_id),
-        ),
+        reranker=cast(Reranker, rerank_service.rerank),
         routing_service=routing_service,
         evidence_service=evidence_service,
         graph_expansion_service=GraphExpansionService(),
@@ -197,12 +227,15 @@ def _build_runtime_container(
         local_providers=local_providers,
     )
     session_runtime = SessionRuntime()
+    memory_service = MemoryService(SQLiteMemoryRepo(runtime_root / "memory.sqlite3"))
     deep_runtime = DeepResearchRuntime(
         routing_service=ResearchPlannerAdapter(),
         retrieval_service=retrieval_adapter,
         evidence_service=evidence_adapter,
         session_runtime=session_runtime,
+        memory_service=memory_service,
         max_rounds=max_retrieval_rounds,
+        max_recursive_depth=max_recursive_depth,
     )
     fast_runtime = FastQueryRuntime(
         retrieval_service=retrieval_adapter,
@@ -242,6 +275,7 @@ def build_runtime_container(settings: AppSettings) -> RuntimeContainer:
         runtime_root=settings.runtime.data_dir,
         object_store_root=settings.runtime.object_store_dir,
         max_retrieval_rounds=settings.runtime.max_retrieval_rounds,
+        max_recursive_depth=settings.runtime.max_recursive_depth,
         thresholds=thresholds,
         ocr_repo=_sample_ocr_repo(),
         web_fetch_repo=HttpWebFetchRepo(),
@@ -268,9 +302,10 @@ def build_test_container(root: Path) -> RuntimeContainer:
         runtime_root=root,
         object_store_root=root / "objects",
         max_retrieval_rounds=4,
+        max_recursive_depth=2,
         thresholds=RoutingThresholds(),
         ocr_repo=_sample_ocr_repo(),
         web_fetch_repo=_sample_web_fetch_repo(),
         cloud_providers=(),
-        local_providers=(_DeterministicChatProvider(),),
+        local_providers=(_DeterministicModelProvider(),),
     )

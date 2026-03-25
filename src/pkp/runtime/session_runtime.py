@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 class SessionSnapshot:
     sub_questions: list[str] = field(default_factory=list)
     evidence_matrix: list[dict[str, object]] = field(default_factory=list)
+    memory_hints: list[str] = field(default_factory=list)
+    episode_id: str | None = None
 
 
 class SessionRuntime:
@@ -27,3 +29,19 @@ class SessionRuntime:
     ) -> None:
         snapshot = self.get(session_id)
         snapshot.evidence_matrix = list(evidence_matrix)
+
+    def store_memory_hints(
+        self,
+        session_id: str,
+        memory_hints: list[str],
+    ) -> None:
+        snapshot = self.get(session_id)
+        snapshot.memory_hints = list(memory_hints)
+
+    def store_episode_id(
+        self,
+        session_id: str,
+        episode_id: str | None,
+    ) -> None:
+        snapshot = self.get(session_id)
+        snapshot.episode_id = episode_id
