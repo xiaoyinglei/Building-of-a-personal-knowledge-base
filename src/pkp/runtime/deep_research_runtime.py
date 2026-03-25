@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from time import monotonic
-from typing import Protocol
+from typing import Protocol, cast
 
 from pkp.runtime.session_runtime import SessionRuntime
 from pkp.types import (
@@ -32,13 +32,14 @@ def resolve_execution_locations(
 
 
 class RoutingServiceProtocol(Protocol):
-    def decompose(self, query: str) -> list[str]: ...
+    def decompose(self, query: str, memory_hints: Sequence[str] = ()) -> list[str]: ...
 
     def expand(
         self,
         query: str,
         evidence_matrix: list[dict[str, object]],
         round_index: int,
+        memory_hints: Sequence[str] = (),
     ) -> list[str]: ...
 
 
@@ -76,6 +77,20 @@ class EvidenceServiceProtocol(Protocol):
     ) -> QueryResponse: ...
 
 
+class MemoryServiceProtocol(Protocol):
+    def recall(self, query: str, source_scope: list[str]) -> list[str]: ...
+
+    def record_episode(
+        self,
+        *,
+        session_id: str,
+        query: str,
+        response: QueryResponse,
+        evidence_matrix: list[dict[str, object]],
+        source_scope: list[str],
+    ) -> str: ...
+
+
 class DeepResearchRuntime:
     def __init__(
         self,
@@ -84,14 +99,18 @@ class DeepResearchRuntime:
         retrieval_service: RetrievalServiceProtocol,
         evidence_service: EvidenceServiceProtocol,
         session_runtime: SessionRuntime,
+        memory_service: MemoryServiceProtocol | None = None,
         max_rounds: int = 4,
+        max_recursive_depth: int = 2,
         clock: Callable[[], float] | None = None,
     ) -> None:
         self._routing_service = routing_service
         self._retrieval_service = retrieval_service
         self._evidence_service = evidence_service
         self.session_runtime = session_runtime
+        self._memory_service = memory_service
         self._max_rounds = max_rounds
+        self._max_recursive_depth = max_recursive_depth
         self._clock = clock or monotonic
 
     def run(
@@ -102,13 +121,17 @@ class DeepResearchRuntime:
         session_id: str = "default",
     ) -> QueryResponse:
         started_at = self._clock()
-        sub_questions = self._routing_service.decompose(query)
+        source_scope = list(policy.source_scope)
+        memory_hints = self._memory_service.recall(query, source_scope) if self._memory_service is not None else []
+        self.session_runtime.store_memory_hints(session_id, memory_hints)
+        sub_questions = self._decompose(query, memory_hints)
         self.session_runtime.store_sub_questions(session_id, sub_questions)
 
         current_queries = sub_questions or [query]
         final_hits: list[EvidenceItem] = []
         evidence_matrix: list[dict[str, object]] = []
         consumed_tokens = 0
+        recursive_depth = 0
         for round_index in range(1, self._max_rounds + 1):
             if self._wall_clock_budget_exhausted(policy, started_at):
                 break
@@ -122,8 +145,8 @@ class DeepResearchRuntime:
                 consumed_tokens += self._estimate_token_cost(hits)
                 if self._token_budget_exhausted(policy, consumed_tokens):
                     break
-            final_hits = round_hits
-            evidence_matrix = self._evidence_service.build_evidence_matrix(round_hits)
+            final_hits = self._merge_hits(final_hits, round_hits)
+            evidence_matrix = self._evidence_service.build_evidence_matrix(final_hits)
             self.session_runtime.store_evidence_matrix(session_id, evidence_matrix)
             if self._evidence_service.evidence_sufficient(evidence_matrix, round_index):
                 break
@@ -131,21 +154,52 @@ class DeepResearchRuntime:
                 break
             if self._token_budget_exhausted(policy, consumed_tokens):
                 break
-
-            current_queries = self._routing_service.expand(query, evidence_matrix, round_index)
-            if not current_queries:
+            if recursive_depth >= self._max_recursive_depth:
                 break
 
+            current_queries = self._expand(query, evidence_matrix, round_index, memory_hints)
+            if not current_queries:
+                break
+            recursive_depth += 1
+
+        if not final_hits or not evidence_matrix:
+            return self._evidence_service.build_retrieval_only_response(query, final_hits)
+
+        deep_response: QueryResponse | None = None
         for location in resolve_execution_locations(
             policy.effective_access_policy,
             policy.execution_location_preference,
         ):
             try:
-                return self._build_deep_response(query, evidence_matrix, location.value)
+                deep_response = self._build_deep_response(query, evidence_matrix, location.value)
+                break
             except RuntimeError:
                 continue
 
-        return self._evidence_service.build_retrieval_only_response(query, final_hits)
+        if deep_response is None:
+            return self._evidence_service.build_retrieval_only_response(query, final_hits)
+
+        if self._memory_service is not None:
+            episode_id = self._memory_service.record_episode(
+                session_id=session_id,
+                query=query,
+                response=deep_response,
+                evidence_matrix=evidence_matrix,
+                source_scope=source_scope,
+            )
+            self.session_runtime.store_episode_id(session_id, episode_id)
+        return deep_response
+
+    @staticmethod
+    def _merge_hits(existing: list[EvidenceItem], new_hits: list[EvidenceItem]) -> list[EvidenceItem]:
+        merged: list[EvidenceItem] = list(existing)
+        seen = {item.chunk_id for item in merged}
+        for hit in new_hits:
+            if hit.chunk_id in seen:
+                continue
+            merged.append(hit)
+            seen.add(hit.chunk_id)
+        return merged
 
     def _build_deep_response(
         self,
@@ -160,7 +214,29 @@ class DeepResearchRuntime:
                 location=location,
             )
         except TypeError:
-            return self._evidence_service.build_deep_response(query, evidence_matrix)  # type: ignore[call-arg]
+            fallback = cast(
+                Callable[[str, list[dict[str, object]]], QueryResponse],
+                self._evidence_service.build_deep_response,
+            )
+            return fallback(query, evidence_matrix)
+
+    def _decompose(self, query: str, memory_hints: list[str]) -> list[str]:
+        try:
+            return self._routing_service.decompose(query, memory_hints)
+        except TypeError:
+            return self._routing_service.decompose(query)
+
+    def _expand(
+        self,
+        query: str,
+        evidence_matrix: list[dict[str, object]],
+        round_index: int,
+        memory_hints: list[str],
+    ) -> list[str]:
+        try:
+            return self._routing_service.expand(query, evidence_matrix, round_index, memory_hints)
+        except TypeError:
+            return self._routing_service.expand(query, evidence_matrix, round_index)
 
     def _wall_clock_budget_exhausted(
         self,

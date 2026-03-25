@@ -48,3 +48,16 @@ def test_settings_load_dotenv_file_from_current_workdir(tmp_path, monkeypatch) -
 
     assert settings.openai.api_key.get_secret_value() == "dotenv-key"
     assert settings.runtime.max_token_budget == 321
+
+
+def test_settings_treat_empty_max_token_budget_as_none(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PKP_RUNTIME__MAX_TOKEN_BUDGET", raising=False)
+    (tmp_path / ".env").write_text(
+        "PKP_RUNTIME__MAX_TOKEN_BUDGET=\n",
+        encoding="utf-8",
+    )
+
+    settings = AppSettings()
+
+    assert settings.runtime.max_token_budget is None

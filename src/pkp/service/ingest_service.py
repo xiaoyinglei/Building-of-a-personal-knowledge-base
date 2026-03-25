@@ -6,7 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import OcrVisionRepo, ParsedDocument, WebFetchRepo
+from pkp.repo.interfaces import ModelProviderRepo, OcrVisionRepo, ParsedDocument, VectorRepo, WebFetchRepo
 from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
 from pkp.repo.parse.image_parser_repo import ImageParserRepo
 from pkp.repo.parse.markdown_parser_repo import MarkdownParserRepo
@@ -14,8 +14,8 @@ from pkp.repo.parse.pdf_parser_repo import PDFParserRepo
 from pkp.repo.parse.plain_text_parser_repo import PlainTextParserRepo
 from pkp.repo.parse.web_fetch_repo import WebFetchRepo as HttpWebFetchRepo
 from pkp.repo.parse.web_parser_repo import WebParserRepo
-from pkp.repo.search.in_memory_vector_repo import InMemoryVectorRepo
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
+from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
 from pkp.repo.vision.ocr_vision_repo import DeterministicOcrVisionRepo
@@ -44,7 +44,7 @@ class IngestService:
         *,
         metadata_repo: SQLiteMetadataRepo,
         fts_repo: SQLiteFTSRepo,
-        vector_repo: InMemoryVectorRepo,
+        vector_repo: VectorRepo,
         graph_repo: SQLiteGraphRepo,
         object_store: FileObjectStore,
         markdown_parser: MarkdownParserRepo,
@@ -56,7 +56,7 @@ class IngestService:
         policy_resolution_service: PolicyResolutionService,
         toc_service: TOCService,
         chunking_service: ChunkingService,
-        embedding_repo: FallbackEmbeddingRepo,
+        embedding_repo: ModelProviderRepo,
     ) -> None:
         self.metadata_repo = metadata_repo
         self.fts_repo = fts_repo
@@ -88,7 +88,7 @@ class IngestService:
         return cls(
             metadata_repo=SQLiteMetadataRepo(root / "metadata.sqlite3"),
             fts_repo=SQLiteFTSRepo(root / "fts.sqlite3"),
-            vector_repo=InMemoryVectorRepo(),
+            vector_repo=SQLiteVectorRepo(root / "vectors.sqlite3"),
             graph_repo=SQLiteGraphRepo(root / "graph.sqlite3"),
             object_store=FileObjectStore(root / "objects"),
             markdown_parser=MarkdownParserRepo(),

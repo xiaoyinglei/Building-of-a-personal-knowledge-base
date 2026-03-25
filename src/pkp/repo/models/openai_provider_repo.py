@@ -28,21 +28,27 @@ class OpenAIProviderRepo(ModelProviderRepo):
         self._client_factory = client_factory
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        response = self._client_instance().embeddings.create(
-            model=self._embedding_model,
-            input=list(texts),
-        )
-        return [list(item.embedding) for item in response.data]
+        try:
+            response = self._client_instance().embeddings.create(
+                model=self._embedding_model,
+                input=list(texts),
+            )
+            return [list(item.embedding) for item in response.data]
+        except Exception as exc:  # pragma: no cover - provider-specific exception tree
+            raise RuntimeError(f"OpenAI embedding request failed: {exc}") from exc
 
     def chat(self, prompt: str) -> str:
-        response = self._client_instance().responses.create(
-            model=self._model,
-            input=prompt,
-        )
-        output_text = getattr(response, "output_text", None)
-        if isinstance(output_text, str):
-            return output_text
-        return str(output_text or "")
+        try:
+            response = self._client_instance().responses.create(
+                model=self._model,
+                input=prompt,
+            )
+            output_text = getattr(response, "output_text", None)
+            if isinstance(output_text, str):
+                return output_text
+            return str(output_text or "")
+        except Exception as exc:  # pragma: no cover - provider-specific exception tree
+            raise RuntimeError(f"OpenAI chat request failed: {exc}") from exc
 
     def rerank(self, query: str, candidates: Sequence[str]) -> list[int]:
         return self._fallback.rerank(query, candidates)

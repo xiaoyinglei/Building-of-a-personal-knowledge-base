@@ -342,4 +342,6 @@ def test_session_route_returns_session_snapshot() -> None:
     assert response.json() == {
         "sub_questions": ["What changed?", "Why?"],
         "evidence_matrix": [{"claim": "A", "sources": ["doc-1"]}],
+        "memory_hints": [],
+        "episode_id": None,
     }
