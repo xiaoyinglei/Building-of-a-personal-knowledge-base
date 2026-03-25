@@ -31,3 +31,26 @@ def test_rerank_service_prefers_explanatory_text_over_command_snippets_for_natur
     reranked = service.rerank("这个项目做什么？", candidates)
 
     assert [candidate.chunk_id for candidate in reranked][:2] == ["chunk-desc", "chunk-cli"]
+
+
+def test_rerank_service_penalizes_readme_cli_examples_for_definition_queries() -> None:
+    service = HeuristicRerankService()
+    candidates = [
+        Candidate(
+            chunk_id="chunk-cli",
+            text='uv run python -m pkp.ui.cli query --mode fast --query "这个项目做什么？" '
+            'uv run python -m pkp.ui.cli query --mode deep --query "比较 Fast Path 和 Deep Path"',
+            score=1.0,
+            section_path=("查询",),
+        ),
+        Candidate(
+            chunk_id="chunk-desc",
+            text="一个以可靠性为优先的个人知识平台，用来完成资料接入、索引构建、检索问答、深度研究和知识沉淀。",
+            score=0.9,
+            section_path=("个人知识平台",),
+        ),
+    ]
+
+    reranked = service.rerank("这个项目做什么？", candidates)
+
+    assert [candidate.chunk_id for candidate in reranked][:2] == ["chunk-desc", "chunk-cli"]

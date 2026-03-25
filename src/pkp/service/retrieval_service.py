@@ -17,8 +17,17 @@ from pkp.service.evidence_service import (
 from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.routing_service import RoutingDecision, RoutingService
 from pkp.service.telemetry_service import TelemetryService
-from pkp.types.access import AccessPolicy
+from pkp.types.access import AccessPolicy, ExecutionLocationPreference
+from pkp.types.diagnostics import RetrievalDiagnostics
 from pkp.types.envelope import PreservationSuggestion
+from pkp.types.text import (
+    looks_command_like,
+    looks_definition_query,
+    looks_definition_text,
+    looks_operation_query,
+    looks_structure_query,
+    looks_structure_text,
+)
 
 
 class RetrievalResult(BaseModel):
@@ -29,6 +38,7 @@ class RetrievalResult(BaseModel):
     self_check: SelfCheckResult
     reranked_chunk_ids: list[str] = Field(default_factory=list)
     graph_expanded: bool = False
+    diagnostics: RetrievalDiagnostics = Field(default_factory=RetrievalDiagnostics)
     preservation_suggestion: PreservationSuggestion = Field(
         default_factory=lambda: PreservationSuggestion(suggested=False)
     )
@@ -41,8 +51,23 @@ class Reranker(Protocol):
 @dataclass(frozen=True)
 class _FusedCandidate:
     candidate: CandidateLike
-    rrf_score: float
+    fused_score: float
     rank: int
+    supporting_branches: int
+
+
+@dataclass
+class _FusedCandidateView:
+    chunk_id: str
+    doc_id: str
+    text: str
+    citation_anchor: str
+    score: float
+    rank: int
+    source_kind: str
+    source_id: str | None
+    section_path: Sequence[str]
+    effective_access_policy: AccessPolicy | None = None
 
 
 class RetrievalService:
@@ -79,28 +104,140 @@ class RetrievalService:
     def _branch_key(candidate: CandidateLike) -> str:
         return candidate.chunk_id
 
-    def _rrf_fuse(self, branches: Sequence[Sequence[CandidateLike]]) -> list[CandidateLike]:
+    @staticmethod
+    def _normalized_branch_scores(branch: Sequence[CandidateLike]) -> dict[str, float]:
+        positive_scores = [max(float(candidate.score), 0.0) for candidate in branch]
+        max_score = max(positive_scores, default=0.0)
+        if max_score > 0.0:
+            return {
+                candidate.chunk_id: max(float(candidate.score), 0.0) / max_score
+                for candidate in branch
+            }
+
+        size = len(branch)
+        if size <= 1:
+            return {candidate.chunk_id: 1.0 for candidate in branch}
+        return {
+            candidate.chunk_id: 1.0 - ((index - 1) / size)
+            for index, candidate in enumerate(branch, start=1)
+        }
+
+    @staticmethod
+    def _branch_weight(branch_name: str, query: str) -> float:
+        if looks_structure_query(query):
+            return {
+                "full_text": 1.0,
+                "vector": 0.95,
+                "section": 1.3,
+                "web": 0.6,
+            }.get(branch_name, 1.0)
+        if looks_definition_query(query):
+            return {
+                "full_text": 0.9,
+                "vector": 1.35,
+                "section": 0.8,
+                "web": 0.6,
+            }.get(branch_name, 1.0)
+        if looks_operation_query(query):
+            return {
+                "full_text": 1.1,
+                "vector": 1.0,
+                "section": 0.9,
+                "web": 0.6,
+            }.get(branch_name, 1.0)
+        return {
+            "full_text": 1.0,
+            "vector": 1.1,
+            "section": 0.9,
+            "web": 0.6,
+        }.get(branch_name, 1.0)
+
+    @staticmethod
+    def _candidate_quality_prior(query: str, candidate: CandidateLike) -> float:
+        text = candidate.text
+        section_text = " ".join(candidate.section_path)
+        query_is_command_like = looks_command_like(query)
+        query_is_definition_like = looks_definition_query(query)
+        query_is_structure_like = looks_structure_query(query)
+
+        prior = 0.0
+        if not query_is_command_like and looks_command_like(text):
+            prior -= 0.35
+            if query_is_definition_like and not query_is_structure_like:
+                prior -= 0.2
+        if (
+            query_is_definition_like
+            and not query_is_structure_like
+            and not looks_command_like(text)
+        ):
+            if looks_definition_text(text):
+                prior += 0.22
+            if looks_definition_text(section_text):
+                prior += 0.08
+        if query_is_structure_like:
+            if looks_structure_text(text):
+                prior += 0.12
+            if looks_structure_text(section_text):
+                prior += 0.12
+        return prior
+
+    def _rrf_fuse(
+        self,
+        query: str,
+        branches: Sequence[tuple[str, Sequence[CandidateLike]]],
+    ) -> list[CandidateLike]:
         fused: dict[str, _FusedCandidate] = {}
         k = 60
-        for branch in branches:
+        for branch_name, branch in branches:
+            branch_weight = self._branch_weight(branch_name, query)
+            normalized_scores = self._normalized_branch_scores(branch)
             for index, candidate in enumerate(branch, start=1):
-                score = 1.0 / (k + index)
+                normalized_score = normalized_scores.get(candidate.chunk_id, 0.0)
+                score = (
+                    branch_weight / (k + index)
+                    + (branch_weight * normalized_score * 0.3)
+                    + self._candidate_quality_prior(query, candidate)
+                )
                 key = self._branch_key(candidate)
                 existing = fused.get(key)
                 if existing is None:
-                    fused[key] = _FusedCandidate(candidate=candidate, rrf_score=score, rank=index)
+                    fused[key] = _FusedCandidate(
+                        candidate=candidate,
+                        fused_score=score,
+                        rank=index,
+                        supporting_branches=1,
+                    )
                     continue
                 fused[key] = _FusedCandidate(
                     candidate=existing.candidate,
-                    rrf_score=existing.rrf_score + score,
+                    fused_score=existing.fused_score + score,
                     rank=min(existing.rank, index),
+                    supporting_branches=existing.supporting_branches + 1,
                 )
 
         ordered = sorted(
             fused.values(),
-            key=lambda fused_candidate: (-fused_candidate.rrf_score, fused_candidate.rank),
+            key=lambda fused_candidate: (
+                -(fused_candidate.fused_score + max(0, fused_candidate.supporting_branches - 1) * 0.05),
+                -fused_candidate.supporting_branches,
+                fused_candidate.rank,
+            ),
         )
-        return [item.candidate for item in ordered]
+        return [
+            _FusedCandidateView(
+                chunk_id=item.candidate.chunk_id,
+                doc_id=item.candidate.doc_id,
+                text=item.candidate.text,
+                citation_anchor=item.candidate.citation_anchor,
+                score=item.fused_score + max(0, item.supporting_branches - 1) * 0.05,
+                rank=item.rank,
+                source_kind=item.candidate.source_kind,
+                source_id=item.candidate.source_id,
+                section_path=tuple(item.candidate.section_path),
+                effective_access_policy=getattr(item.candidate, "effective_access_policy", None),
+            )
+            for item in ordered
+        ]
 
     def retrieve(
         self,
@@ -108,15 +245,22 @@ class RetrievalService:
         *,
         access_policy: AccessPolicy,
         source_scope: Sequence[str] = (),
+        execution_location_preference: ExecutionLocationPreference | None = None,
     ) -> RetrievalResult:
         scope = list(source_scope)
+        prepare_for_policy = getattr(self._vector_retriever, "prepare_for_policy", None)
+        if callable(prepare_for_policy):
+            prepare_for_policy(
+                access_policy=access_policy,
+                execution_location_preference=execution_location_preference,
+            )
         decision = self._routing_service.route(
             query,
             source_scope=scope,
             access_policy=access_policy,
         )
 
-        internal_branches: list[list[CandidateLike]] = []
+        internal_branches: list[tuple[str, list[CandidateLike]]] = []
         full_text_candidates = self._evidence_service.filter_candidates(
             self._full_text_retriever(query, scope),
             source_scope=scope,
@@ -138,10 +282,16 @@ class RetrievalService:
             runtime_mode=decision.runtime_mode,
         )
         self._record_branch_usage("section", section_candidates, decision.runtime_mode.value)
-        internal_branches.extend([full_text_candidates, vector_candidates, section_candidates])
+        internal_branches.extend(
+            [
+                ("full_text", full_text_candidates),
+                ("vector", vector_candidates),
+                ("section", section_candidates),
+            ]
+        )
 
-        fused_candidates = self._rrf_fuse(internal_branches)
-        candidate_count = sum(len(branch) for branch in internal_branches)
+        fused_candidates = self._rrf_fuse(query, internal_branches)
+        candidate_count = sum(len(branch) for _, branch in internal_branches)
         if self._telemetry_service is not None:
             self._telemetry_service.record_rrf_fusion(
                 branch_count=len(internal_branches),
@@ -183,9 +333,9 @@ class RetrievalService:
             self._record_branch_usage("web", retrieved_web_candidates, decision.runtime_mode.value)
             if retrieved_web_candidates:
                 web_candidates = retrieved_web_candidates
-                combined_branches = [*internal_branches, web_candidates]
-                combined_candidate_count = sum(len(branch) for branch in combined_branches)
-                fused_candidates = self._rrf_fuse(combined_branches)
+                combined_branches = [*internal_branches, ("web", web_candidates)]
+                combined_candidate_count = sum(len(branch) for _, branch in combined_branches)
+                fused_candidates = self._rrf_fuse(query, combined_branches)
                 if self._telemetry_service is not None:
                     self._telemetry_service.record_rrf_fusion(
                         branch_count=len(combined_branches),
@@ -256,6 +406,24 @@ class RetrievalService:
             self_check=self_check,
             reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
             graph_expanded=graph_expanded,
+            diagnostics=RetrievalDiagnostics(
+                branch_hits={
+                    "full_text": len(full_text_candidates),
+                    "vector": len(vector_candidates),
+                    "section": len(section_candidates),
+                    **({"web": len(web_candidates)} if web_candidates else {}),
+                },
+                reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
+                embedding_provider=getattr(self._vector_retriever, "last_provider", None),
+                rerank_provider=getattr(self._reranker, "last_provider", None),
+                attempts=[
+                    *list(getattr(self._vector_retriever, "last_attempts", [])),
+                    *list(getattr(self._reranker, "last_attempts", [])),
+                ],
+                fusion_input_count=candidate_count + len(web_candidates),
+                fused_count=len(reranked_candidates),
+                graph_expanded=graph_expanded,
+            ),
             preservation_suggestion=preservation_suggestion,
         )
 

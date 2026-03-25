@@ -9,9 +9,13 @@ from pkp.types import (
     ExecutionLocationPreference,
     ExecutionPolicy,
     ExternalRetrievalPolicy,
+    ModelDiagnostics,
     PreservationSuggestion,
+    ProviderAttempt,
+    QueryDiagnostics,
     QueryResponse,
     Residency,
+    RetrievalDiagnostics,
     RuntimeMode,
 )
 from pkp.ui.api.app import create_app
@@ -69,6 +73,27 @@ class FakeQueryRuntime:
             uncertainty="low",
             preservation_suggestion=PreservationSuggestion(suggested=True, artifact_type="topic_page"),
             runtime_mode=self.mode,
+            diagnostics=QueryDiagnostics(
+                retrieval=RetrievalDiagnostics(
+                    branch_hits={"full_text": 2, "vector": 1},
+                    reranked_chunk_ids=["chunk-a", "chunk-b"],
+                    embedding_provider="ollama",
+                    rerank_provider="heuristic",
+                ),
+                model=ModelDiagnostics(
+                    synthesis_provider="local" if self.mode is RuntimeMode.DEEP else None,
+                    attempts=[
+                        ProviderAttempt(
+                            stage="embedding",
+                            capability="embed",
+                            provider="ollama",
+                            location="local",
+                            model="embed-test",
+                            status="success",
+                        )
+                    ],
+                ),
+            ),
         )
 
 
@@ -127,8 +152,11 @@ def test_ingest_query_and_artifact_routes_use_runtime_facades() -> None:
     ]
     assert fast_response.status_code == 200
     assert fast_response.json()["runtime_mode"] == "fast"
+    assert fast_response.json()["diagnostics"]["retrieval"]["embedding_provider"] == "ollama"
+    assert fast_response.json()["diagnostics"]["retrieval"]["rerank_provider"] == "heuristic"
     assert deep_response.status_code == 200
     assert deep_response.json()["runtime_mode"] == "deep"
+    assert deep_response.json()["diagnostics"]["model"]["synthesis_provider"] == "local"
     assert list_response.status_code == 200
     assert list_response.json()[0]["artifact_id"] == "artifact-1"
     assert show_response.status_code == 200

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 import pkp.bootstrap as bootstrap_module
 from pkp.bootstrap import build_runtime_container
 from pkp.config import AppSettings, build_execution_policy, default_access_policy
+from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
 from pkp.types import ComplexityLevel, ExecutionLocationPreference, TaskType
 from pkp.ui.api.app import create_app
 from pkp.ui.dependencies import clear_container_factory
@@ -131,3 +132,73 @@ def test_build_runtime_container_wires_model_provider_settings(tmp_path, monkeyp
     }
     assert len(captured["cloud_providers"]) == 1
     assert len(captured["local_providers"]) == 1
+
+
+def test_build_runtime_container_uses_cloud_embedding_space_for_cloud_first_queries(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class FakeProvider:
+        def __init__(self, name: str, *, chat_model: str, embedding_model: str) -> None:
+            self.provider_name = name
+            self.chat_model_name = chat_model
+            self.embedding_model_name = embedding_model
+            self.is_chat_configured = True
+            self.is_embed_configured = True
+            self._fallback = FallbackEmbeddingRepo()
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return self._fallback.embed(texts)
+
+        def chat(self, prompt: str) -> str:
+            return prompt.splitlines()[0]
+
+    monkeypatch.setattr(
+        bootstrap_module,
+        "OpenAIProviderRepo",
+        lambda **_: FakeProvider("openai", chat_model="cloud-chat", embedding_model="cloud-embed"),
+    )
+    monkeypatch.setattr(
+        bootstrap_module,
+        "OllamaProviderRepo",
+        lambda **_: FakeProvider("ollama", chat_model="local-chat", embedding_model="local-embed"),
+    )
+    settings = AppSettings.model_validate(
+        {
+            "runtime": {
+                "data_dir": str(tmp_path / "runtime"),
+                "object_store_dir": str(tmp_path / "runtime" / "objects"),
+                "execution_location_preference": "cloud_first",
+            },
+            "openai": {
+                "api_key": "provider-key",
+                "base_url": "https://openai.test/v1",
+                "model": "gpt-test",
+                "embedding_model": "embed-test",
+            },
+            "ollama": {
+                "base_url": "http://ollama.test:11434",
+                "chat_model": "llama-test",
+                "embedding_model": "nomic-test",
+            },
+        }
+    )
+
+    container = build_runtime_container(settings)
+    container.ingest_runtime.ingest_source(
+        source_type="markdown",
+        location="data/samples/agent-rag-overview.md",
+    )
+    response = container.deep_research_runtime.run(
+        "What does Fast Path optimize for?",
+        build_execution_policy(
+            task_type=TaskType.RESEARCH,
+            complexity_level=ComplexityLevel.L4_RESEARCH,
+            access_policy=default_access_policy(),
+            execution_location_preference=ExecutionLocationPreference.CLOUD_FIRST,
+        ),
+        session_id="cloud-first",
+    )
+
+    assert response.diagnostics.retrieval.embedding_provider == "openai"
+    assert response.diagnostics.model.synthesis_provider == "openai"

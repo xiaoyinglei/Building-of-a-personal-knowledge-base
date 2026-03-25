@@ -11,7 +11,10 @@ from pkp.types import (
     ExecutionLocation,
     ExecutionLocationPreference,
     ExecutionPolicy,
+    ModelDiagnostics,
+    QueryDiagnostics,
     QueryResponse,
+    RetrievalDiagnostics,
     RuntimeMode,
 )
 
@@ -130,6 +133,7 @@ class DeepResearchRuntime:
         current_queries = sub_questions or [query]
         final_hits: list[EvidenceItem] = []
         evidence_matrix: list[dict[str, object]] = []
+        retrieval_diagnostics = RetrievalDiagnostics()
         consumed_tokens = 0
         recursive_depth = 0
         for round_index in range(1, self._max_rounds + 1):
@@ -142,6 +146,10 @@ class DeepResearchRuntime:
             for item in current_queries:
                 hits = self._retrieval_service.retrieve(item, policy, RuntimeMode.DEEP, round_index)
                 round_hits.extend(hits)
+                retrieval_diagnostics = self._merge_retrieval_diagnostics(
+                    retrieval_diagnostics,
+                    self._current_retrieval_diagnostics(),
+                )
                 consumed_tokens += self._estimate_token_cost(hits)
                 if self._token_budget_exhausted(policy, consumed_tokens):
                     break
@@ -163,7 +171,8 @@ class DeepResearchRuntime:
             recursive_depth += 1
 
         if not final_hits or not evidence_matrix:
-            return self._evidence_service.build_retrieval_only_response(query, final_hits)
+            response = self._evidence_service.build_retrieval_only_response(query, final_hits)
+            return self._attach_retrieval_diagnostics(response, retrieval_diagnostics)
 
         deep_response: QueryResponse | None = None
         for location in resolve_execution_locations(
@@ -177,7 +186,8 @@ class DeepResearchRuntime:
                 continue
 
         if deep_response is None:
-            return self._evidence_service.build_retrieval_only_response(query, final_hits)
+            response = self._evidence_service.build_retrieval_only_response(query, final_hits)
+            return self._attach_retrieval_diagnostics(response, retrieval_diagnostics)
 
         if self._memory_service is not None:
             episode_id = self._memory_service.record_episode(
@@ -188,7 +198,7 @@ class DeepResearchRuntime:
                 source_scope=source_scope,
             )
             self.session_runtime.store_episode_id(session_id, episode_id)
-        return deep_response
+        return self._attach_retrieval_diagnostics(deep_response, retrieval_diagnostics)
 
     @staticmethod
     def _merge_hits(existing: list[EvidenceItem], new_hits: list[EvidenceItem]) -> list[EvidenceItem]:
@@ -219,6 +229,53 @@ class DeepResearchRuntime:
                 self._evidence_service.build_deep_response,
             )
             return fallback(query, evidence_matrix)
+
+    def _current_retrieval_diagnostics(self) -> RetrievalDiagnostics:
+        result = getattr(self._retrieval_service, "last_result", None)
+        diagnostics = getattr(result, "diagnostics", None)
+        return diagnostics if isinstance(diagnostics, RetrievalDiagnostics) else RetrievalDiagnostics()
+
+    @staticmethod
+    def _merge_retrieval_diagnostics(
+        existing: RetrievalDiagnostics,
+        current: RetrievalDiagnostics,
+    ) -> RetrievalDiagnostics:
+        branch_hits = dict(existing.branch_hits)
+        for branch, count in current.branch_hits.items():
+            branch_hits[branch] = branch_hits.get(branch, 0) + count
+        embedding_provider = current.embedding_provider or existing.embedding_provider
+        rerank_provider = current.rerank_provider or existing.rerank_provider
+        attempts = [*existing.attempts, *current.attempts]
+        reranked_chunk_ids = list(existing.reranked_chunk_ids)
+        for chunk_id in current.reranked_chunk_ids:
+            if chunk_id not in reranked_chunk_ids:
+                reranked_chunk_ids.append(chunk_id)
+        return RetrievalDiagnostics(
+            branch_hits=branch_hits,
+            reranked_chunk_ids=reranked_chunk_ids,
+            embedding_provider=embedding_provider,
+            rerank_provider=rerank_provider,
+            attempts=attempts,
+            fusion_input_count=existing.fusion_input_count + current.fusion_input_count,
+            fused_count=max(existing.fused_count, current.fused_count),
+            graph_expanded=existing.graph_expanded or current.graph_expanded,
+        )
+
+    @staticmethod
+    def _attach_retrieval_diagnostics(
+        response: QueryResponse,
+        retrieval_diagnostics: RetrievalDiagnostics,
+    ) -> QueryResponse:
+        return response.model_copy(
+            update={
+                "diagnostics": QueryDiagnostics(
+                    retrieval=retrieval_diagnostics,
+                    model=response.diagnostics.model
+                    if isinstance(response.diagnostics.model, ModelDiagnostics)
+                    else ModelDiagnostics(),
+                )
+            }
+        )
 
     def _decompose(self, query: str, memory_hints: list[str]) -> list[str]:
         try:

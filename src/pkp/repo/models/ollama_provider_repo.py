@@ -60,6 +60,30 @@ class OllamaProviderRepo(ModelProviderRepo):
     def rerank(self, query: str, candidates: Sequence[str]) -> list[int]:
         return self._fallback.rerank(query, candidates)
 
+    @property
+    def provider_name(self) -> str:
+        return "ollama"
+
+    @property
+    def chat_model_name(self) -> str:
+        return self._chat_model
+
+    @property
+    def embedding_model_name(self) -> str:
+        return self._embedding_model
+
+    @property
+    def is_chat_configured(self) -> bool:
+        return bool(self._base_url and self._chat_model)
+
+    @property
+    def is_embed_configured(self) -> bool:
+        return bool(self._base_url and self._embedding_model)
+
+    @property
+    def is_rerank_configured(self) -> bool:
+        return False
+
     def _client(self) -> httpx.Client:
         if self._http_client is None:
             self._http_client = httpx.Client(timeout=httpx.Timeout(self._timeout_seconds))

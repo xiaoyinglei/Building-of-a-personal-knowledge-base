@@ -206,3 +206,56 @@ def test_retrieval_service_skips_web_search_when_internal_evidence_is_already_su
     assert result.self_check.evidence_sufficient is True
     assert calls["web_calls"] == 0
     assert result.evidence.external == []
+
+
+def test_retrieval_service_prefers_definition_chunk_when_vector_and_sparse_signals_disagree() -> None:
+    service, calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate(
+                "chunk-cli",
+                "doc-a",
+                'uv run python -m pkp.ui.cli query --mode fast --query "这个项目做什么？"',
+                "#query",
+                1.0,
+                1,
+                section_path=("查询",),
+            ),
+            FakeCandidate(
+                "chunk-desc",
+                "doc-a",
+                "一个以可靠性为优先的个人知识平台，用来完成资料接入、索引构建、检索问答和知识沉淀。",
+                "#intro",
+                0.9,
+                2,
+                section_path=("个人知识平台",),
+            ),
+        ],
+        vector_candidates=[
+            FakeCandidate(
+                "chunk-desc",
+                "doc-a",
+                "一个以可靠性为优先的个人知识平台，用来完成资料接入、索引构建、检索问答和知识沉淀。",
+                "#intro",
+                0.61,
+                1,
+                section_path=("个人知识平台",),
+            ),
+            FakeCandidate(
+                "chunk-cli",
+                "doc-a",
+                'uv run python -m pkp.ui.cli query --mode fast --query "这个项目做什么？"',
+                "#query",
+                0.51,
+                2,
+                section_path=("查询",),
+            ),
+        ],
+    )
+
+    result = service.retrieve(
+        "这个项目做什么？",
+        access_policy=AccessPolicy.default(),
+    )
+
+    assert calls["rerank_inputs"] == [["chunk-desc", "chunk-cli"]]
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-desc", "chunk-cli"]

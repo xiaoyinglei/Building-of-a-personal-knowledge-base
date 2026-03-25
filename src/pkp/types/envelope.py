@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from pkp.types.access import AccessPolicy, ExecutionLocationPreference, RuntimeMode
+from pkp.types.diagnostics import QueryDiagnostics
 from pkp.types.query import ComplexityLevel, TaskType
 
 
@@ -37,6 +38,7 @@ class QueryResponse(BaseModel):
     uncertainty: str
     preservation_suggestion: PreservationSuggestion
     runtime_mode: RuntimeMode
+    diagnostics: QueryDiagnostics = Field(default_factory=QueryDiagnostics)
 
 
 class ExecutionPolicy(BaseModel):
