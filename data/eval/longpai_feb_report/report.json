@@ -1,0 +1,755 @@
+{
+  "summary": {
+    "embedding_provider": "offline-lexical",
+    "embedding_model": "lexical-256",
+    "embedding_space": "offline-lexical::lexical-256",
+    "total_documents": 1,
+    "total_questions": 2,
+    "vector_hit_rate": 1.0,
+    "fts_hit_rate": 1.0,
+    "runtime_hit_rate": 1.0,
+    "parent_backfill_question_count": 2,
+    "parent_backfill_success_count": 2,
+    "table_question_success_count": 0,
+    "image_question_success_count": 0
+  },
+  "fixtures": [
+    {
+      "fixture_id": "user_file_龙牌公司_雷晓英月度工作总结（二月）_副本",
+      "filename": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx",
+      "source_type": "docx",
+      "description": "User-supplied fixture for offline retrieval evaluation.",
+      "path": "/Users/leixiaoying/LLM/RAG学习/data/runtime/uploads/龙牌公司-雷晓英月度工作总结（二月）_副本.docx"
+    }
+  ],
+  "quality_audit": {
+    "total_parent_chunks": 4,
+    "total_child_chunks": 8,
+    "total_special_chunks": 0,
+    "duplicate_searchable_chunks": 0,
+    "blank_chunks": 0,
+    "too_short_child_chunks": 0,
+    "too_long_child_chunks": 0,
+    "missing_metadata_chunks": 0,
+    "inspection_samples": [
+      {
+        "fixture_id": "user_file_龙牌公司_雷晓英月度工作总结（二月）_副本",
+        "filename": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx",
+        "chunk_id": "0-caf984fedea6",
+        "chunk_role": "parent",
+        "special_chunk_type": null,
+        "text": "--龙牌公司市场营销部 雷晓英",
+        "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-5c50dd1739",
+        "parent_text": null,
+        "metadata": {
+          "location": "/Users/leixiaoying/LLM/RAG学习/data/runtime/uploads/龙牌公司-雷晓英月度工作总结（二月）_副本.docx",
+          "source_type": "",
+          "toc_path": "龙牌公司-雷晓英月度工作总结（二月）_副本 > 新材生月度工作总结"
+        }
+      },
+      {
+        "fixture_id": "user_file_龙牌公司_雷晓英月度工作总结（二月）_副本",
+        "filename": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx",
+        "chunk_id": "chunk-3873108a207c",
+        "chunk_role": "child",
+        "special_chunk_type": null,
+        "text": "--龙牌公司市场营销部 雷晓英",
+        "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-5c50dd1739",
+        "parent_text": "--龙牌公司市场营销部 雷晓英",
+        "metadata": {
+          "location": "/Users/leixiaoying/LLM/RAG学习/data/runtime/uploads/龙牌公司-雷晓英月度工作总结（二月）_副本.docx",
+          "source_type": "",
+          "toc_path": "龙牌公司-雷晓英月度工作总结（二月）_副本 > 新材生月度工作总结"
+        }
+      }
+    ]
+  },
+  "question_results": [
+    {
+      "question_id": "monthly_rebate_issues",
+      "fixture_id": "user_file_龙牌公司_雷晓英月度工作总结（二月）_副本",
+      "question": "月返抽查专项工作中我遇到了哪些问题？",
+      "category": "parent_backfill",
+      "expected_terms": [
+        "所有提报数据均由商务提供",
+        "任务量都比较重",
+        "抽查工作进展缓慢"
+      ],
+      "corpus_has_expected_answer": true,
+      "likely_issue": "parent_context_needed",
+      "vector_hit": true,
+      "fts_hit": true,
+      "runtime_hit": true,
+      "parent_backfill_improves": true,
+      "vector_top_k": [
+        {
+          "retrieval_kind": "vector",
+          "rank": 1,
+          "chunk_id": "chunk-ae3fee57c945",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.33295604590814587,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "共检查返利促销政策7条，发现部分倒挂情况，共核查返利金额1472. 6万元，金额目前无误。 年前，截止到2月初，按照领导指示，复盘结果，完成北方、南方、华东、云贵、东北、闽赣地区的单月返利，并形成汇报文件，已向丁总作返利专项工作汇报。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 2,
+          "chunk_id": "chunk-6259a64d91d5",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.27185747308321606,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [
+            "所有提报数据均由商务提供"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。 根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [
+            "所有提报数据均由商务提供",
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "parent_matched_term_count": 3,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 3,
+          "chunk_id": "chunk-f9df6252b82a",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.26647402004950604,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。 为解决此问题，通过多与区域商务进行沟通，还是积极推进数字化工作是最有效的。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [
+            "所有提报数据均由商务提供",
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "parent_matched_term_count": 3,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 4,
+          "chunk_id": "chunk-42f07ea94d52",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.24456524724126466,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "龙牌集团月返抽查专项工作 进行月度/季度促销政策的审批合规性检查，并形成登记表、按促销政策分类（立减、达量兑现、无门槛兑现、费用等）。 以及月度/季度促销政策金额的核算、审批备案核查等工作。 一月已完成华东、云贵、西南区域8月返利全量核查工作。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 5,
+          "chunk_id": "chunk-4d477f04ab8d",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.17149858514250885,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。 当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。 完成了下月预期举办推广会收集及相应物料需求。 由于中间夹杂着春节，因为各类表的收集略有滞后。 1.",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": false
+        }
+      ],
+      "fts_top_k": [
+        {
+          "retrieval_kind": "fts",
+          "rank": 1,
+          "chunk_id": "chunk-6259a64d91d5",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [
+            "所有提报数据均由商务提供"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。 根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [
+            "所有提报数据均由商务提供",
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "parent_matched_term_count": 3,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 2,
+          "chunk_id": "chunk-42f07ea94d52",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "龙牌集团月返抽查专项工作 进行月度/季度促销政策的审批合规性检查，并形成登记表、按促销政策分类（立减、达量兑现、无门槛兑现、费用等）。 以及月度/季度促销政策金额的核算、审批备案核查等工作。 一月已完成华东、云贵、西南区域8月返利全量核查工作。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 3,
+          "chunk_id": "chunk-f9df6252b82a",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。 为解决此问题，通过多与区域商务进行沟通，还是积极推进数字化工作是最有效的。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [
+            "所有提报数据均由商务提供",
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "parent_matched_term_count": 3,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 4,
+          "chunk_id": "chunk-ae3fee57c945",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "共检查返利促销政策7条，发现部分倒挂情况，共核查返利金额1472. 6万元，金额目前无误。 年前，截止到2月初，按照领导指示，复盘结果，完成北方、南方、华东、云贵、东北、闽赣地区的单月返利，并形成汇报文件，已向丁总作返利专项工作汇报。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 5,
+          "chunk_id": "chunk-3873108a207c",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-5c50dd1739",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "--龙牌公司市场营销部 雷晓英",
+          "parent_chunk_id": "0-caf984fedea6",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "--龙牌公司市场营销部 雷晓英",
+          "is_expected_hit": false
+        }
+      ],
+      "runtime_top_k": [
+        {
+          "retrieval_kind": "runtime",
+          "rank": 1,
+          "chunk_id": "chunk-6259a64d91d5",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.9883333481736271,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [
+            "所有提报数据均由商务提供"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。 根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [
+            "所有提报数据均由商务提供",
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "parent_matched_term_count": 3,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 2,
+          "chunk_id": "chunk-42f07ea94d52",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.7645566374424144,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "龙牌集团月返抽查专项工作 进行月度/季度促销政策的审批合规性检查，并形成登记表、按促销政策分类（立减、达量兑现、无门槛兑现、费用等）。 以及月度/季度促销政策金额的核算、审批备案核查等工作。 一月已完成华东、云贵、西南区域8月返利全量核查工作。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 3,
+          "chunk_id": "chunk-f9df6252b82a",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.9519576763386647,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。 为解决此问题，通过多与区域商务进行沟通，还是积极推进数字化工作是最有效的。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [
+            "所有提报数据均由商务提供",
+            "任务量都比较重",
+            "抽查工作进展缓慢"
+          ],
+          "parent_matched_term_count": 3,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 4,
+          "chunk_id": "chunk-ae3fee57c945",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.8218930810028929,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "共检查返利促销政策7条，发现部分倒挂情况，共核查返利金额1472. 6万元，金额目前无误。 年前，截止到2月初，按照领导指示，复盘结果，完成北方、南方、华东、云贵、东北、闽赣地区的单月返利，并形成汇报文件，已向丁总作返利专项工作汇报。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 5,
+          "chunk_id": "chunk-4d477f04ab8d",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.6154608023942141,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。 当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。 完成了下月预期举办推广会收集及相应物料需求。 由于中间夹杂着春节，因为各类表的收集略有滞后。 1.",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": false
+        }
+      ]
+    },
+    {
+      "question_id": "january_rebate_completed_work",
+      "fixture_id": "user_file_龙牌公司_雷晓英月度工作总结（二月）_副本",
+      "question": "龙牌集团月返抽查专项工作中，一月我完成了哪些工作？",
+      "category": "parent_backfill",
+      "expected_terms": [
+        "华东、云贵、西南区域8月返利全量核查工作",
+        "检查返利促销政策7条",
+        "核查返利金额1472.6万元",
+        "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+      ],
+      "corpus_has_expected_answer": true,
+      "likely_issue": "parent_context_needed",
+      "vector_hit": true,
+      "fts_hit": true,
+      "runtime_hit": true,
+      "parent_backfill_improves": true,
+      "vector_top_k": [
+        {
+          "retrieval_kind": "vector",
+          "rank": 1,
+          "chunk_id": "chunk-42f07ea94d52",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.33681653485430396,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "龙牌集团月返抽查专项工作 进行月度/季度促销政策的审批合规性检查，并形成登记表、按促销政策分类（立减、达量兑现、无门槛兑现、费用等）。 以及月度/季度促销政策金额的核算、审批备案核查等工作。 一月已完成华东、云贵、西南区域8月返利全量核查工作。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 2,
+          "chunk_id": "chunk-61f41fb6c315",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.27558912730477525,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-ea4e617bf3",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "下个月工作规划：当月，由于工作调整，已被分配至龙牌集团销售中心开展工作，计划月初可全部完成原有工作的交接，同时，按照领导指示，尽快熟悉并投入新的工作。 2026年2月28日",
+          "parent_chunk_id": "3-72c77741af15",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "下个月工作规划：当月，由于工作调整，已被分配至龙牌集团销售中心开展工作，计划月初可全部完成原有工作的交接，同时，按照领导指示，尽快熟悉并投入新的工作。 2026年2月28日",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 3,
+          "chunk_id": "chunk-6259a64d91d5",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.2614881801842454,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。 根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 4,
+          "chunk_id": "chunk-ae3fee57c945",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.24019223070763074,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [
+            "检查返利促销政策7条",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "共检查返利促销政策7条，发现部分倒挂情况，共核查返利金额1472. 6万元，金额目前无误。 年前，截止到2月初，按照领导指示，复盘结果，完成北方、南方、华东、云贵、东北、闽赣地区的单月返利，并形成汇报文件，已向丁总作返利专项工作汇报。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 5,
+          "chunk_id": "chunk-4d477f04ab8d",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.1804219591217581,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。 当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。 完成了下月预期举办推广会收集及相应物料需求。 由于中间夹杂着春节，因为各类表的收集略有滞后。 1.",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        }
+      ],
+      "fts_top_k": [
+        {
+          "retrieval_kind": "fts",
+          "rank": 1,
+          "chunk_id": "chunk-42f07ea94d52",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "龙牌集团月返抽查专项工作 进行月度/季度促销政策的审批合规性检查，并形成登记表、按促销政策分类（立减、达量兑现、无门槛兑现、费用等）。 以及月度/季度促销政策金额的核算、审批备案核查等工作。 一月已完成华东、云贵、西南区域8月返利全量核查工作。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 2,
+          "chunk_id": "chunk-6259a64d91d5",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。 根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 3,
+          "chunk_id": "chunk-4d477f04ab8d",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。 当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。 完成了下月预期举办推广会收集及相应物料需求。 由于中间夹杂着春节，因为各类表的收集略有滞后。 1.",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 4,
+          "chunk_id": "chunk-ae3fee57c945",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [
+            "检查返利促销政策7条",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "共检查返利促销政策7条，发现部分倒挂情况，共核查返利金额1472. 6万元，金额目前无误。 年前，截止到2月初，按照领导指示，复盘结果，完成北方、南方、华东、云贵、东北、闽赣地区的单月返利，并形成汇报文件，已向丁总作返利专项工作汇报。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 5,
+          "chunk_id": "chunk-61f41fb6c315",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-ea4e617bf3",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "下个月工作规划：当月，由于工作调整，已被分配至龙牌集团销售中心开展工作，计划月初可全部完成原有工作的交接，同时，按照领导指示，尽快熟悉并投入新的工作。 2026年2月28日",
+          "parent_chunk_id": "3-72c77741af15",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "下个月工作规划：当月，由于工作调整，已被分配至龙牌集团销售中心开展工作，计划月初可全部完成原有工作的交接，同时，按照领导指示，尽快熟悉并投入新的工作。 2026年2月28日",
+          "is_expected_hit": false
+        }
+      ],
+      "runtime_top_k": [
+        {
+          "retrieval_kind": "runtime",
+          "rank": 1,
+          "chunk_id": "chunk-42f07ea94d52",
+          "doc_id": "document-8a74814e1d47",
+          "score": 1.0487119437939112,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "龙牌集团月返抽查专项工作 进行月度/季度促销政策的审批合规性检查，并形成登记表、按促销政策分类（立减、达量兑现、无门槛兑现、费用等）。 以及月度/季度促销政策金额的核算、审批备案核查等工作。 一月已完成华东、云贵、西南区域8月返利全量核查工作。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 2,
+          "chunk_id": "chunk-6259a64d91d5",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.9584218632798903,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-36eb5774aa",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。 根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。",
+          "parent_chunk_id": "2-d82df924ae46",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "1. 龙牌集团月返抽查专项工作 目前返利核查过程中，根据各区域上报的明细表来看，很难从中发现系统级别的漏洞，核心原因有二：第一是所有提报数据均由商务提供，且具体项的明细大多没有公开。根据商务提供数据又二次复核商务返利，只能起到检查人工错误的作用，对于系统性风险很难觉察。第二是以某个时间段以汇总形式进行审批上报的返利，进行抽查工作时，具体抽查项的明细提供和检查，对于商务人员和检查员来说，任务量都比较重，导致抽查工作进展缓慢。为解决此问题，...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 3,
+          "chunk_id": "chunk-61f41fb6c315",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.9269844250415994,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#section-ea4e617bf3",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "下个月工作规划：当月，由于工作调整，已被分配至龙牌集团销售中心开展工作，计划月初可全部完成原有工作的交接，同时，按照领导指示，尽快熟悉并投入新的工作。 2026年2月28日",
+          "parent_chunk_id": "3-72c77741af15",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "下个月工作规划：当月，由于工作调整，已被分配至龙牌集团销售中心开展工作，计划月初可全部完成原有工作的交接，同时，按照领导指示，尽快熟悉并投入新的工作。 2026年2月28日",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 4,
+          "chunk_id": "chunk-ae3fee57c945",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.9065765263392143,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [
+            "检查返利促销政策7条",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "共检查返利促销政策7条，发现部分倒挂情况，共核查返利金额1472. 6万元，金额目前无误。 年前，截止到2月初，按照领导指示，复盘结果，完成北方、南方、华东、云贵、东北、闽赣地区的单月返利，并形成汇报文件，已向丁总作返利专项工作汇报。",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 5,
+          "chunk_id": "chunk-4d477f04ab8d",
+          "doc_id": "document-8a74814e1d47",
+          "score": 0.8636291499064643,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "龙牌公司-雷晓英月度工作总结（二月）_副本.docx#1-82870a1929",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。 当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。 完成了下月预期举办推广会收集及相应物料需求。 由于中间夹杂着春节，因为各类表的收集略有滞后。 1.",
+          "parent_chunk_id": "1-bbf09daca361",
+          "parent_matched_terms": [
+            "华东、云贵、西南区域8月返利全量核查工作",
+            "检查返利促销政策7条",
+            "核查返利金额1472.6万元",
+            "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+          ],
+          "parent_matched_term_count": 4,
+          "parent_text_preview": "1. 组织PPT评选大赛 2月初，PPT大赛成功举办，负责的工作主要是参会准备，走奖状盖章流程、参赛人员餐饮接待流程、核分排名，收集获奖信息等。会后按领导要求整理会议文件，并将获奖作品分享到区域。 1. 推广会 经领导安排，于2月进行承接推广会方面的工作。本月已与各区域办负责人进行了沟通对接，并梳理了对应工作的相关文件。当月收集了1月举办推广会的复盘情况，并根据活动评估进行了排名。完成了下月预期举办推广会收集及相应物料需求。由于中间夹杂...",
+          "is_expected_hit": true
+        }
+      ]
+    }
+  ]
+}

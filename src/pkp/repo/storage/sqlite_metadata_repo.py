@@ -340,7 +340,9 @@ class SQLiteMetadataRepo:
         return [self._load(Segment, row["payload"]) for row in rows]
 
     def save_chunk(self, chunk: Chunk) -> None:
-        order_index = int(chunk.metadata.get("order_index", chunk.citation_span[0]))
+        order_index = int(
+            chunk.order_index if chunk.order_index else chunk.metadata.get("order_index", chunk.citation_span[0])
+        )
         self._conn.execute(
             """
             INSERT INTO chunks (chunk_id, doc_id, segment_id, order_index, saved_at, payload)

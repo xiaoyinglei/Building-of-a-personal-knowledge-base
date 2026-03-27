@@ -1,0 +1,75 @@
+{
+  "schema_version": "offline-eval/v1",
+  "questions": [
+    {
+      "question_id": "markdown_revenue_reason",
+      "fixture_id": "quarterly_review_markdown",
+      "question": "收入增长的两个主要原因是什么？",
+      "category": "child",
+      "expected_terms": ["企业续约增长", "自助升级增加"],
+      "min_expected_terms": 2,
+      "expected_chunk_role": "child",
+      "top_k": 5,
+      "notes": "检查普通 child chunk 是否能直接命中。"
+    },
+    {
+      "question_id": "markdown_release_gates",
+      "fixture_id": "quarterly_review_markdown",
+      "question": "发布前必须同时满足哪两个门槛？",
+      "category": "parent_backfill",
+      "expected_terms": ["95%", "必填字段缺失为零"],
+      "min_expected_terms": 2,
+      "expected_chunk_role": "child",
+      "expect_parent_backfill": true,
+      "top_k": 5,
+      "notes": "检查 child 是否过碎，以及 parent 回填后上下文是否更完整。"
+    },
+    {
+      "question_id": "docx_alert_table",
+      "fixture_id": "operations_brief_docx",
+      "question": "值班指标表里待处理告警是多少？",
+      "category": "table",
+      "expected_terms": ["7"],
+      "min_expected_terms": 1,
+      "expected_chunk_role": "special",
+      "expected_special_chunk_type": "table",
+      "top_k": 5,
+      "notes": "检查 DOCX 表格是否以 table chunk 命中。"
+    },
+    {
+      "question_id": "pdf_deep_path_conflict",
+      "fixture_id": "research_notes_pdf",
+      "question": "What should Deep Path expose during research?",
+      "category": "child",
+      "expected_terms": ["expose conflicts"],
+      "min_expected_terms": 1,
+      "expected_chunk_role": "child",
+      "top_k": 5,
+      "notes": "检查 PDF 普通段落 chunk 的最小命中闭环。"
+    },
+    {
+      "question_id": "image_ocr_revenue",
+      "fixture_id": "dashboard_metrics_image",
+      "question": "图里的收入数值是多少？",
+      "category": "ocr",
+      "expected_terms": ["1280"],
+      "min_expected_terms": 1,
+      "expected_chunk_role": "special",
+      "expected_special_chunk_type": "ocr_region",
+      "top_k": 5,
+      "notes": "检查图片数值问题能否命中 OCR 区域块。"
+    },
+    {
+      "question_id": "image_summary_scene",
+      "fixture_id": "dashboard_metrics_image",
+      "question": "这张图是什么类型的画面？",
+      "category": "image_summary",
+      "expected_terms": ["运营仪表盘截图"],
+      "min_expected_terms": 1,
+      "expected_chunk_role": "special",
+      "expected_special_chunk_type": "image_summary",
+      "top_k": 5,
+      "notes": "检查场景问题是否命中 image_summary chunk。"
+    }
+  ]
+}

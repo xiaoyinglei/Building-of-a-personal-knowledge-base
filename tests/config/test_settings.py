@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from pydantic import SecretStr
+from pytest import MonkeyPatch
 
 from pkp.config.settings import AppSettings
 from pkp.types.access import ExecutionLocationPreference
@@ -30,7 +33,7 @@ def test_settings_parse_nested_env_values() -> None:
     assert settings.openai.api_key.get_secret_value() == "test-key"
 
 
-def test_settings_load_dotenv_file_from_current_workdir(tmp_path, monkeypatch) -> None:
+def test_settings_load_dotenv_file_from_current_workdir(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PKP_OPENAI__API_KEY", raising=False)
     monkeypatch.delenv("PKP_RUNTIME__MAX_TOKEN_BUDGET", raising=False)
@@ -50,7 +53,7 @@ def test_settings_load_dotenv_file_from_current_workdir(tmp_path, monkeypatch) -
     assert settings.runtime.max_token_budget == 321
 
 
-def test_settings_treat_empty_max_token_budget_as_none(tmp_path, monkeypatch) -> None:
+def test_settings_treat_empty_max_token_budget_as_none(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PKP_RUNTIME__MAX_TOKEN_BUDGET", raising=False)
     (tmp_path / ".env").write_text(
@@ -61,3 +64,27 @@ def test_settings_treat_empty_max_token_budget_as_none(tmp_path, monkeypatch) ->
     settings = AppSettings()
 
     assert settings.runtime.max_token_budget is None
+
+
+def test_settings_parse_local_bge_model_settings() -> None:
+    settings = AppSettings.model_validate(
+        {
+            "local_bge": {
+                "enabled": True,
+                "embedding_model": "BAAI/bge-m3",
+                "embedding_model_path": "~/.cache/huggingface/hub/models--BAAI--bge-m3",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_model_path": "~/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3",
+            }
+        }
+    )
+
+    assert settings.local_bge.enabled is True
+    assert settings.local_bge.embedding_model == "BAAI/bge-m3"
+    assert settings.local_bge.embedding_model_path is not None
+    assert settings.local_bge.embedding_model_path.as_posix().endswith("models--BAAI--bge-m3")
+    assert settings.local_bge.rerank_model == "BAAI/bge-reranker-v2-m3"
+    assert settings.local_bge.rerank_model_path is not None
+    assert settings.local_bge.rerank_model_path.as_posix().endswith(
+        "models--BAAI--bge-reranker-v2-m3"
+    )

@@ -1,0 +1,1565 @@
+{
+  "summary": {
+    "embedding_provider": "offline-lexical",
+    "embedding_model": "lexical-256",
+    "embedding_space": "offline-lexical::lexical-256",
+    "total_documents": 4,
+    "total_questions": 6,
+    "vector_hit_rate": 1.0,
+    "fts_hit_rate": 0.8333333333333334,
+    "runtime_hit_rate": 1.0,
+    "parent_backfill_question_count": 1,
+    "parent_backfill_success_count": 2,
+    "table_question_success_count": 1,
+    "image_question_success_count": 2
+  },
+  "fixtures": [
+    {
+      "fixture_id": "quarterly_review_markdown",
+      "filename": "quarterly-review.md",
+      "source_type": "markdown",
+      "description": "Markdown fixture with a table, a direct child-answer section, and a long parent-backfill section.",
+      "path": "data/eval/generated/samples/quarterly-review.md"
+    },
+    {
+      "fixture_id": "operations_brief_docx",
+      "filename": "operations-brief.docx",
+      "source_type": "docx",
+      "description": "DOCX fixture with headings, a table, and one direct answer paragraph.",
+      "path": "data/eval/generated/samples/operations-brief.docx"
+    },
+    {
+      "fixture_id": "research_notes_pdf",
+      "filename": "research-notes.pdf",
+      "source_type": "pdf",
+      "description": "PDF fixture with two pages and direct retrieval statements.",
+      "path": "data/eval/generated/samples/research-notes.pdf"
+    },
+    {
+      "fixture_id": "dashboard_metrics_image",
+      "filename": "dashboard-metrics.png",
+      "source_type": "image",
+      "description": "Image fixture for OCR-region and image-summary evaluation.",
+      "path": "data/eval/generated/samples/dashboard-metrics.png"
+    }
+  ],
+  "quality_audit": {
+    "total_parent_chunks": 7,
+    "total_child_chunks": 8,
+    "total_special_chunks": 6,
+    "duplicate_searchable_chunks": 0,
+    "blank_chunks": 0,
+    "too_short_child_chunks": 0,
+    "too_long_child_chunks": 0,
+    "missing_metadata_chunks": 0,
+    "inspection_samples": [
+      {
+        "fixture_id": "quarterly_review_markdown",
+        "filename": "quarterly-review.md",
+        "chunk_id": "0-2d86be55dada",
+        "chunk_role": "parent",
+        "special_chunk_type": null,
+        "text": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+        "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+        "parent_text": null,
+        "metadata": {
+          "location": "data/eval/generated/samples/quarterly-review.md",
+          "source_type": "",
+          "toc_path": "季度复盘 > 收入分析"
+        }
+      },
+      {
+        "fixture_id": "quarterly_review_markdown",
+        "filename": "quarterly-review.md",
+        "chunk_id": "chunk-ad96a2c6e075",
+        "chunk_role": "child",
+        "special_chunk_type": null,
+        "text": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+        "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+        "parent_text": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+        "metadata": {
+          "location": "data/eval/generated/samples/quarterly-review.md",
+          "source_type": "",
+          "toc_path": "季度复盘 > 收入分析"
+        }
+      },
+      {
+        "fixture_id": "quarterly_review_markdown",
+        "filename": "quarterly-review.md",
+        "chunk_id": "1-a8a658180771",
+        "chunk_role": "special",
+        "special_chunk_type": "table",
+        "text": "| 指标 | 数值 | |------|------| | 收入 | 1280 | | 订单 | 342 | | 续约率 | 91% |",
+        "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+        "parent_text": null,
+        "metadata": {
+          "location": "data/eval/generated/samples/quarterly-review.md",
+          "source_type": "",
+          "toc_path": "季度复盘 > 收入分析",
+          "bbox": "",
+          "page_no": ""
+        }
+      },
+      {
+        "fixture_id": "operations_brief_docx",
+        "filename": "operations-brief.docx",
+        "chunk_id": "0-bf3999c10335",
+        "chunk_role": "parent",
+        "special_chunk_type": null,
+        "text": "本周值班目标是减少回归成本。",
+        "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+        "parent_text": null,
+        "metadata": {
+          "location": "data/eval/generated/samples/operations-brief.docx",
+          "source_type": "",
+          "toc_path": "operations-brief > 运营周报"
+        }
+      },
+      {
+        "fixture_id": "operations_brief_docx",
+        "filename": "operations-brief.docx",
+        "chunk_id": "chunk-d9f540e8e68d",
+        "chunk_role": "child",
+        "special_chunk_type": null,
+        "text": "本周值班目标是减少回归成本。",
+        "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+        "parent_text": "本周值班目标是减少回归成本。",
+        "metadata": {
+          "location": "data/eval/generated/samples/operations-brief.docx",
+          "source_type": "",
+          "toc_path": "operations-brief > 运营周报"
+        }
+      },
+      {
+        "fixture_id": "operations_brief_docx",
+        "filename": "operations-brief.docx",
+        "chunk_id": "3-44a5867e9630",
+        "chunk_role": "special",
+        "special_chunk_type": "table",
+        "text": "| 指标 | 数值 | |-------|------| | 待处理告警 | 7 | | 自动修复 | 5 |",
+        "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+        "parent_text": null,
+        "metadata": {
+          "location": "data/eval/generated/samples/operations-brief.docx",
+          "source_type": "",
+          "toc_path": "operations-brief > 运营周报",
+          "bbox": "",
+          "page_no": ""
+        }
+      },
+      {
+        "fixture_id": "research_notes_pdf",
+        "filename": "research-notes.pdf",
+        "chunk_id": "0-1fe53ea3538e",
+        "chunk_role": "parent",
+        "special_chunk_type": null,
+        "text": "Research Notes Fast Path should answer direct questions with citations.",
+        "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-1-be7a7d1cc6",
+        "parent_text": null,
+        "metadata": {
+          "location": "data/eval/generated/samples/research-notes.pdf",
+          "source_type": "",
+          "toc_path": "research-notes"
+        }
+      },
+      {
+        "fixture_id": "research_notes_pdf",
+        "filename": "research-notes.pdf",
+        "chunk_id": "chunk-6c8241d3ed1d",
+        "chunk_role": "child",
+        "special_chunk_type": null,
+        "text": "Research Notes Fast Path should answer direct questions with citations.",
+        "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-1-be7a7d1cc6",
+        "parent_text": "Research Notes Fast Path should answer direct questions with citations.",
+        "metadata": {
+          "location": "data/eval/generated/samples/research-notes.pdf",
+          "source_type": "",
+          "toc_path": "research-notes"
+        }
+      },
+      {
+        "fixture_id": "dashboard_metrics_image",
+        "filename": "dashboard-metrics.png",
+        "chunk_id": "0-a64a03988c1a",
+        "chunk_role": "parent",
+        "special_chunk_type": null,
+        "text": "一个包含 KPI 卡片的运营仪表盘截图",
+        "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+        "parent_text": null,
+        "metadata": {
+          "location": "data/eval/generated/samples/dashboard-metrics.png",
+          "source_type": "",
+          "toc_path": "dashboard-metrics"
+        }
+      },
+      {
+        "fixture_id": "dashboard_metrics_image",
+        "filename": "dashboard-metrics.png",
+        "chunk_id": "chunk-737f560e028e",
+        "chunk_role": "child",
+        "special_chunk_type": null,
+        "text": "运营仪表盘 图2 收入 1280 订单 342",
+        "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+        "parent_text": "一个包含 KPI 卡片的运营仪表盘截图",
+        "metadata": {
+          "location": "data/eval/generated/samples/dashboard-metrics.png",
+          "source_type": "",
+          "toc_path": "dashboard-metrics"
+        }
+      },
+      {
+        "fixture_id": "dashboard_metrics_image",
+        "filename": "dashboard-metrics.png",
+        "chunk_id": "0-be8b9516327d",
+        "chunk_role": "special",
+        "special_chunk_type": "ocr_region",
+        "text": "图2",
+        "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+        "parent_text": null,
+        "metadata": {
+          "location": "data/eval/generated/samples/dashboard-metrics.png",
+          "source_type": "image",
+          "toc_path": "dashboard-metrics",
+          "bbox": "16.00,16.00,120.00,52.00",
+          "page_no": "1",
+          "region_index": "0"
+        }
+      },
+      {
+        "fixture_id": "dashboard_metrics_image",
+        "filename": "dashboard-metrics.png",
+        "chunk_id": "1-d3614188eea0",
+        "chunk_role": "special",
+        "special_chunk_type": "ocr_region",
+        "text": "收入 1280",
+        "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+        "parent_text": null,
+        "metadata": {
+          "location": "data/eval/generated/samples/dashboard-metrics.png",
+          "source_type": "image",
+          "toc_path": "dashboard-metrics",
+          "bbox": "16.00,64.00,220.00,120.00",
+          "page_no": "1",
+          "region_index": "1"
+        }
+      }
+    ]
+  },
+  "question_results": [
+    {
+      "question_id": "markdown_revenue_reason",
+      "fixture_id": "quarterly_review_markdown",
+      "question": "收入增长的两个主要原因是什么？",
+      "category": "child",
+      "expected_terms": [
+        "企业续约增长",
+        "自助升级增加"
+      ],
+      "corpus_has_expected_answer": true,
+      "likely_issue": "ok",
+      "vector_hit": true,
+      "fts_hit": true,
+      "runtime_hit": true,
+      "parent_backfill_improves": false,
+      "vector_top_k": [
+        {
+          "retrieval_kind": "vector",
+          "rank": 1,
+          "chunk_id": "chunk-ad96a2c6e075",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.320844473959874,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [
+            "企业续约增长",
+            "自助升级增加"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "parent_chunk_id": "0-2d86be55dada",
+          "parent_matched_terms": [
+            "企业续约增长",
+            "自助升级增加"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 2,
+          "chunk_id": "chunk-d0773f7b2401",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.11587244366483039,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。 第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖 location、toc_path、chunk_role 和 content_hash。 只有两个门槛同时满足，部署窗口才会打开。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 3,
+          "chunk_id": "1-a8a658180771",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.08451542547285167,
+          "chunk_role": "special",
+          "special_chunk_type": "table",
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "| 指标 | 数值 | |------|------| | 收入 | 1280 | | 订单 | 342 | | 续约率 | 91% |",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 4,
+          "chunk_id": "chunk-8cfd616cf7f6",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.07576144084141581,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。 第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。 评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": false
+        }
+      ],
+      "fts_top_k": [
+        {
+          "retrieval_kind": "fts",
+          "rank": 1,
+          "chunk_id": "chunk-ad96a2c6e075",
+          "doc_id": "document-68fec58b4f51",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [
+            "企业续约增长",
+            "自助升级增加"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "parent_chunk_id": "0-2d86be55dada",
+          "parent_matched_terms": [
+            "企业续约增长",
+            "自助升级增加"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 2,
+          "chunk_id": "1-a8a658180771",
+          "doc_id": "document-68fec58b4f51",
+          "score": 1.0,
+          "chunk_role": "special",
+          "special_chunk_type": "table",
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "| 指标 | 数值 | |------|------| | 收入 | 1280 | | 订单 | 342 | | 续约率 | 91% |",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 3,
+          "chunk_id": "chunk-d0773f7b2401",
+          "doc_id": "document-68fec58b4f51",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。 第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖 location、toc_path、chunk_role 和 content_hash。 只有两个门槛同时满足，部署窗口才会打开。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": false
+        }
+      ],
+      "runtime_top_k": [
+        {
+          "retrieval_kind": "runtime",
+          "rank": 1,
+          "chunk_id": "chunk-ad96a2c6e075",
+          "doc_id": "document-68fec58b4f51",
+          "score": 1.064788471708091,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [
+            "企业续约增长",
+            "自助升级增加"
+          ],
+          "matched_term_count": 2,
+          "text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "parent_chunk_id": "0-2d86be55dada",
+          "parent_matched_terms": [
+            "企业续约增长",
+            "自助升级增加"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 2,
+          "chunk_id": "1-a8a658180771",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.7522427547078651,
+          "chunk_role": "special",
+          "special_chunk_type": "table",
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "| 指标 | 数值 | |------|------| | 收入 | 1280 | | 订单 | 342 | | 续约率 | 91% |",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 3,
+          "chunk_id": "chunk-d0773f7b2401",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.4753249785864976,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。 第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖 location、toc_path、chunk_role 和 content_hash。 只有两个门槛同时满足，部署窗口才会打开。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 4,
+          "chunk_id": "chunk-8cfd616cf7f6",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.11672694935692826,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。 第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。 评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": false
+        }
+      ]
+    },
+    {
+      "question_id": "markdown_release_gates",
+      "fixture_id": "quarterly_review_markdown",
+      "question": "发布前必须同时满足哪两个门槛？",
+      "category": "parent_backfill",
+      "expected_terms": [
+        "95%",
+        "必填字段缺失为零"
+      ],
+      "corpus_has_expected_answer": true,
+      "likely_issue": "parent_context_needed",
+      "vector_hit": true,
+      "fts_hit": true,
+      "runtime_hit": true,
+      "parent_backfill_improves": true,
+      "vector_top_k": [
+        {
+          "retrieval_kind": "vector",
+          "rank": 1,
+          "chunk_id": "chunk-d0773f7b2401",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.23174488732966078,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [
+            "必填字段缺失为零"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。 第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖 location、toc_path、chunk_role 和 content_hash。 只有两个门槛同时满足，部署窗口才会打开。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [
+            "95%",
+            "必填字段缺失为零"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 2,
+          "chunk_id": "chunk-8cfd616cf7f6",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.20203050891044216,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [
+            "95%"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。 第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。 评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [
+            "95%",
+            "必填字段缺失为零"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 3,
+          "chunk_id": "chunk-ad96a2c6e075",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.1375047745542317,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "parent_chunk_id": "0-2d86be55dada",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 4,
+          "chunk_id": "1-a8a658180771",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.08451542547285167,
+          "chunk_role": "special",
+          "special_chunk_type": "table",
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "| 指标 | 数值 | |------|------| | 收入 | 1280 | | 订单 | 342 | | 续约率 | 91% |",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        }
+      ],
+      "fts_top_k": [
+        {
+          "retrieval_kind": "fts",
+          "rank": 1,
+          "chunk_id": "chunk-d0773f7b2401",
+          "doc_id": "document-68fec58b4f51",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [
+            "必填字段缺失为零"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。 第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖 location、toc_path、chunk_role 和 content_hash。 只有两个门槛同时满足，部署窗口才会打开。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [
+            "95%",
+            "必填字段缺失为零"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 2,
+          "chunk_id": "chunk-8cfd616cf7f6",
+          "doc_id": "document-68fec58b4f51",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [
+            "95%"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。 第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。 评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [
+            "95%",
+            "必填字段缺失为零"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 3,
+          "chunk_id": "chunk-ad96a2c6e075",
+          "doc_id": "document-68fec58b4f51",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "parent_chunk_id": "0-2d86be55dada",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "is_expected_hit": false
+        }
+      ],
+      "runtime_top_k": [
+        {
+          "retrieval_kind": "runtime",
+          "rank": 1,
+          "chunk_id": "chunk-d0773f7b2401",
+          "doc_id": "document-68fec58b4f51",
+          "score": 1.048942358540455,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [
+            "必填字段缺失为零"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。 第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖 location、toc_path、chunk_role 和 content_hash。 只有两个门槛同时满足，部署窗口才会打开。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [
+            "95%",
+            "必填字段缺失为零"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 2,
+          "chunk_id": "chunk-8cfd616cf7f6",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.9913123963762757,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-da3db40f41",
+          "matched_terms": [
+            "95%"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。 第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。 评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。",
+          "parent_chunk_id": "1-8995c274871f",
+          "parent_matched_terms": [
+            "95%",
+            "必填字段缺失为零"
+          ],
+          "parent_matched_term_count": 2,
+          "parent_text_preview": "上线评审不是只看单个指标，而是看一整段闭环证据。第一道门槛是离线评估包里的检索精度必须稳定在 95% 以上，而且连续两轮都不能回落。评审会还要求把 child 命中、table 命中和 parent 回填的结果分别记录下来，避免只看一个漂亮的总体分数。团队在这个阶段会反复抽样检查 chunk 有没有被切坏，尤其是长段落和多句解释型内容，因为这些地方最容易把答案拆碎。第二道门槛是 metadata 审计必须显示必填字段缺失为零，至少要覆盖...",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 3,
+          "chunk_id": "chunk-ad96a2c6e075",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.5491373319706262,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "parent_chunk_id": "0-2d86be55dada",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "收入增长主要来自两个原因。第一，企业续约增长了，客服把续约流程从五步压缩到两步后，签回周期更短。第二，自助升级增加了，计费页面改版后，试用用户更容易完成升级。财务团队补充说，这两项变化同时作用在老客户和新试点项目上。",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 4,
+          "chunk_id": "1-a8a658180771",
+          "doc_id": "document-68fec58b4f51",
+          "score": 0.13753574469014912,
+          "chunk_role": "special",
+          "special_chunk_type": "table",
+          "citation_anchor": "data/eval/generated/samples/quarterly-review.md#section-11f8e50461",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "| 指标 | 数值 | |------|------| | 收入 | 1280 | | 订单 | 342 | | 续约率 | 91% |",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        }
+      ]
+    },
+    {
+      "question_id": "docx_alert_table",
+      "fixture_id": "operations_brief_docx",
+      "question": "值班指标表里待处理告警是多少？",
+      "category": "table",
+      "expected_terms": [
+        "7"
+      ],
+      "corpus_has_expected_answer": true,
+      "likely_issue": "ok",
+      "vector_hit": true,
+      "fts_hit": true,
+      "runtime_hit": true,
+      "parent_backfill_improves": false,
+      "vector_top_k": [
+        {
+          "retrieval_kind": "vector",
+          "rank": 1,
+          "chunk_id": "3-44a5867e9630",
+          "doc_id": "document-d8ae928020aa",
+          "score": 0.37062465833055064,
+          "chunk_role": "special",
+          "special_chunk_type": "table",
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+          "matched_terms": [
+            "7"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "| 指标 | 数值 | |-------|------| | 待处理告警 | 7 | | 自动修复 | 5 |",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 2,
+          "chunk_id": "chunk-d9f540e8e68d",
+          "doc_id": "document-d8ae928020aa",
+          "score": 0.2964997266644405,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "本周值班目标是减少回归成本。",
+          "parent_chunk_id": "0-bf3999c10335",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "本周值班目标是减少回归成本。",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 3,
+          "chunk_id": "chunk-8006d73d5bc6",
+          "doc_id": "document-d8ae928020aa",
+          "score": 0.07796811755854505,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-93b778b108",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "运营组把凌晨告警清理时间从 42 分钟压缩到了 18 分钟，主要靠统一告警标签和更短的回滚手册。",
+          "parent_chunk_id": "1-59cd4d21b180",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "运营组把凌晨告警清理时间从 42 分钟压缩到了 18 分钟，主要靠统一告警标签和更短的回滚手册。",
+          "is_expected_hit": false
+        }
+      ],
+      "fts_top_k": [
+        {
+          "retrieval_kind": "fts",
+          "rank": 1,
+          "chunk_id": "3-44a5867e9630",
+          "doc_id": "document-d8ae928020aa",
+          "score": 1.0,
+          "chunk_role": "special",
+          "special_chunk_type": "table",
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+          "matched_terms": [
+            "7"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "| 指标 | 数值 | |-------|------| | 待处理告警 | 7 | | 自动修复 | 5 |",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 2,
+          "chunk_id": "chunk-8006d73d5bc6",
+          "doc_id": "document-d8ae928020aa",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-93b778b108",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "运营组把凌晨告警清理时间从 42 分钟压缩到了 18 分钟，主要靠统一告警标签和更短的回滚手册。",
+          "parent_chunk_id": "1-59cd4d21b180",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "运营组把凌晨告警清理时间从 42 分钟压缩到了 18 分钟，主要靠统一告警标签和更短的回滚手册。",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 3,
+          "chunk_id": "chunk-d9f540e8e68d",
+          "doc_id": "document-d8ae928020aa",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "本周值班目标是减少回归成本。",
+          "parent_chunk_id": "0-bf3999c10335",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "本周值班目标是减少回归成本。",
+          "is_expected_hit": false
+        }
+      ],
+      "runtime_top_k": [
+        {
+          "retrieval_kind": "runtime",
+          "rank": 1,
+          "chunk_id": "3-44a5867e9630",
+          "doc_id": "document-d8ae928020aa",
+          "score": 0.7144262295081968,
+          "chunk_role": "special",
+          "special_chunk_type": "table",
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+          "matched_terms": [
+            "7"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "| 指标 | 数值 | |-------|------| | 待处理告警 | 7 | | 自动修复 | 5 |",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 2,
+          "chunk_id": "chunk-8006d73d5bc6",
+          "doc_id": "document-d8ae928020aa",
+          "score": 0.7727653772896202,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-93b778b108",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "运营组把凌晨告警清理时间从 42 分钟压缩到了 18 分钟，主要靠统一告警标签和更短的回滚手册。",
+          "parent_chunk_id": "1-59cd4d21b180",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "运营组把凌晨告警清理时间从 42 分钟压缩到了 18 分钟，主要靠统一告警标签和更短的回滚手册。",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 3,
+          "chunk_id": "chunk-d9f540e8e68d",
+          "doc_id": "document-d8ae928020aa",
+          "score": 0.6176149513568869,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/operations-brief.docx#operations-brief-edb3f961f0",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "本周值班目标是减少回归成本。",
+          "parent_chunk_id": "0-bf3999c10335",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "本周值班目标是减少回归成本。",
+          "is_expected_hit": false
+        }
+      ]
+    },
+    {
+      "question_id": "pdf_deep_path_conflict",
+      "fixture_id": "research_notes_pdf",
+      "question": "What should Deep Path expose during research?",
+      "category": "child",
+      "expected_terms": [
+        "expose conflicts"
+      ],
+      "corpus_has_expected_answer": true,
+      "likely_issue": "ok",
+      "vector_hit": true,
+      "fts_hit": true,
+      "runtime_hit": true,
+      "parent_backfill_improves": false,
+      "vector_top_k": [
+        {
+          "retrieval_kind": "vector",
+          "rank": 1,
+          "chunk_id": "chunk-6c8241d3ed1d",
+          "doc_id": "document-628ccc3e39cc",
+          "score": 0.4780914437337575,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-1-be7a7d1cc6",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "Research Notes Fast Path should answer direct questions with citations.",
+          "parent_chunk_id": "0-1fe53ea3538e",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "Research Notes Fast Path should answer direct questions with citations.",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 2,
+          "chunk_id": "chunk-78e987f4f7a9",
+          "doc_id": "document-628ccc3e39cc",
+          "score": 0.38575837490522985,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-2-9dcfc7bfde",
+          "matched_terms": [
+            "expose conflicts"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "Deep Path should decompose research questions, expose conflicts, and report uncertainty. Risk review says supply chain delay remains manageable when fallback suppliers are active.",
+          "parent_chunk_id": "1-6aba46bdc7a0",
+          "parent_matched_terms": [
+            "expose conflicts"
+          ],
+          "parent_matched_term_count": 1,
+          "parent_text_preview": "Deep Path should decompose research questions, expose conflicts, and report uncertainty. Risk review says supply chain delay remains manageable when fallback suppliers are active.",
+          "is_expected_hit": true
+        }
+      ],
+      "fts_top_k": [
+        {
+          "retrieval_kind": "fts",
+          "rank": 1,
+          "chunk_id": "chunk-78e987f4f7a9",
+          "doc_id": "document-628ccc3e39cc",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-2-9dcfc7bfde",
+          "matched_terms": [
+            "expose conflicts"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "Deep Path should decompose research questions, expose conflicts, and report uncertainty. Risk review says supply chain delay remains manageable when fallback suppliers are active.",
+          "parent_chunk_id": "1-6aba46bdc7a0",
+          "parent_matched_terms": [
+            "expose conflicts"
+          ],
+          "parent_matched_term_count": 1,
+          "parent_text_preview": "Deep Path should decompose research questions, expose conflicts, and report uncertainty. Risk review says supply chain delay remains manageable when fallback suppliers are active.",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 2,
+          "chunk_id": "chunk-6c8241d3ed1d",
+          "doc_id": "document-628ccc3e39cc",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-1-be7a7d1cc6",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "Research Notes Fast Path should answer direct questions with citations.",
+          "parent_chunk_id": "0-1fe53ea3538e",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "Research Notes Fast Path should answer direct questions with citations.",
+          "is_expected_hit": false
+        }
+      ],
+      "runtime_top_k": [
+        {
+          "retrieval_kind": "runtime",
+          "rank": 1,
+          "chunk_id": "chunk-78e987f4f7a9",
+          "doc_id": "document-628ccc3e39cc",
+          "score": 0.9849191121908398,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-2-9dcfc7bfde",
+          "matched_terms": [
+            "expose conflicts"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "Deep Path should decompose research questions, expose conflicts, and report uncertainty. Risk review says supply chain delay remains manageable when fallback suppliers are active.",
+          "parent_chunk_id": "1-6aba46bdc7a0",
+          "parent_matched_terms": [
+            "expose conflicts"
+          ],
+          "parent_matched_term_count": 1,
+          "parent_text_preview": "Deep Path should decompose research questions, expose conflicts, and report uncertainty. Risk review says supply chain delay remains manageable when fallback suppliers are active.",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 2,
+          "chunk_id": "chunk-6c8241d3ed1d",
+          "doc_id": "document-628ccc3e39cc",
+          "score": 1.0339159175039663,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-1-be7a7d1cc6",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "Research Notes Fast Path should answer direct questions with citations.",
+          "parent_chunk_id": "0-1fe53ea3538e",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "Research Notes Fast Path should answer direct questions with citations.",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 3,
+          "chunk_id": "chunk-78e987f4f7a9",
+          "doc_id": "document-628ccc3e39cc",
+          "score": 0.8,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-2-9dcfc7bfde",
+          "matched_terms": [
+            "expose conflicts"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "Deep Path should decompose research questions, expose conflicts, and report uncertainty. Risk review says supply chain delay remains manageable when fallback suppliers are active.",
+          "parent_chunk_id": "1-6aba46bdc7a0",
+          "parent_matched_terms": [
+            "expose conflicts"
+          ],
+          "parent_matched_term_count": 1,
+          "parent_text_preview": "Deep Path should decompose research questions, expose conflicts, and report uncertainty. Risk review says supply chain delay remains manageable when fallback suppliers are active.",
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 4,
+          "chunk_id": "chunk-6c8241d3ed1d",
+          "doc_id": "document-628ccc3e39cc",
+          "score": 0.7,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/research-notes.pdf#page-1-be7a7d1cc6",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "Research Notes Fast Path should answer direct questions with citations.",
+          "parent_chunk_id": "0-1fe53ea3538e",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "Research Notes Fast Path should answer direct questions with citations.",
+          "is_expected_hit": false
+        }
+      ]
+    },
+    {
+      "question_id": "image_ocr_revenue",
+      "fixture_id": "dashboard_metrics_image",
+      "question": "图里的收入数值是多少？",
+      "category": "ocr",
+      "expected_terms": [
+        "1280"
+      ],
+      "corpus_has_expected_answer": true,
+      "likely_issue": "ok",
+      "vector_hit": true,
+      "fts_hit": true,
+      "runtime_hit": true,
+      "parent_backfill_improves": false,
+      "vector_top_k": [
+        {
+          "retrieval_kind": "vector",
+          "rank": 1,
+          "chunk_id": "1-d3614188eea0",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.223606797749979,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [
+            "1280"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "收入 1280",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 2,
+          "chunk_id": "chunk-737f560e028e",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.19069251784911848,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [
+            "1280"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "运营仪表盘 图2 收入 1280 订单 342",
+          "parent_chunk_id": "0-a64a03988c1a",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 3,
+          "chunk_id": "0-be8b9516327d",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.0,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "图2",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 4,
+          "chunk_id": "2-e50aba413f81",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.0,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "订单 342",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 5,
+          "chunk_id": "3-5d8ada56a2be",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.0,
+          "chunk_role": "special",
+          "special_chunk_type": "image_summary",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        }
+      ],
+      "fts_top_k": [
+        {
+          "retrieval_kind": "fts",
+          "rank": 1,
+          "chunk_id": "1-d3614188eea0",
+          "doc_id": "document-c29bc0720e26",
+          "score": 1.0,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [
+            "1280"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "收入 1280",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "fts",
+          "rank": 2,
+          "chunk_id": "chunk-737f560e028e",
+          "doc_id": "document-c29bc0720e26",
+          "score": 1.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [
+            "1280"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "运营仪表盘 图2 收入 1280 订单 342",
+          "parent_chunk_id": "0-a64a03988c1a",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "is_expected_hit": false
+        }
+      ],
+      "runtime_top_k": [
+        {
+          "retrieval_kind": "runtime",
+          "rank": 1,
+          "chunk_id": "1-d3614188eea0",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.7144262295081968,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [
+            "1280"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "收入 1280",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 2,
+          "chunk_id": "chunk-737f560e028e",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.6502959133313413,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [
+            "1280"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "运营仪表盘 图2 收入 1280 订单 342",
+          "parent_chunk_id": "0-a64a03988c1a",
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 3,
+          "chunk_id": "0-be8b9516327d",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.01746031746031746,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "图2",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 4,
+          "chunk_id": "2-e50aba413f81",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.0171875,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "订单 342",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 5,
+          "chunk_id": "3-5d8ada56a2be",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.016923076923076926,
+          "chunk_role": "special",
+          "special_chunk_type": "image_summary",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        }
+      ]
+    },
+    {
+      "question_id": "image_summary_scene",
+      "fixture_id": "dashboard_metrics_image",
+      "question": "这张图是什么类型的画面？",
+      "category": "image_summary",
+      "expected_terms": [
+        "运营仪表盘截图"
+      ],
+      "corpus_has_expected_answer": true,
+      "likely_issue": "parent_context_needed",
+      "vector_hit": true,
+      "fts_hit": false,
+      "runtime_hit": true,
+      "parent_backfill_improves": true,
+      "vector_top_k": [
+        {
+          "retrieval_kind": "vector",
+          "rank": 1,
+          "chunk_id": "3-5d8ada56a2be",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.07784989441615231,
+          "chunk_role": "special",
+          "special_chunk_type": "image_summary",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [
+            "运营仪表盘截图"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 2,
+          "chunk_id": "0-be8b9516327d",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.0,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "图2",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 3,
+          "chunk_id": "1-d3614188eea0",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.0,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "收入 1280",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 4,
+          "chunk_id": "2-e50aba413f81",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.0,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "订单 342",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "vector",
+          "rank": 5,
+          "chunk_id": "chunk-737f560e028e",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.0,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "运营仪表盘 图2 收入 1280 订单 342",
+          "parent_chunk_id": "0-a64a03988c1a",
+          "parent_matched_terms": [
+            "运营仪表盘截图"
+          ],
+          "parent_matched_term_count": 1,
+          "parent_text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "is_expected_hit": false
+        }
+      ],
+      "fts_top_k": [],
+      "runtime_top_k": [
+        {
+          "retrieval_kind": "runtime",
+          "rank": 1,
+          "chunk_id": "3-5d8ada56a2be",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.42713114754098364,
+          "chunk_role": "special",
+          "special_chunk_type": "image_summary",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [
+            "运营仪表盘截图"
+          ],
+          "matched_term_count": 1,
+          "text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": true
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 2,
+          "chunk_id": "0-be8b9516327d",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.021774193548387097,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "图2",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 3,
+          "chunk_id": "1-d3614188eea0",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.02142857142857143,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "收入 1280",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 4,
+          "chunk_id": "2-e50aba413f81",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.02109375,
+          "chunk_role": "special",
+          "special_chunk_type": "ocr_region",
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "订单 342",
+          "parent_chunk_id": null,
+          "parent_matched_terms": [],
+          "parent_matched_term_count": 0,
+          "parent_text_preview": null,
+          "is_expected_hit": false
+        },
+        {
+          "retrieval_kind": "runtime",
+          "rank": 5,
+          "chunk_id": "chunk-737f560e028e",
+          "doc_id": "document-c29bc0720e26",
+          "score": 0.02076923076923077,
+          "chunk_role": "child",
+          "special_chunk_type": null,
+          "citation_anchor": "data/eval/generated/samples/dashboard-metrics.png#dashboard-metrics-35563d7dcb",
+          "matched_terms": [],
+          "matched_term_count": 0,
+          "text_preview": "运营仪表盘 图2 收入 1280 订单 342",
+          "parent_chunk_id": "0-a64a03988c1a",
+          "parent_matched_terms": [
+            "运营仪表盘截图"
+          ],
+          "parent_matched_term_count": 1,
+          "parent_text_preview": "一个包含 KPI 卡片的运营仪表盘截图",
+          "is_expected_hit": false
+        }
+      ]
+    }
+  ]
+}

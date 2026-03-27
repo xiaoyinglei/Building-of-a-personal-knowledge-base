@@ -3,6 +3,9 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from pkp.types.access import AccessPolicy, ExecutionLocationPreference, RuntimeMode
+from pkp.types.content import ChunkRole
+from pkp.types.diagnostics import QueryDiagnostics
+from pkp.types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection
 from pkp.types.query import ComplexityLevel, TaskType
 
 
@@ -16,6 +19,15 @@ class EvidenceItem(BaseModel):
     text: str
     score: float
     evidence_kind: str = "internal"
+    chunk_role: ChunkRole | None = None
+    special_chunk_type: str | None = None
+    parent_chunk_id: str | None = None
+    file_name: str | None = None
+    section_path: list[str] = Field(default_factory=list)
+    page_start: int | None = None
+    page_end: int | None = None
+    chunk_type: str | None = None
+    source_type: str | None = None
 
 
 class PreservationSuggestion(BaseModel):
@@ -37,6 +49,13 @@ class QueryResponse(BaseModel):
     uncertainty: str
     preservation_suggestion: PreservationSuggestion
     runtime_mode: RuntimeMode
+    diagnostics: QueryDiagnostics = Field(default_factory=QueryDiagnostics)
+    answer_text: str | None = None
+    answer_sections: list[AnswerSection] = Field(default_factory=list)
+    citations: list[AnswerCitation] = Field(default_factory=list)
+    evidence_links: list[AnswerEvidenceLink] = Field(default_factory=list)
+    groundedness_flag: bool = False
+    insufficient_evidence_flag: bool = False
 
 
 class ExecutionPolicy(BaseModel):

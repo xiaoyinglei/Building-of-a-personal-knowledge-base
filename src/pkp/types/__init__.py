@@ -11,6 +11,7 @@ from pkp.types.access import (
 from pkp.types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
 from pkp.types.content import (
     Chunk,
+    ChunkRole,
     Document,
     DocumentType,
     GraphEdge,
@@ -19,7 +20,18 @@ from pkp.types.content import (
     Source,
     SourceType,
 )
+from pkp.types.diagnostics import (
+    CapabilityHealth,
+    HealthReport,
+    IndexHealth,
+    ModelDiagnostics,
+    ProviderAttempt,
+    ProviderHealth,
+    QueryDiagnostics,
+    RetrievalDiagnostics,
+)
 from pkp.types.envelope import EvidenceItem, ExecutionPolicy, PreservationSuggestion, QueryResponse
+from pkp.types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection, GroundedAnswer
 from pkp.types.memory import (
     EpisodicMemory,
     MemoryEvidenceLink,
@@ -28,16 +40,39 @@ from pkp.types.memory import (
     UserMemory,
     UserProfile,
 )
-from pkp.types.query import ComplexityLevel, QueryRequest, ResearchSubQuestion, TaskType
+from pkp.types.processing import (
+    ChunkingStrategy,
+    ChunkRoutingDecision,
+    ChunkStatistics,
+    DocumentFeatures,
+    DocumentProcessingPackage,
+)
+from pkp.types.query import (
+    ComplexityLevel,
+    QueryRequest,
+    QueryUnderstanding,
+    ResearchSubQuestion,
+    TaskType,
+)
 
 __all__ = [
     "AccessPolicy",
     "ArtifactStatus",
     "ArtifactType",
+    "AnswerCitation",
+    "AnswerEvidenceLink",
+    "AnswerSection",
     "Chunk",
+    "ChunkingStrategy",
+    "ChunkRole",
+    "ChunkRoutingDecision",
+    "ChunkStatistics",
     "ComplexityLevel",
+    "CapabilityHealth",
     "Document",
+    "DocumentFeatures",
     "DocumentType",
+    "DocumentProcessingPackage",
     "EvidenceItem",
     "ExecutionLocation",
     "ExecutionLocationPreference",
@@ -45,14 +80,23 @@ __all__ = [
     "ExternalRetrievalPolicy",
     "GraphEdge",
     "GraphNode",
+    "GroundedAnswer",
+    "HealthReport",
+    "IndexHealth",
     "KnowledgeArtifact",
     "MemoryEvidenceLink",
     "MemoryKind",
+    "ModelDiagnostics",
     "PreservationSuggestion",
+    "ProviderAttempt",
+    "ProviderHealth",
     "QueryRequest",
+    "QueryUnderstanding",
+    "QueryDiagnostics",
     "QueryResponse",
     "ResearchSubQuestion",
     "ResearchEpisode",
+    "RetrievalDiagnostics",
     "Residency",
     "RuntimeMode",
     "Segment",

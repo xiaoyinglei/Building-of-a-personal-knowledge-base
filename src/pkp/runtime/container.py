@@ -17,5 +17,6 @@ class RuntimeContainer:
     deep_research_runtime: DeepResearchRuntime
     artifact_promotion_runtime: ArtifactPromotionRuntime
     session_runtime: SessionRuntime
+    diagnostics_runtime: object | None = None
     metadata_repo: object | None = None
     telemetry_service: TelemetryService | None = None

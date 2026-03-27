@@ -6,7 +6,7 @@ from pkp.repo.parse._util import (
     extract_heading_text,
     normalize_whitespace,
 )
-from pkp.types.content import DocumentType
+from pkp.types.content import DocumentType, SourceType
 
 
 class MarkdownParserRepo:
@@ -73,6 +73,7 @@ class MarkdownParserRepo:
         visible_text = normalize_whitespace(" ".join(section.text for section in sections))
         return ParsedDocument(
             title=document_title,
+            source_type=SourceType.MARKDOWN,
             doc_type=DocumentType.ARTICLE,
             authors=[owner],
             language="en",

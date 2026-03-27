@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
-from pkp.types.content import DocumentType
+from pkp.types.content import DocumentType, SourceType
 
 
 @dataclass(frozen=True)
@@ -20,14 +20,31 @@ class ParsedSection:
 
 
 @dataclass(frozen=True)
+class ParsedElement:
+    element_id: str
+    kind: str
+    text: str
+    toc_path: tuple[str, ...] = ()
+    heading_level: int | None = None
+    page_no: int | None = None
+    bbox: tuple[float, float, float, float] | None = None
+    parent_ref: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ParsedDocument:
     title: str
+    source_type: SourceType
     doc_type: DocumentType
     authors: list[str]
     language: str
     sections: list[ParsedSection]
     visible_text: str
     visual_semantics: str | None = None
+    elements: list[ParsedElement] = field(default_factory=list)
+    page_count: int | None = None
+    doc_model: Any | None = None
     metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -51,6 +68,13 @@ class VectorSearchResult:
     @property
     def chunk_id(self) -> str:
         return self.item_id
+
+
+@dataclass(frozen=True)
+class EmbeddingProviderBinding:
+    provider: object
+    space: str
+    location: str = "runtime"
 
 
 @dataclass(frozen=True)
@@ -110,6 +134,7 @@ class VectorRepo(Protocol):
         vector: Iterable[float],
         *,
         metadata: dict[str, str] | None = None,
+        embedding_space: str = "default",
     ) -> None: ...
 
     def search(
@@ -118,4 +143,12 @@ class VectorRepo(Protocol):
         *,
         limit: int = 10,
         doc_ids: list[str] | None = None,
+        embedding_space: str = "default",
     ) -> list[VectorSearchResult]: ...
+
+    def existing_item_ids(
+        self,
+        item_ids: Sequence[str],
+        *,
+        embedding_space: str | None = None,
+    ) -> set[str]: ...

@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import Protocol
 
 from pkp.service.telemetry_service import TelemetryService
-from pkp.types import EvidenceItem, ExecutionPolicy, PreservationSuggestion, QueryResponse, RuntimeMode
+from pkp.types import (
+    EvidenceItem,
+    ExecutionPolicy,
+    ModelDiagnostics,
+    PreservationSuggestion,
+    QueryDiagnostics,
+    QueryResponse,
+    RuntimeMode,
+)
 
 
 class RetrievalServiceProtocol(Protocol):
@@ -53,6 +61,7 @@ class FastQueryRuntime:
 
     def run(self, query: str, policy: ExecutionPolicy) -> QueryResponse:
         hits = self._retrieval_service.retrieve(query, policy, RuntimeMode.FAST, round_index=1)
+        retrieval_diagnostics = getattr(getattr(self._retrieval_service, "last_result", None), "diagnostics", None)
         reranked = self._retrieval_service.rerank(query, hits, policy)
         if not reranked:
             return QueryResponse(
@@ -62,6 +71,13 @@ class FastQueryRuntime:
                 uncertainty="high",
                 preservation_suggestion=PreservationSuggestion(suggested=False),
                 runtime_mode=RuntimeMode.FAST,
+                diagnostics=QueryDiagnostics(
+                    retrieval=retrieval_diagnostics or QueryDiagnostics().retrieval,
+                    model=ModelDiagnostics(
+                        degraded_to_retrieval_only=True,
+                        failed_stage="retrieval",
+                    ),
+                ),
             )
         conflicts = self._evidence_service.detect_conflicts(reranked)
         sufficient = self._evidence_service.fast_path_sufficient(reranked, policy)
@@ -73,6 +89,14 @@ class FastQueryRuntime:
             return self._deep_runtime.run(query, policy)
 
         response = self._evidence_service.build_fast_response(query, reranked)
+        response = response.model_copy(
+            update={
+                "diagnostics": QueryDiagnostics(
+                    retrieval=retrieval_diagnostics or QueryDiagnostics().retrieval,
+                    model=response.diagnostics.model,
+                )
+            }
+        )
         if not self._evidence_service.claim_citation_aligned(response):
             if self._telemetry_service is not None:
                 self._telemetry_service.record_claim_citation_failure(
