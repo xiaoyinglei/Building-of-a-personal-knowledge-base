@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from pkp.config.model_paths import resolve_local_model_reference
 from pkp.rerank.models import RerankCandidate
 from pkp.types.text import (
     keyword_overlap,
@@ -21,6 +22,7 @@ class CrossEncoderConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     model_name: str = "BAAI/bge-reranker-v2-m3"
+    model_path: str | None = None
     max_length: int = 512
     batch_size: int = 8
     top_k: int = 20
@@ -109,6 +111,8 @@ class ProviderBackedCrossEncoder:
         return [self._fallback_score(query, candidate.text) for candidate in candidates]
 
     def _try_flag_embedding_backend(self) -> object | None:
+        if not self._config.model_path:
+            return None
         try:
             module = importlib.import_module("FlagEmbedding")
         except ModuleNotFoundError:
@@ -117,7 +121,8 @@ class ProviderBackedCrossEncoder:
         if reranker_cls is None:
             return None
         try:
-            return cast(object, reranker_cls(self._config.model_name, use_fp16=False))
+            model_ref = resolve_local_model_reference(self._config.model_name, self._config.model_path)
+            return cast(object, reranker_cls(model_ref, use_fp16=False))
         except Exception:
             return None
 

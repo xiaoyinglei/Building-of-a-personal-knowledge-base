@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from pkp.config.model_paths import expand_optional_path
 from pkp.types.access import ExecutionLocationPreference
 
 
@@ -39,8 +40,29 @@ class OllamaSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     base_url: str = "http://localhost:11434"
-    chat_model: str = "llama3.1:8b"
-    embedding_model: str = "nomic-embed-text"
+    chat_model: str = "qwen3.5:9b"
+    embedding_model: str | None = "qwen3-embedding:8b"
+
+
+class LocalBgeSettings(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_model_path: Path | None = Field(
+        default_factory=lambda: Path("~/.cache/huggingface/hub/models--BAAI--bge-m3").expanduser()
+    )
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_model_path: Path | None = Field(
+        default_factory=lambda: Path(
+            "~/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3"
+        ).expanduser()
+    )
+
+    @field_validator("embedding_model_path", "rerank_model_path", mode="before")
+    @classmethod
+    def _expand_path(cls, value: str | Path | None) -> Path | None:
+        return expand_optional_path(value)
 
 
 class AppSettings(BaseSettings):
@@ -56,3 +78,4 @@ class AppSettings(BaseSettings):
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     openai: OpenAISettings = Field(default_factory=OpenAISettings)
     ollama: OllamaSettings = Field(default_factory=OllamaSettings)
+    local_bge: LocalBgeSettings = Field(default_factory=LocalBgeSettings)

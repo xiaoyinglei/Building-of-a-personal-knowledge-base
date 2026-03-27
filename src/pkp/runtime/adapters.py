@@ -238,8 +238,8 @@ class MultiProviderBackedVectorRetriever:
 class InstrumentedReranker:
     def __init__(self, rerank_service: object) -> None:
         self._rerank_service = rerank_service
-        self.provider_name = "heuristic"
-        self.rerank_model_name = "heuristic"
+        self.provider_name = getattr(rerank_service, "provider_name", "heuristic")
+        self.rerank_model_name = getattr(rerank_service, "rerank_model_name", "heuristic")
         self.is_rerank_configured = True
         self.last_provider: str | None = self.provider_name
         self.last_attempts: list[ProviderAttempt] = []
@@ -262,6 +262,10 @@ class InstrumentedReranker:
         except RuntimeError as exc:
             self.last_attempts = [attempt.model_copy(update={"status": "failed", "error": str(exc)})]
             raise
+        self.provider_name = getattr(self._rerank_service, "provider_name", self.provider_name)
+        self.rerank_model_name = getattr(self._rerank_service, "rerank_model_name", self.rerank_model_name)
+        self.last_provider = self.provider_name
+        attempt = attempt.model_copy(update={"provider": self.provider_name, "model": self.rerank_model_name})
         self.last_attempts = [attempt]
         return cast(Sequence[CandidateLike], result)
 
