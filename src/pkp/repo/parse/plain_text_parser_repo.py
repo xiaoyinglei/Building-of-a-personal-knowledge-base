@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pkp.repo.interfaces import ParsedDocument, ParsedSection
 from pkp.repo.parse._util import default_title_from_location, normalize_whitespace, slugify
-from pkp.types.content import DocumentType
+from pkp.types.content import DocumentType, SourceType
 
 
 class PlainTextParserRepo:
@@ -26,6 +26,7 @@ class PlainTextParserRepo:
         )
         return ParsedDocument(
             title=document_title,
+            source_type=SourceType.PLAIN_TEXT,
             doc_type=DocumentType.NOTE,
             authors=[owner],
             language="en",

@@ -87,6 +87,48 @@ def test_deep_query_session_can_be_read_back_via_api(tmp_path: Path) -> None:
     assert payload["evidence_matrix"]
 
 
+def test_fast_query_returns_architecture_specific_answer_after_reloading_container(tmp_path: Path) -> None:
+    first_container = build_test_container(tmp_path)
+    first_container.ingest_runtime.ingest_source(source_type="markdown", location="README.md")
+
+    second_container = build_test_container(tmp_path)
+    response = second_container.fast_query_runtime.run(
+        "这个项目的架构是什么",
+        build_execution_policy(
+            task_type=TaskType.LOOKUP,
+            complexity_level=ComplexityLevel.L1_DIRECT,
+            access_policy=default_access_policy(),
+            execution_location_preference=ExecutionLocationPreference.LOCAL_FIRST,
+        ),
+    )
+
+    assert response.evidence
+    assert "Types -> Config -> Repo -> Service -> Runtime -> UI" in response.conclusion
+    assert "一个以可靠性为优先的个人知识平台" not in response.conclusion
+
+
+def test_fast_query_returns_operation_specific_answer_after_reloading_container(tmp_path: Path) -> None:
+    first_container = build_test_container(tmp_path)
+    first_container.ingest_runtime.ingest_source(source_type="markdown", location="README.md")
+
+    second_container = build_test_container(tmp_path)
+    response = second_container.fast_query_runtime.run(
+        "这个项目的运行方式是什么",
+        build_execution_policy(
+            task_type=TaskType.LOOKUP,
+            complexity_level=ComplexityLevel.L1_DIRECT,
+            access_policy=default_access_policy(),
+            execution_location_preference=ExecutionLocationPreference.LOCAL_FIRST,
+        ),
+    )
+
+    assert response.evidence
+    assert "Ollama" in response.conclusion
+    assert "OpenAI" in response.conclusion
+    assert "local_only" in response.conclusion
+    assert "cloud_first" in response.conclusion
+
+
 def test_deep_query_recalls_prior_episode_memory_on_later_runs(tmp_path: Path) -> None:
     container = build_test_container(tmp_path)
     clear_container_factory()

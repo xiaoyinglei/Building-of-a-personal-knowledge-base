@@ -11,6 +11,7 @@ from pkp.types.access import AccessPolicy
 class SourceType(StrEnum):
     PDF = "pdf"
     MARKDOWN = "markdown"
+    DOCX = "docx"
     IMAGE = "image"
     WEB = "web"
     PLAIN_TEXT = "plain_text"
@@ -24,6 +25,12 @@ class DocumentType(StrEnum):
     REPORT = "report"
     IMAGE = "image"
     WEB_PAGE = "web_page"
+
+
+class ChunkRole(StrEnum):
+    PARENT = "parent"
+    CHILD = "child"
+    SPECIAL = "special"
 
 
 class Source(BaseModel):
@@ -82,6 +89,13 @@ class Chunk(BaseModel):
     effective_access_policy: AccessPolicy
     extraction_quality: float
     embedding_ref: str | None
+    order_index: int = 0
+    chunk_role: ChunkRole = ChunkRole.CHILD
+    special_chunk_type: str | None = None
+    parent_chunk_id: str | None = None
+    prev_chunk_id: str | None = None
+    next_chunk_id: str | None = None
+    content_hash: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
 
 

@@ -18,6 +18,7 @@ class VectorChunkRecord(Protocol):
 @dataclass(frozen=True)
 class _VectorRecord:
     item_id: str
+    embedding_space: str
     vector: tuple[float, ...]
     metadata: dict[str, str]
     text: str = ""
@@ -25,7 +26,7 @@ class _VectorRecord:
 
 class InMemoryVectorRepo:
     def __init__(self) -> None:
-        self._records: dict[str, _VectorRecord] = {}
+        self._records: dict[tuple[str, str], _VectorRecord] = {}
 
     def upsert(
         self,
@@ -33,9 +34,11 @@ class InMemoryVectorRepo:
         vector: Iterable[float],
         *,
         metadata: dict[str, str] | None = None,
+        embedding_space: str = "default",
     ) -> None:
-        self._records[item_id] = _VectorRecord(
+        self._records[(embedding_space, item_id)] = _VectorRecord(
             item_id=item_id,
+            embedding_space=embedding_space,
             vector=tuple(float(value) for value in vector),
             metadata=dict(metadata or {}),
             text=dict(metadata or {}).get("text", ""),
@@ -47,8 +50,9 @@ class InMemoryVectorRepo:
             text = chunk.text
             vector = self._text_to_vector(text, vocabulary)
             metadata = {"doc_id": chunk.doc_id, "segment_id": chunk.segment_id}
-            self._records[chunk.chunk_id] = _VectorRecord(
+            self._records[("default", chunk.chunk_id)] = _VectorRecord(
                 item_id=chunk.chunk_id,
+                embedding_space="default",
                 vector=vector,
                 metadata=metadata,
                 text=text,
@@ -60,16 +64,22 @@ class InMemoryVectorRepo:
         *,
         limit: int = 10,
         doc_ids: list[str] | None = None,
+        embedding_space: str = "default",
     ) -> list[VectorSearchResult]:
-        if not self._records:
+        records = [
+            record
+            for record in self._records.values()
+            if embedding_space is None or record.embedding_space == embedding_space
+        ]
+        if not records:
             return []
 
         allowed_doc_ids = set(doc_ids or [])
         if isinstance(query, str):
-            vocabulary = self._build_vocabulary([query, *(record.text for record in self._records.values())])
+            vocabulary = self._build_vocabulary([query, *(record.text for record in records)])
             query_vector = self._text_to_vector(query, vocabulary)
             scored = []
-            for record in self._records.values():
+            for record in records:
                 if allowed_doc_ids and record.metadata.get("doc_id") not in allowed_doc_ids:
                     continue
                 record_vector = self._text_to_vector(record.text, vocabulary)
@@ -88,7 +98,7 @@ class InMemoryVectorRepo:
             return []
 
         scored = []
-        for record in self._records.values():
+        for record in records:
             if allowed_doc_ids and record.metadata.get("doc_id") not in allowed_doc_ids:
                 continue
             scored.append(
@@ -100,6 +110,31 @@ class InMemoryVectorRepo:
             )
         scored.sort(key=lambda result: (-result.score, result.item_id))
         return scored[:limit]
+
+    def existing_item_ids(
+        self,
+        item_ids: tuple[str, ...] | list[str],
+        *,
+        embedding_space: str | None = None,
+    ) -> set[str]:
+        return {
+            item_id
+            for item_id in item_ids
+            if any(
+                record.item_id == item_id and (embedding_space is None or record.embedding_space == embedding_space)
+                for record in self._records.values()
+            )
+        }
+
+    def count_vectors(self, *, embedding_space: str | None = None, distinct_chunks: bool = False) -> int:
+        records = [
+            record
+            for record in self._records.values()
+            if embedding_space is None or record.embedding_space == embedding_space
+        ]
+        if not distinct_chunks:
+            return len(records)
+        return len({record.item_id for record in records})
 
     @staticmethod
     def _build_vocabulary(texts: Iterable[str]) -> tuple[str, ...]:

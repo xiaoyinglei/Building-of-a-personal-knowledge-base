@@ -53,6 +53,7 @@ class ChunkingService:
                     effective_access_policy=access_policy,
                     extraction_quality=1.0 if len(chunks) == 1 else 0.95,
                     embedding_ref=chunk_id,
+                    order_index=index,
                     metadata={"order_index": str(index)},
                 )
             )

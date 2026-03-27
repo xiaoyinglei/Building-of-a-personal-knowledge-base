@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 
 from pkp.repo.interfaces import ParsedDocument, ParsedSection
 from pkp.repo.parse._util import default_title_from_location, normalize_whitespace, slugify
-from pkp.types.content import DocumentType
+from pkp.types.content import DocumentType, SourceType
 
 
 class WebParserRepo:
@@ -87,6 +87,7 @@ class WebParserRepo:
         visible_text = normalize_whitespace(" ".join(section.text for section in sections))
         return ParsedDocument(
             title=document_title,
+            source_type=SourceType.WEB,
             doc_type=DocumentType.WEB_PAGE,
             authors=[owner],
             language="en",

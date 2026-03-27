@@ -5,11 +5,80 @@ from collections.abc import Iterable
 
 _ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 _CJK_RUN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;.\n])")
 _COMMAND_FLAG_RE = re.compile(r"(^|\s)-{1,2}[a-zA-Z][a-zA-Z-]*")
 _COMMAND_MARKERS = ("uv run", "curl -x", "--query", "--mode", "pkp_", "```", "ollama ", "python -m")
 _DEFINITION_QUERY_MARKERS = ("做什么", "是什么", "作用", "用途", "what is", "what does")
 _DEFINITION_TEXT_MARKERS = ("是一个", "用于", "用来", "负责", "平台", "system", "designed to", "used to")
+_OPERATION_QUERY_MARKERS = (
+    "如何使用",
+    "怎么使用",
+    "运行方式",
+    "怎么运行",
+    "如何运行",
+    "如何配置",
+    "怎么配置",
+    "怎么接入",
+    "如何接入",
+    "how to use",
+    "how to run",
+    "setup",
+    "configure",
+)
+_OPERATION_TEXT_MARKERS = (
+    "ollama",
+    "openai",
+    "local_only",
+    "cloud_first",
+    "uv sync",
+    ".env",
+    "安装依赖",
+    "本地模式",
+    "云端模式",
+    "如何使用",
+    "接入",
+    "配置",
+)
+_STRUCTURE_QUERY_MARKERS = (
+    "架构",
+    "architecture",
+    "结构",
+    "分层",
+    "层级",
+    "模块",
+    "module",
+    "modules",
+    "组件",
+    "component",
+    "components",
+    "组成",
+    "layer",
+    "layers",
+)
+_GENERIC_QUERY_TERMS = frozenset(
+    {
+        "这个",
+        "那个",
+        "什么",
+        "项目",
+        "这个项目",
+        "一下",
+        "请问",
+        "如何",
+        "的是",
+        "什么是",
+        "what",
+        "does",
+        "this",
+        "project",
+        "is",
+        "the",
+        "a",
+        "an",
+        "of",
+    }
+)
 
 
 def search_terms(text: str) -> tuple[str, ...]:
@@ -56,6 +125,15 @@ def split_sentences(text: str) -> tuple[str, ...]:
     return tuple(chunks or [normalized])
 
 
+def text_unit_count(text: str) -> int:
+    normalized = text.strip()
+    if not normalized:
+        return 0
+    ascii_count = len(_ASCII_TOKEN_RE.findall(normalized))
+    cjk_count = len(_CJK_CHAR_RE.findall(normalized))
+    return ascii_count + cjk_count
+
+
 def keyword_overlap(query_terms: Iterable[str], text: str) -> int:
     term_set = set(query_terms)
     if not term_set:
@@ -84,3 +162,28 @@ def looks_definition_query(text: str) -> bool:
 def looks_definition_text(text: str) -> bool:
     lowered = text.lower()
     return any(marker in lowered for marker in _DEFINITION_TEXT_MARKERS)
+
+
+def looks_operation_query(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _OPERATION_QUERY_MARKERS)
+
+
+def looks_operation_text(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _OPERATION_TEXT_MARKERS)
+
+
+def looks_structure_query(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _STRUCTURE_QUERY_MARKERS)
+
+
+def looks_structure_text(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _STRUCTURE_QUERY_MARKERS)
+
+
+def focus_terms(text: str) -> tuple[str, ...]:
+    filtered = tuple(term for term in search_terms(text) if term not in _GENERIC_QUERY_TERMS)
+    return filtered or search_terms(text)

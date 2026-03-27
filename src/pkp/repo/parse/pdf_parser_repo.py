@@ -6,7 +6,7 @@ import fitz  # type: ignore[import-untyped]
 
 from pkp.repo.interfaces import ParsedDocument, ParsedSection
 from pkp.repo.parse._util import default_title_from_location, normalize_whitespace
-from pkp.types.content import DocumentType
+from pkp.types.content import DocumentType, SourceType
 
 
 class PDFParserRepo:
@@ -41,6 +41,7 @@ class PDFParserRepo:
 
         return ParsedDocument(
             title=document_title,
+            source_type=SourceType.PDF,
             doc_type=DocumentType.REPORT,
             authors=[owner],
             language="en",
