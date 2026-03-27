@@ -5,6 +5,7 @@ from hashlib import sha256
 
 from pkp.repo.parse._util import normalize_whitespace
 from pkp.types.content import Chunk
+from pkp.types.text import text_unit_count
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,7 @@ class ChunkPostprocessingService:
         index = 0
         while index < len(chunks):
             current = chunks[index]
-            word_count = len(current.text.split())
+            word_count = text_unit_count(current.text)
             if word_count >= self._min_words:
                 merged.append(current)
                 index += 1
@@ -71,7 +72,7 @@ class ChunkPostprocessingService:
                     next_chunk.model_copy(
                         update={
                             "text": merged_text,
-                            "token_count": len(merged_text.split()),
+                            "token_count": text_unit_count(merged_text),
                             "citation_span": (0, len(merged_text)),
                             "order_index": current.order_index,
                         }
@@ -87,7 +88,7 @@ class ChunkPostprocessingService:
                 merged[-1] = previous.model_copy(
                     update={
                         "text": merged_text,
-                        "token_count": len(merged_text.split()),
+                        "token_count": text_unit_count(merged_text),
                         "citation_span": (0, len(merged_text)),
                     }
                 )
@@ -141,7 +142,7 @@ class ChunkPostprocessingService:
         return chunk.model_copy(
             update={
                 "text": cleaned,
-                "token_count": len(cleaned.split()),
+                "token_count": text_unit_count(cleaned),
                 "citation_span": (0, len(cleaned)),
             }
         )

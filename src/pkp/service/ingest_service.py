@@ -428,12 +428,14 @@ class IngestService:
                 access_policy=normalized_policy,
             )
             segments = prepared.segments
-            chunks = prepared.persisted_chunks
+            stored_chunks = prepared.stored_chunks
+            chunks = prepared.indexed_chunks
             processing = prepared.package
             for segment in segments:
                 self.metadata_repo.save_segment(segment)
-            for chunk in chunks:
+            for chunk in stored_chunks:
                 self.metadata_repo.save_chunk(chunk)
+            for chunk in chunks:
                 matching_segment = next((item for item in segments if item.segment_id == chunk.segment_id), None)
                 toc_path = [] if matching_segment is None else list(matching_segment.toc_path)
                 self.fts_repo.index_chunk(

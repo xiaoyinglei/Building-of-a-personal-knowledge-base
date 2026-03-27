@@ -15,9 +15,11 @@ from pkp.service.evidence_service import (
     SelfCheckResult,
 )
 from pkp.service.graph_expansion_service import GraphExpansionService
+from pkp.service.query_understanding_service import QueryUnderstandingService
 from pkp.service.routing_service import RoutingDecision, RoutingService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.types.access import AccessPolicy, ExecutionLocationPreference
+from pkp.types.content import ChunkRole
 from pkp.types.diagnostics import RetrievalDiagnostics
 from pkp.types.envelope import PreservationSuggestion
 from pkp.types.text import (
@@ -68,6 +70,10 @@ class _FusedCandidateView:
     source_id: str | None
     section_path: Sequence[str]
     effective_access_policy: AccessPolicy | None = None
+    chunk_role: ChunkRole | None = None
+    special_chunk_type: str | None = None
+    parent_chunk_id: str | None = None
+    parent_text: str | None = None
 
 
 class RetrievalService:
@@ -77,10 +83,12 @@ class RetrievalService:
         full_text_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
         vector_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
         section_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
+        special_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
         graph_expander: Callable[[str, list[str], list[CandidateLike]], Sequence[CandidateLike]] | None = None,
         web_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
         reranker: Reranker | None = None,
         routing_service: RoutingService | None = None,
+        query_understanding_service: QueryUnderstandingService | None = None,
         evidence_service: EvidenceService | None = None,
         graph_expansion_service: GraphExpansionService | None = None,
         artifact_service: ArtifactService | None = None,
@@ -90,10 +98,12 @@ class RetrievalService:
         self._full_text_retriever = full_text_retriever or (lambda _query, _scope: [])
         self._vector_retriever = vector_retriever or (lambda _query, _scope: [])
         self._section_retriever = section_retriever or (lambda _query, _scope: [])
+        self._special_retriever = special_retriever or (lambda _query, _scope: [])
         self._graph_expander = graph_expander or (lambda _query, _scope, _evidence: [])
         self._web_retriever = web_retriever or (lambda _query, _scope: [])
         self._reranker = reranker
         self._routing_service = routing_service or RoutingService(thresholds)
+        self._query_understanding_service = query_understanding_service or QueryUnderstandingService()
         self._evidence_service = evidence_service or EvidenceService(thresholds)
         self._graph_expansion_service = graph_expansion_service or GraphExpansionService()
         self._artifact_service = artifact_service or ArtifactService()
@@ -235,9 +245,44 @@ class RetrievalService:
                 source_id=item.candidate.source_id,
                 section_path=tuple(item.candidate.section_path),
                 effective_access_policy=getattr(item.candidate, "effective_access_policy", None),
+                chunk_role=getattr(item.candidate, "chunk_role", None),
+                special_chunk_type=getattr(item.candidate, "special_chunk_type", None),
+                parent_chunk_id=getattr(item.candidate, "parent_chunk_id", None),
+                parent_text=getattr(item.candidate, "parent_text", None),
             )
             for item in ordered
         ]
+
+    @staticmethod
+    def _apply_parent_backfill(candidates: Sequence[CandidateLike]) -> tuple[list[CandidateLike], int]:
+        enriched: list[CandidateLike] = []
+        backfilled = 0
+        for candidate in candidates:
+            parent_text = getattr(candidate, "parent_text", None)
+            parent_chunk_id = getattr(candidate, "parent_chunk_id", None)
+            if parent_chunk_id and parent_text:
+                enriched.append(
+                    _FusedCandidateView(
+                        chunk_id=candidate.chunk_id,
+                        doc_id=candidate.doc_id,
+                        text=parent_text,
+                        citation_anchor=candidate.citation_anchor,
+                        score=float(candidate.score),
+                        rank=int(candidate.rank),
+                        source_kind=candidate.source_kind,
+                        source_id=candidate.source_id,
+                        section_path=tuple(candidate.section_path),
+                        effective_access_policy=getattr(candidate, "effective_access_policy", None),
+                        chunk_role=getattr(candidate, "chunk_role", None),
+                        special_chunk_type=getattr(candidate, "special_chunk_type", None),
+                        parent_chunk_id=parent_chunk_id,
+                        parent_text=parent_text,
+                    )
+                )
+                backfilled += 1
+                continue
+            enriched.append(candidate)
+        return enriched, backfilled
 
     def retrieve(
         self,
@@ -259,36 +304,53 @@ class RetrievalService:
             source_scope=scope,
             access_policy=access_policy,
         )
+        query_understanding = self._query_understanding_service.analyze(query)
 
         internal_branches: list[tuple[str, list[CandidateLike]]] = []
-        full_text_candidates = self._evidence_service.filter_candidates(
-            self._full_text_retriever(query, scope),
-            source_scope=scope,
-            access_policy=access_policy,
-            runtime_mode=decision.runtime_mode,
-        )
+        full_text_candidates: list[CandidateLike] = []
+        if query_understanding.needs_sparse:
+            full_text_candidates = self._evidence_service.filter_candidates(
+                self._full_text_retriever(query, scope),
+                source_scope=scope,
+                access_policy=access_policy,
+                runtime_mode=decision.runtime_mode,
+            )
         self._record_branch_usage("full_text", full_text_candidates, decision.runtime_mode.value)
-        vector_candidates = self._evidence_service.filter_candidates(
-            self._vector_retriever(query, scope),
-            source_scope=scope,
-            access_policy=access_policy,
-            runtime_mode=decision.runtime_mode,
-        )
+        vector_candidates: list[CandidateLike] = []
+        if query_understanding.needs_dense:
+            vector_candidates = self._evidence_service.filter_candidates(
+                self._vector_retriever(query, scope),
+                source_scope=scope,
+                access_policy=access_policy,
+                runtime_mode=decision.runtime_mode,
+            )
         self._record_branch_usage("vector", vector_candidates, decision.runtime_mode.value)
-        section_candidates = self._evidence_service.filter_candidates(
-            self._section_retriever(query, scope),
-            source_scope=scope,
-            access_policy=access_policy,
-            runtime_mode=decision.runtime_mode,
-        )
+        section_candidates: list[CandidateLike] = []
+        if query_understanding.needs_structure:
+            section_candidates = self._evidence_service.filter_candidates(
+                self._section_retriever(query, scope),
+                source_scope=scope,
+                access_policy=access_policy,
+                runtime_mode=decision.runtime_mode,
+            )
         self._record_branch_usage("section", section_candidates, decision.runtime_mode.value)
-        internal_branches.extend(
-            [
-                ("full_text", full_text_candidates),
-                ("vector", vector_candidates),
-                ("section", section_candidates),
-            ]
-        )
+        special_candidates: list[CandidateLike] = []
+        if query_understanding.needs_special:
+            special_candidates = self._evidence_service.filter_candidates(
+                self._special_retriever(query, scope),
+                source_scope=scope,
+                access_policy=access_policy,
+                runtime_mode=decision.runtime_mode,
+            )
+            self._record_branch_usage("special", special_candidates, decision.runtime_mode.value)
+        if full_text_candidates:
+            internal_branches.append(("full_text", full_text_candidates))
+        if vector_candidates:
+            internal_branches.append(("vector", vector_candidates))
+        if section_candidates:
+            internal_branches.append(("section", section_candidates))
+        if special_candidates:
+            internal_branches.append(("special", special_candidates))
 
         fused_candidates = self._rrf_fuse(query, internal_branches)
         candidate_count = sum(len(branch) for _, branch in internal_branches)
@@ -302,6 +364,7 @@ class RetrievalService:
         if self._reranker is None:
             raise ValueError("reranker is required for retrieval")
         reranked_candidates = list(self._reranker(query, fused_candidates))
+        reranked_candidates, parent_backfilled_count = self._apply_parent_backfill(reranked_candidates)
         if self._telemetry_service is not None:
             fused_ids = [candidate.chunk_id for candidate in fused_candidates]
             reranked_ids = [candidate.chunk_id for candidate in reranked_candidates]
@@ -344,6 +407,7 @@ class RetrievalService:
                         duplicate_count=max(0, combined_candidate_count - len(fused_candidates)),
                     )
                 reranked_candidates = list(self._reranker(query, fused_candidates))
+                reranked_candidates, parent_backfilled_count = self._apply_parent_backfill(reranked_candidates)
                 if self._telemetry_service is not None:
                     fused_ids = [candidate.chunk_id for candidate in fused_candidates]
                     reranked_ids = [candidate.chunk_id for candidate in reranked_candidates]
@@ -411,6 +475,7 @@ class RetrievalService:
                     "full_text": len(full_text_candidates),
                     "vector": len(vector_candidates),
                     "section": len(section_candidates),
+                    **({"special": len(special_candidates)} if special_candidates else {}),
                     **({"web": len(web_candidates)} if web_candidates else {}),
                 },
                 reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
@@ -423,6 +488,8 @@ class RetrievalService:
                 fusion_input_count=candidate_count + len(web_candidates),
                 fused_count=len(reranked_candidates),
                 graph_expanded=graph_expanded,
+                query_understanding=query_understanding,
+                parent_backfilled_count=parent_backfilled_count,
             ),
             preservation_suggestion=preservation_suggestion,
         )

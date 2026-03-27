@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from pkp.types.access import AccessPolicy, ExecutionLocationPreference, RuntimeMode
+from pkp.types.content import ChunkRole
 from pkp.types.diagnostics import QueryDiagnostics
 from pkp.types.query import ComplexityLevel, TaskType
 
@@ -17,6 +18,9 @@ class EvidenceItem(BaseModel):
     text: str
     score: float
     evidence_kind: str = "internal"
+    chunk_role: ChunkRole | None = None
+    special_chunk_type: str | None = None
+    parent_chunk_id: str | None = None
 
 
 class PreservationSuggestion(BaseModel):

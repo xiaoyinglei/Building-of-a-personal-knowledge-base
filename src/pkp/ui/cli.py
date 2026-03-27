@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from pathlib import Path
 from typing import cast
 
 import typer
 
 from pkp.bootstrap import load_settings
 from pkp.config import build_execution_policy, default_access_policy
+from pkp.eval.offline_eval_service import (
+    run_builtin_offline_eval,
+    run_file_offline_eval,
+)
 from pkp.types import (
     AccessPolicy,
     ComplexityLevel,
@@ -130,6 +135,33 @@ def process_file(
     typer.echo(json.dumps(result, ensure_ascii=True))
 
 
+@app.command("evaluate-retrieval")
+def evaluate_retrieval(
+    output_dir: str = typer.Option("data/eval/generated", "--output-dir"),
+    top_k: int = typer.Option(5, "--top-k", min=1),
+) -> None:
+    result = run_builtin_offline_eval(Path(output_dir), top_k=top_k)
+    payload = result if isinstance(result, dict) else result.model_dump(mode="json")
+    typer.echo(json.dumps(cast(dict[str, object], payload), ensure_ascii=True))
+
+
+@app.command("evaluate-file")
+def evaluate_file(
+    location: str = typer.Option(..., "--location"),
+    questions_file: str = typer.Option(..., "--questions-file"),
+    output_dir: str = typer.Option("data/eval/generated-file", "--output-dir"),
+    top_k: int = typer.Option(5, "--top-k", min=1),
+) -> None:
+    result = run_file_offline_eval(
+        file_path=Path(location),
+        questions_path=Path(questions_file),
+        output_dir=Path(output_dir),
+        top_k=top_k,
+    )
+    payload = result if isinstance(result, dict) else result.model_dump(mode="json")
+    typer.echo(json.dumps(cast(dict[str, object], payload), ensure_ascii=True))
+
+
 @app.command()
 def query(
     query: str = typer.Option(..., "--query"),
@@ -222,6 +254,10 @@ def show_session(session_id: str = typer.Option(..., "--session-id")) -> None:
 __all__ = ["app", "set_container_factory"]
 
 
+def main() -> None:
+    app()
+
+
 def _build_access_policy(
     *,
     residency: Residency | None,
@@ -247,3 +283,7 @@ def _build_access_policy(
         allowed_locations=frozenset(allowed_location or defaults.allowed_locations),
         sensitivity_tags=frozenset(sensitivity_tag or defaults.sensitivity_tags),
     )
+
+
+if __name__ == "__main__":
+    main()

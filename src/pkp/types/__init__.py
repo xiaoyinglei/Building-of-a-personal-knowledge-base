@@ -46,7 +46,13 @@ from pkp.types.processing import (
     DocumentFeatures,
     DocumentProcessingPackage,
 )
-from pkp.types.query import ComplexityLevel, QueryRequest, ResearchSubQuestion, TaskType
+from pkp.types.query import (
+    ComplexityLevel,
+    QueryRequest,
+    QueryUnderstanding,
+    ResearchSubQuestion,
+    TaskType,
+)
 
 __all__ = [
     "AccessPolicy",
@@ -80,6 +86,7 @@ __all__ = [
     "ProviderAttempt",
     "ProviderHealth",
     "QueryRequest",
+    "QueryUnderstanding",
     "QueryDiagnostics",
     "QueryResponse",
     "ResearchSubQuestion",

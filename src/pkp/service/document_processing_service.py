@@ -22,12 +22,14 @@ from pkp.types.processing import (
     ChunkStatistics,
     DocumentProcessingPackage,
 )
+from pkp.types.text import text_unit_count
 
 
 @dataclass(frozen=True)
 class PreparedDocumentProcessing:
     segments: list[Segment]
-    persisted_chunks: list[Chunk]
+    stored_chunks: list[Chunk]
+    indexed_chunks: list[Chunk]
     package: DocumentProcessingPackage
 
 
@@ -39,7 +41,7 @@ class ChunkSeed:
 
 
 class DocumentProcessingService:
-    _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s+")
+    _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s*")
 
     def __init__(
         self,
@@ -115,7 +117,8 @@ class DocumentProcessingService:
         )
         return PreparedDocumentProcessing(
             segments=segments,
-            persisted_chunks=[*processed.child_chunks, *processed.special_chunks],
+            stored_chunks=[*processed.parent_chunks, *processed.child_chunks, *processed.special_chunks],
+            indexed_chunks=[*processed.child_chunks, *processed.special_chunks],
             package=package,
         )
 
@@ -340,7 +343,7 @@ class DocumentProcessingService:
             parent_chunk=parent_chunk.model_copy(
                 update={
                     "text": child_source_text,
-                    "token_count": len(child_source_text.split()),
+                    "token_count": text_unit_count(child_source_text),
                 }
             ),
             access_policy=access_policy,
@@ -415,7 +418,9 @@ class DocumentProcessingService:
         for seed in seeds[1:]:
             previous = merged[-1]
             should_merge = previous.toc_path == seed.toc_path and (
-                source_type in {"markdown", "docx"} or len(previous.text.split()) < 12 or len(seed.text.split()) < 12
+                source_type in {"markdown", "docx"}
+                or text_unit_count(previous.text) < 12
+                or text_unit_count(seed.text) < 12
             )
             if not should_merge:
                 merged.append(seed)
@@ -438,7 +443,7 @@ class DocumentProcessingService:
         text = normalize_whitespace(parent_chunk.text)
         if not text:
             return []
-        if not local_refine and len(text.split()) <= 140:
+        if not local_refine and text_unit_count(text) <= 140:
             return [
                 parent_chunk.model_copy(
                     update={
@@ -461,9 +466,13 @@ class DocumentProcessingService:
         groups: list[str] = []
         buffer: list[str] = []
         max_words = 90 if local_refine else 130
+        max_sentences = 3 if local_refine else 5
         for sentence in sentences:
             candidate = normalize_whitespace(" ".join([*buffer, sentence]))
-            if buffer and len(candidate.split()) > max_words:
+            should_flush = bool(buffer) and (
+                text_unit_count(candidate) > max_words or len(buffer) >= max_sentences
+            )
+            if should_flush:
                 groups.append(normalize_whitespace(" ".join(buffer)))
                 buffer = [sentence]
             else:
@@ -485,7 +494,7 @@ class DocumentProcessingService:
                     segment_id=parent_chunk.segment_id,
                     doc_id=parent_chunk.doc_id,
                     text=group,
-                    token_count=len(group.split()),
+                    token_count=text_unit_count(group),
                     citation_anchor=parent_chunk.citation_anchor,
                     citation_span=(span_start, span_end),
                     effective_access_policy=access_policy,
@@ -514,18 +523,22 @@ class DocumentProcessingService:
         metadata: dict[str, str] | None = None,
     ) -> Chunk:
         normalized = normalize_whitespace(text)
-        chunk_id = self._deterministic_id(
+        chunk_id_parts = [
             document.doc_id,
             segment.anchor or segment.segment_id,
             chunk_role.value,
-            special_chunk_type or str(order_index),
-        )
+        ]
+        if chunk_role is ChunkRole.SPECIAL:
+            chunk_id_parts.extend([special_chunk_type or "special", str(order_index)])
+        else:
+            chunk_id_parts.append(special_chunk_type or str(order_index))
+        chunk_id = self._deterministic_id(*chunk_id_parts)
         return Chunk(
             chunk_id=chunk_id,
             segment_id=segment.segment_id,
             doc_id=document.doc_id,
             text=normalized,
-            token_count=len(normalized.split()),
+            token_count=text_unit_count(normalized),
             citation_anchor=segment.anchor or segment.segment_id,
             citation_span=(0, len(normalized)),
             effective_access_policy=access_policy,

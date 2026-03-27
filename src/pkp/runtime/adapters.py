@@ -32,6 +32,7 @@ from pkp.types import (
     QueryResponse,
     RuntimeMode,
 )
+from pkp.types.content import ChunkRole
 from pkp.types.text import (
     focus_terms,
     keyword_overlap,
@@ -59,6 +60,10 @@ class RetrievedCandidate:
     source_id: str | None = None
     section_path: tuple[str, ...] = ()
     effective_access_policy: AccessPolicy | None = None
+    chunk_role: ChunkRole | None = None
+    special_chunk_type: str | None = None
+    parent_chunk_id: str | None = None
+    parent_text: str | None = None
 
 
 class VectorSearchRepoProtocol(Protocol):
@@ -218,6 +223,10 @@ class MultiProviderBackedVectorRetriever:
                 source_kind=candidate.source_kind,
                 section_path=candidate.section_path,
                 effective_access_policy=candidate.effective_access_policy,
+                chunk_role=candidate.chunk_role,
+                special_chunk_type=candidate.special_chunk_type,
+                parent_chunk_id=candidate.parent_chunk_id,
+                parent_text=candidate.parent_text,
             )
             for index, candidate in enumerate(candidates, start=1)
         ]
@@ -308,6 +317,54 @@ class SearchBackedRetrievalFactory:
         candidates.sort(key=lambda item: (-item.score, item.chunk_id))
         return candidates[:12]
 
+    def special_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
+        query_terms = search_terms(query)
+        lowered = query.lower()
+        candidates: list[RetrievedCandidate] = []
+        for document in self._iter_documents(source_scope):
+            for chunk in self._metadata_repo.list_chunks(document.doc_id):
+                if chunk.chunk_role is not ChunkRole.SPECIAL:
+                    continue
+                score = keyword_overlap(query_terms, chunk.text)
+                special_type = chunk.special_chunk_type or ""
+                if special_type and special_type in lowered:
+                    score += 2
+                if special_type == "table" and any(term in lowered for term in ("表格", "表", "指标", "数值")):
+                    score += 2
+                if special_type == "ocr_region" and any(term in lowered for term in ("ocr", "识别", "图片文字")):
+                    score += 2
+                if special_type == "image_summary" and any(term in lowered for term in ("图片", "图像", "画面")):
+                    score += 1
+                if score <= 0:
+                    continue
+                candidates.extend(
+                    self._build_candidates_from_chunk_ids(
+                        [chunk.chunk_id],
+                        source_kind="internal",
+                        scope=source_scope,
+                    )
+                )
+                if candidates:
+                    latest = candidates[-1]
+                    candidates[-1] = RetrievedCandidate(
+                        chunk_id=latest.chunk_id,
+                        doc_id=latest.doc_id,
+                        source_id=latest.source_id,
+                        text=latest.text,
+                        citation_anchor=latest.citation_anchor,
+                        score=float(score),
+                        rank=1,
+                        source_kind=latest.source_kind,
+                        section_path=latest.section_path,
+                        effective_access_policy=latest.effective_access_policy,
+                        chunk_role=latest.chunk_role,
+                        special_chunk_type=latest.special_chunk_type,
+                        parent_chunk_id=latest.parent_chunk_id,
+                        parent_text=latest.parent_text,
+                    )
+        candidates.sort(key=lambda item: (-item.score, item.chunk_id))
+        return candidates[:12]
+
     def graph_expander(
         self,
         query: str,
@@ -393,6 +450,18 @@ class SearchBackedRetrievalFactory:
                     source_kind=source_kind,
                     section_path=tuple(segment.toc_path) if segment is not None else (),
                     effective_access_policy=chunk.effective_access_policy,
+                    chunk_role=chunk.chunk_role,
+                    special_chunk_type=chunk.special_chunk_type,
+                    parent_chunk_id=chunk.parent_chunk_id,
+                    parent_text=(
+                        None
+                        if chunk.parent_chunk_id is None
+                        else (
+                            None
+                            if (parent_chunk := self._metadata_repo.get_chunk(chunk.parent_chunk_id)) is None
+                            else parent_chunk.text
+                        )
+                    ),
                 )
             )
         return candidates
