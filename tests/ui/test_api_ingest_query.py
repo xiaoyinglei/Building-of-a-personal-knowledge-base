@@ -5,6 +5,9 @@ from fastapi.testclient import TestClient
 from pkp.runtime.session_runtime import SessionRuntime
 from pkp.types import (
     AccessPolicy,
+    AnswerCitation,
+    AnswerEvidenceLink,
+    AnswerSection,
     ExecutionLocation,
     ExecutionLocationPreference,
     ExecutionPolicy,
@@ -73,6 +76,39 @@ class FakeQueryRuntime:
             uncertainty="low",
             preservation_suggestion=PreservationSuggestion(suggested=True, artifact_type="topic_page"),
             runtime_mode=self.mode,
+            answer_text=f"answer for {query}",
+            answer_sections=[
+                AnswerSection(
+                    section_id="sec-1",
+                    title="直接回答",
+                    text=f"answer for {query}",
+                    citation_ids=["cit-1"],
+                    evidence_chunk_ids=["chunk-a"],
+                )
+            ],
+            citations=[
+                AnswerCitation(
+                    citation_id="cit-1",
+                    file_name="report.docx",
+                    section_path=["专项工作"],
+                    page_start=2,
+                    page_end=2,
+                    chunk_id="chunk-a",
+                    chunk_type="child",
+                )
+            ],
+            evidence_links=[
+                AnswerEvidenceLink(
+                    link_id="link-1",
+                    answer_section_id="sec-1",
+                    answer_excerpt=f"answer for {query}",
+                    evidence_chunk_id="chunk-a",
+                    citation_id="cit-1",
+                    support_score=1.0,
+                )
+            ],
+            groundedness_flag=True,
+            insufficient_evidence_flag=False,
             diagnostics=QueryDiagnostics(
                 retrieval=RetrievalDiagnostics(
                     branch_hits={"full_text": 2, "vector": 1},
@@ -152,6 +188,11 @@ def test_ingest_query_and_artifact_routes_use_runtime_facades() -> None:
     ]
     assert fast_response.status_code == 200
     assert fast_response.json()["runtime_mode"] == "fast"
+    assert fast_response.json()["answer_text"] == "answer for hello"
+    assert fast_response.json()["answer_sections"][0]["section_id"] == "sec-1"
+    assert fast_response.json()["citations"][0]["file_name"] == "report.docx"
+    assert fast_response.json()["evidence_links"][0]["evidence_chunk_id"] == "chunk-a"
+    assert fast_response.json()["groundedness_flag"] is True
     assert fast_response.json()["diagnostics"]["retrieval"]["embedding_provider"] == "ollama"
     assert fast_response.json()["diagnostics"]["retrieval"]["rerank_provider"] == "heuristic"
     assert deep_response.status_code == 200

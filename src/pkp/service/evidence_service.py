@@ -114,6 +114,12 @@ class EvidenceService:
             chunk_role=getattr(candidate, "chunk_role", None),
             special_chunk_type=getattr(candidate, "special_chunk_type", None),
             parent_chunk_id=getattr(candidate, "parent_chunk_id", None),
+            file_name=getattr(candidate, "file_name", None),
+            section_path=list(getattr(candidate, "section_path", ()) or ()),
+            page_start=getattr(candidate, "page_start", None),
+            page_end=getattr(candidate, "page_end", None),
+            chunk_type=getattr(candidate, "chunk_type", None),
+            source_type=getattr(candidate, "source_type", None),
         )
 
     def assemble_bundle(self, candidates: Sequence[CandidateLike]) -> EvidenceBundle:

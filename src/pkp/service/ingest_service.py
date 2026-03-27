@@ -28,7 +28,7 @@ from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
-from pkp.repo.vision.ocr_vision_repo import DeterministicOcrVisionRepo
+from pkp.repo.vision.ocr_vision_repo import create_default_ocr_repo
 from pkp.service.chunking_service import ChunkingService
 from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.policy_resolution_service import PolicyResolutionService
@@ -109,7 +109,7 @@ class IngestService:
         web_fetch_repo: WebFetchRepo | None = None,
     ) -> IngestService:
         root.mkdir(parents=True, exist_ok=True)
-        resolved_ocr_repo = ocr_repo or DeterministicOcrVisionRepo()
+        resolved_ocr_repo = ocr_repo or create_default_ocr_repo()
         resolved_web_fetch_repo = web_fetch_repo or HttpWebFetchRepo()
         return cls(
             metadata_repo=SQLiteMetadataRepo(root / "metadata.sqlite3"),
@@ -211,7 +211,10 @@ class IngestService:
         access_policy: AccessPolicy | None = None,
         title: str | None = None,
     ) -> IngestResult:
-        parsed = self.docling_parser.parse(image_path, location=location, title=title, owner=owner)
+        try:
+            parsed = self.docling_parser.parse(image_path, location=location, title=title, owner=owner)
+        except ValueError:
+            parsed = self.image_parser.parse(image_path, location=location, title=title, owner=owner)
         return self._ingest_parsed_document(
             location=location,
             raw_bytes=image_path.read_bytes(),

@@ -89,7 +89,7 @@ def query_page() -> HTMLResponse:
         title="Query Workspace",
         description=(
             "Ask the knowledge base a question, compare fast and deep paths, "
-            "and inspect evidence plus model fallback details."
+            "inspect grounded answers plus citations, and keep a lightweight evaluation sheet on the page."
         ),
         body="""
         <section class="wb-grid wb-grid-query">
@@ -145,6 +145,10 @@ def query_page() -> HTMLResponse:
                   Allow Fallback / 允许回退
                 </label>
               </div>
+              <label class="wb-checkbox">
+                <input name="compare_modes" type="checkbox" checked />
+                Compare Fast / Deep
+              </label>
               <button class="wb-button" type="submit">Run Query / 开始查询</button>
             </form>
             <section class="wb-subpanel">
@@ -173,13 +177,32 @@ def query_page() -> HTMLResponse:
                 </article>
               </div>
             </section>
+            <section class="wb-subpanel">
+              <h3>Evaluation Pad / 测评辅助</h3>
+              <form id="query-eval-form" class="wb-form">
+                <label>
+                  Expected Terms / 期望关键词
+                  <input name="expected_terms" placeholder="比如：月返抽查, 整改跟进, 异常复核" />
+                </label>
+                <label>
+                  Expected Chunk IDs / 期望命中 chunk
+                  <input name="expected_chunk_ids" placeholder="比如：chunk-a, table-1" />
+                </label>
+                <label>
+                  Expected Special Types / 特殊块类型
+                  <input name="expected_special_types" placeholder="比如：table, image_summary" />
+                </label>
+              </form>
+              <div id="query-eval" class="wb-list wb-empty">运行查询后，这里会生成页面端测评提示。</div>
+            </section>
           </section>
           <section class="wb-panel">
             <div class="wb-panel-head">
-              <h2>Answer / 回答</h2>
+              <h2>Answer Comparison / 回答对比</h2>
               <span class="wb-status" id="query-status">空闲</span>
             </div>
-            <article id="query-answer" class="wb-answer wb-empty">运行一次查询后，这里会显示最终回答。</article>
+            <div id="query-run-summary" class="wb-metric-grid wb-empty">运行后，这里会显示本次测评摘要。</div>
+            <div id="query-results" class="wb-result-grid wb-empty">运行一次查询后，这里会显示结果卡片。</div>
             <section class="wb-subpanel">
               <h3>Evidence / 证据</h3>
               <div id="query-evidence" class="wb-list wb-empty">还没有证据。</div>
@@ -193,6 +216,14 @@ def query_page() -> HTMLResponse:
               </button>
             </div>
             <div id="query-diagnostics-cards" class="wb-metric-grid wb-empty">还没有诊断信息。</div>
+            <section class="wb-subpanel">
+              <h3>Query Understanding / 查询理解</h3>
+              <div id="query-understanding" class="wb-list wb-empty">还没有查询理解结果。</div>
+            </section>
+            <section class="wb-subpanel">
+              <h3>Citations / 引用</h3>
+              <div id="query-citations" class="wb-list wb-empty">还没有引用。</div>
+            </section>
             <section class="wb-subpanel">
               <h3>Attempts / 调用记录</h3>
               <div id="query-attempts" class="wb-list wb-empty">还没有 provider 调用记录。</div>

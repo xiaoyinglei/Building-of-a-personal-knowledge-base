@@ -13,6 +13,7 @@ from pkp.types import (
     DocumentType,
     ExecutionLocation,
     ExternalRetrievalPolicy,
+    PreservationSuggestion,
     QueryResponse,
     Residency,
     RuntimeMode,
@@ -60,7 +61,7 @@ class FakeQueryRuntime:
             conclusion="answer",
             evidence=[],
             uncertainty="low",
-            preservation_suggestion={"suggested": False},
+            preservation_suggestion=PreservationSuggestion(suggested=False),
             runtime_mode=RuntimeMode.FAST,
         )
 
@@ -144,6 +145,9 @@ def test_workbench_query_page_renders_html_shell() -> None:
     assert "参数说明" in response.text
     assert "Cloud First" in response.text
     assert "优先云端执行检索和综合回答" in response.text
+    assert "Compare Fast / Deep" in response.text
+    assert "Citations / 引用" in response.text
+    assert "Evaluation Pad / 测评辅助" in response.text
 
 
 def test_workbench_upload_route_saves_file_and_invokes_ingest_runtime(tmp_path: Path) -> None:

@@ -31,6 +31,7 @@ from pkp.types.diagnostics import (
     RetrievalDiagnostics,
 )
 from pkp.types.envelope import EvidenceItem, ExecutionPolicy, PreservationSuggestion, QueryResponse
+from pkp.types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection, GroundedAnswer
 from pkp.types.memory import (
     EpisodicMemory,
     MemoryEvidenceLink,
@@ -58,6 +59,9 @@ __all__ = [
     "AccessPolicy",
     "ArtifactStatus",
     "ArtifactType",
+    "AnswerCitation",
+    "AnswerEvidenceLink",
+    "AnswerSection",
     "Chunk",
     "ChunkingStrategy",
     "ChunkRole",
@@ -76,6 +80,7 @@ __all__ = [
     "ExternalRetrievalPolicy",
     "GraphEdge",
     "GraphNode",
+    "GroundedAnswer",
     "HealthReport",
     "IndexHealth",
     "KnowledgeArtifact",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, cast
 
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
@@ -11,6 +12,7 @@ from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.search.web_search_repo import DeterministicWebSearchRepo
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
 from pkp.runtime.provider_metadata import provider_model, provider_name
+from pkp.service.answer_generation_service import AnswerGenerationService
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService
 from pkp.service.ingest_service import IngestService
@@ -34,6 +36,7 @@ from pkp.types import (
     RuntimeMode,
 )
 from pkp.types.content import ChunkRole
+from pkp.types.generation import GroundedAnswer
 from pkp.types.text import (
     focus_terms,
     keyword_overlap,
@@ -66,6 +69,11 @@ class RetrievedCandidate:
     parent_chunk_id: str | None = None
     parent_text: str | None = None
     metadata: dict[str, str] | None = None
+    file_name: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    chunk_type: str | None = None
+    source_type: str | None = None
 
 
 class VectorSearchRepoProtocol(Protocol):
@@ -230,6 +238,11 @@ class MultiProviderBackedVectorRetriever:
                 parent_chunk_id=candidate.parent_chunk_id,
                 parent_text=candidate.parent_text,
                 metadata=candidate.metadata,
+                file_name=candidate.file_name,
+                page_start=candidate.page_start,
+                page_end=candidate.page_end,
+                chunk_type=candidate.chunk_type,
+                source_type=candidate.source_type,
             )
             for index, candidate in enumerate(candidates, start=1)
         ]
@@ -301,6 +314,7 @@ class SearchBackedRetrievalFactory:
         query_terms = search_terms(query)
         candidates: list[RetrievedCandidate] = []
         for document in self._iter_documents(source_scope):
+            source = self._metadata_repo.get_source(document.source_id)
             for chunk in self._metadata_repo.list_chunks(document.doc_id):
                 segment = self._metadata_repo.get_segment(chunk.segment_id)
                 if segment is None:
@@ -320,6 +334,15 @@ class SearchBackedRetrievalFactory:
                         rank=1,
                         section_path=tuple(segment.toc_path),
                         effective_access_policy=chunk.effective_access_policy,
+                        chunk_role=chunk.chunk_role,
+                        special_chunk_type=chunk.special_chunk_type,
+                        parent_chunk_id=chunk.parent_chunk_id,
+                        metadata=dict(chunk.metadata),
+                        file_name=self._resolve_file_name(document.title, None if source is None else source.location),
+                        page_start=None if segment.page_range is None else segment.page_range[0],
+                        page_end=None if segment.page_range is None else segment.page_range[1],
+                        chunk_type=chunk.special_chunk_type or chunk.chunk_role.value,
+                        source_type=None if source is None else source.source_type.value,
                     )
                 )
         candidates.sort(key=lambda item: (-item.score, item.chunk_id))
@@ -369,6 +392,12 @@ class SearchBackedRetrievalFactory:
                         special_chunk_type=latest.special_chunk_type,
                         parent_chunk_id=latest.parent_chunk_id,
                         parent_text=latest.parent_text,
+                        metadata=latest.metadata,
+                        file_name=latest.file_name,
+                        page_start=latest.page_start,
+                        page_end=latest.page_end,
+                        chunk_type=latest.chunk_type,
+                        source_type=latest.source_type,
                     )
         candidates.sort(key=lambda item: (-item.score, item.chunk_id))
         return candidates[:12]
@@ -434,6 +463,11 @@ class SearchBackedRetrievalFactory:
                         parent_chunk_id=latest.parent_chunk_id,
                         parent_text=latest.parent_text,
                         metadata=latest.metadata,
+                        file_name=latest.file_name,
+                        page_start=latest.page_start,
+                        page_end=latest.page_end,
+                        chunk_type=latest.chunk_type,
+                        source_type=latest.source_type,
                     )
         candidates.sort(key=lambda item: (-item.score, item.chunk_id))
         return candidates[:12]
@@ -464,10 +498,13 @@ class SearchBackedRetrievalFactory:
                 source_id=result.url,
                 text=result.snippet,
                 citation_anchor=result.title,
-                    score=result.score or 0.5,
-                    rank=index,
-                    source_kind="external",
-                )
+                score=result.score or 0.5,
+                rank=index,
+                source_kind="external",
+                file_name=result.title,
+                chunk_type="external",
+                source_type="web",
+            )
             for index, result in enumerate(results, start=1)
         ]
 
@@ -500,6 +537,16 @@ class SearchBackedRetrievalFactory:
             return [value]
         return []
 
+    @staticmethod
+    def _resolve_file_name(title: str, location: str | None) -> str | None:
+        if title.strip():
+            return title.strip()
+        if not location:
+            return None
+        if "://" in location:
+            return location
+        return Path(location).name or location
+
     def _build_candidates_from_chunk_ids(
         self,
         chunk_ids: list[str],
@@ -516,6 +563,7 @@ class SearchBackedRetrievalFactory:
             document = self._metadata_repo.get_document(chunk.doc_id)
             if document is None:
                 continue
+            source = self._metadata_repo.get_source(document.source_id)
             if allowed and not ({document.doc_id, document.source_id} & allowed):
                 continue
             segment = self._metadata_repo.get_segment(chunk.segment_id)
@@ -544,6 +592,19 @@ class SearchBackedRetrievalFactory:
                         )
                     ),
                     metadata=dict(chunk.metadata),
+                    file_name=self._resolve_file_name(document.title, None if source is None else source.location),
+                    page_start=(
+                        None
+                        if segment is None or segment.page_range is None
+                        else segment.page_range[0]
+                    ),
+                    page_end=(
+                        None
+                        if segment is None or segment.page_range is None
+                        else segment.page_range[1]
+                    ),
+                    chunk_type=chunk.special_chunk_type or chunk.chunk_role.value,
+                    source_type=None if source is None else source.source_type.value,
                 )
             )
         return candidates
@@ -592,6 +653,7 @@ class RuntimeEvidenceAdapter:
         telemetry_service: TelemetryService | None = None,
         cloud_providers: Sequence[object] = (),
         local_providers: Sequence[object] = (),
+        answer_generation_service: AnswerGenerationService | None = None,
     ) -> None:
         self._evidence_service = evidence_service
         self._artifact_service = artifact_service
@@ -600,6 +662,7 @@ class RuntimeEvidenceAdapter:
         self._telemetry_service = telemetry_service
         self._cloud_providers = tuple(cloud_providers)
         self._local_providers = tuple(local_providers)
+        self._answer_generation_service = answer_generation_service or AnswerGenerationService()
         self._last_hits: list[EvidenceItem] = []
         self._last_policy: ExecutionPolicy | None = None
         self._last_model_diagnostics = ModelDiagnostics()
@@ -627,9 +690,16 @@ class RuntimeEvidenceAdapter:
     def build_fast_response(self, query: str, hits: list[EvidenceItem]) -> QueryResponse:
         conflicts = self.detect_conflicts(hits)
         conclusion = self._extractive_conclusion(query, hits)
+        answer = self._answer_generation_service.generate(
+            query=query,
+            evidence_pack=hits,
+            runtime_mode=RuntimeMode.FAST,
+            grounded_candidate=conclusion,
+            trust_evidence_pack=True,
+        )
         suggestion = self._persist_suggestion(query, RuntimeMode.FAST, hits, conflicts)
-        return QueryResponse(
-            conclusion=conclusion,
+        return self._query_response_from_grounded_answer(
+            answer=answer,
             evidence=hits,
             differences_or_conflicts=conflicts,
             uncertainty="low" if len(hits) >= 2 else "medium",
@@ -638,6 +708,10 @@ class RuntimeEvidenceAdapter:
         )
 
     def claim_citation_aligned(self, response: QueryResponse) -> bool:
+        if response.insufficient_evidence_flag:
+            return True
+        if response.answer_text is not None or response.answer_sections or response.citations:
+            return response.groundedness_flag
         if not response.evidence:
             return response.conclusion.lower().startswith("insufficient evidence")
 
@@ -696,8 +770,16 @@ class RuntimeEvidenceAdapter:
         summary = self._build_synthesis_summary(query, evidence_matrix)
         grounded_candidate = self._extractive_conclusion(query, hits)
         conclusion = self._synthesize_conclusion(query, summary, location, grounded_candidate)
-        response = QueryResponse(
-            conclusion=conclusion,
+        answer = self._answer_generation_service.answer_from_model_output(
+            query=query,
+            evidence_pack=hits,
+            grounded_candidate=grounded_candidate,
+            model_output=conclusion,
+            enforce_grounding=False,
+            trust_evidence_pack=True,
+        )
+        response = self._query_response_from_grounded_answer(
+            answer=answer,
             evidence=hits,
             differences_or_conflicts=conflicts,
             uncertainty="medium" if conflicts else "low",
@@ -715,14 +797,25 @@ class RuntimeEvidenceAdapter:
                 query=query,
                 summary=summary,
                 grounded_candidate=grounded_candidate,
-                rejected_conclusion=conclusion,
+                rejected_conclusion=answer.answer_text,
             )
             if repaired_conclusion is not None:
-                repaired_response = response.model_copy(
-                    update={
-                        "conclusion": repaired_conclusion,
-                        "diagnostics": QueryDiagnostics(model=self._last_model_diagnostics),
-                    }
+                repaired_answer = self._answer_generation_service.answer_from_model_output(
+                    query=query,
+                    evidence_pack=hits,
+                    grounded_candidate=grounded_candidate,
+                    model_output=repaired_conclusion,
+                    enforce_grounding=False,
+                    trust_evidence_pack=True,
+                )
+                repaired_response = self._query_response_from_grounded_answer(
+                    answer=repaired_answer,
+                    evidence=hits,
+                    differences_or_conflicts=conflicts,
+                    uncertainty="medium" if conflicts else "low",
+                    preservation_suggestion=PreservationSuggestion(suggested=False),
+                    runtime_mode=RuntimeMode.DEEP,
+                    diagnostics=QueryDiagnostics(model=self._last_model_diagnostics),
                 )
                 if self.claim_citation_aligned(repaired_response):
                     suggestion = self._persist_suggestion(query, RuntimeMode.DEEP, hits, conflicts)
@@ -735,11 +828,21 @@ class RuntimeEvidenceAdapter:
                     "degraded_to_retrieval_only": False,
                 }
             )
-            fallback_response = response.model_copy(
-                update={
-                    "conclusion": grounded_candidate,
-                    "diagnostics": QueryDiagnostics(model=self._last_model_diagnostics),
-                }
+            fallback_answer = self._answer_generation_service.generate(
+                query=query,
+                evidence_pack=hits,
+                runtime_mode=RuntimeMode.DEEP,
+                grounded_candidate=grounded_candidate,
+                trust_evidence_pack=True,
+            )
+            fallback_response = self._query_response_from_grounded_answer(
+                answer=fallback_answer,
+                evidence=hits,
+                differences_or_conflicts=conflicts,
+                uncertainty="medium" if conflicts else "low",
+                preservation_suggestion=PreservationSuggestion(suggested=False),
+                runtime_mode=RuntimeMode.DEEP,
+                diagnostics=QueryDiagnostics(model=self._last_model_diagnostics),
             )
             suggestion = self._persist_suggestion(query, RuntimeMode.DEEP, hits, conflicts)
             return fallback_response.model_copy(update={"preservation_suggestion": suggestion})
@@ -752,16 +855,50 @@ class RuntimeEvidenceAdapter:
         return self._last_model_diagnostics
 
     def build_retrieval_only_response(self, query: str, hits: list[EvidenceItem]) -> QueryResponse:
-        del query
         diagnostics = self._fallback_model_diagnostics(hits)
-        return QueryResponse(
-            conclusion=hits[0].text if hits else "Insufficient evidence.",
+        answer = self._answer_generation_service.generate(
+            query=query,
+            evidence_pack=hits,
+            runtime_mode=RuntimeMode.DEEP,
+            grounded_candidate=hits[0].text if hits else None,
+            trust_evidence_pack=True,
+        )
+        return self._query_response_from_grounded_answer(
+            answer=answer,
             evidence=hits,
             differences_or_conflicts=self.detect_conflicts(hits),
             uncertainty="high",
             preservation_suggestion=PreservationSuggestion(suggested=False),
             runtime_mode=RuntimeMode.DEEP,
             diagnostics=QueryDiagnostics(model=diagnostics),
+        )
+
+    @staticmethod
+    def _query_response_from_grounded_answer(
+        *,
+        answer: object,
+        evidence: list[EvidenceItem],
+        differences_or_conflicts: list[str],
+        uncertainty: str,
+        preservation_suggestion: PreservationSuggestion,
+        runtime_mode: RuntimeMode,
+        diagnostics: QueryDiagnostics | None = None,
+    ) -> QueryResponse:
+        grounded = cast(GroundedAnswer, answer)
+        return QueryResponse(
+            conclusion=grounded.answer_text,
+            evidence=evidence,
+            differences_or_conflicts=differences_or_conflicts,
+            uncertainty=uncertainty,
+            preservation_suggestion=preservation_suggestion,
+            runtime_mode=runtime_mode,
+            diagnostics=diagnostics or QueryDiagnostics(),
+            answer_text=grounded.answer_text,
+            answer_sections=grounded.answer_sections,
+            citations=grounded.citations,
+            evidence_links=grounded.evidence_links,
+            groundedness_flag=grounded.groundedness_flag,
+            insufficient_evidence_flag=grounded.insufficient_evidence_flag,
         )
 
     def _bundle(self, hits: list[EvidenceItem]) -> EvidenceBundle:
