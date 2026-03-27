@@ -30,6 +30,7 @@ class RetrievalDiagnostics(BaseModel):
     graph_expanded: bool = False
     query_understanding: QueryUnderstanding | None = None
     parent_backfilled_count: int = 0
+    collapsed_candidate_count: int = 0
 
 
 class ModelDiagnostics(BaseModel):

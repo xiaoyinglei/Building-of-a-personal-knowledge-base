@@ -74,6 +74,7 @@ class _FusedCandidateView:
     special_chunk_type: str | None = None
     parent_chunk_id: str | None = None
     parent_text: str | None = None
+    metadata: dict[str, str] | None = None
 
 
 class RetrievalService:
@@ -84,6 +85,7 @@ class RetrievalService:
         vector_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
         section_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
         special_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
+        metadata_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
         graph_expander: Callable[[str, list[str], list[CandidateLike]], Sequence[CandidateLike]] | None = None,
         web_retriever: Callable[[str, list[str]], Sequence[CandidateLike]] | None = None,
         reranker: Reranker | None = None,
@@ -99,6 +101,7 @@ class RetrievalService:
         self._vector_retriever = vector_retriever or (lambda _query, _scope: [])
         self._section_retriever = section_retriever or (lambda _query, _scope: [])
         self._special_retriever = special_retriever or (lambda _query, _scope: [])
+        self._metadata_retriever = metadata_retriever or (lambda _query, _scope: [])
         self._graph_expander = graph_expander or (lambda _query, _scope, _evidence: [])
         self._web_retriever = web_retriever or (lambda _query, _scope: [])
         self._reranker = reranker
@@ -139,6 +142,7 @@ class RetrievalService:
                 "full_text": 1.0,
                 "vector": 0.95,
                 "section": 1.3,
+                "metadata": 1.2,
                 "web": 0.6,
             }.get(branch_name, 1.0)
         if looks_definition_query(query):
@@ -146,6 +150,7 @@ class RetrievalService:
                 "full_text": 0.9,
                 "vector": 1.35,
                 "section": 0.8,
+                "metadata": 0.9,
                 "web": 0.6,
             }.get(branch_name, 1.0)
         if looks_operation_query(query):
@@ -153,12 +158,14 @@ class RetrievalService:
                 "full_text": 1.1,
                 "vector": 1.0,
                 "section": 0.9,
+                "metadata": 0.9,
                 "web": 0.6,
             }.get(branch_name, 1.0)
         return {
             "full_text": 1.0,
             "vector": 1.1,
             "section": 0.9,
+            "metadata": 1.0,
             "web": 0.6,
         }.get(branch_name, 1.0)
 
@@ -249,6 +256,7 @@ class RetrievalService:
                 special_chunk_type=getattr(item.candidate, "special_chunk_type", None),
                 parent_chunk_id=getattr(item.candidate, "parent_chunk_id", None),
                 parent_text=getattr(item.candidate, "parent_text", None),
+                metadata=getattr(item.candidate, "metadata", None),
             )
             for item in ordered
         ]
@@ -277,12 +285,35 @@ class RetrievalService:
                         special_chunk_type=getattr(candidate, "special_chunk_type", None),
                         parent_chunk_id=parent_chunk_id,
                         parent_text=parent_text,
+                        metadata=getattr(candidate, "metadata", None),
                     )
                 )
                 backfilled += 1
                 continue
             enriched.append(candidate)
         return enriched, backfilled
+
+    @staticmethod
+    def _collapse_redundant_candidates(candidates: Sequence[CandidateLike]) -> tuple[list[CandidateLike], int]:
+        collapsed = 0
+        ordered: list[CandidateLike] = []
+        seen_keys: set[tuple[str, str, str]] = set()
+        for candidate in candidates:
+            if candidate.source_kind != "internal":
+                ordered.append(candidate)
+                continue
+            if getattr(candidate, "special_chunk_type", None):
+                key = ("chunk", candidate.doc_id, candidate.chunk_id)
+            elif parent_chunk_id := getattr(candidate, "parent_chunk_id", None):
+                key = ("parent", candidate.doc_id, parent_chunk_id)
+            else:
+                key = ("chunk", candidate.doc_id, candidate.chunk_id)
+            if key in seen_keys:
+                collapsed += 1
+                continue
+            seen_keys.add(key)
+            ordered.append(candidate)
+        return ordered, collapsed
 
     def retrieve(
         self,
@@ -343,6 +374,15 @@ class RetrievalService:
                 runtime_mode=decision.runtime_mode,
             )
             self._record_branch_usage("special", special_candidates, decision.runtime_mode.value)
+        metadata_candidates: list[CandidateLike] = []
+        if query_understanding.needs_metadata:
+            metadata_candidates = self._evidence_service.filter_candidates(
+                self._metadata_retriever(query, scope),
+                source_scope=scope,
+                access_policy=access_policy,
+                runtime_mode=decision.runtime_mode,
+            )
+            self._record_branch_usage("metadata", metadata_candidates, decision.runtime_mode.value)
         if full_text_candidates:
             internal_branches.append(("full_text", full_text_candidates))
         if vector_candidates:
@@ -351,6 +391,8 @@ class RetrievalService:
             internal_branches.append(("section", section_candidates))
         if special_candidates:
             internal_branches.append(("special", special_candidates))
+        if metadata_candidates:
+            internal_branches.append(("metadata", metadata_candidates))
 
         fused_candidates = self._rrf_fuse(query, internal_branches)
         candidate_count = sum(len(branch) for _, branch in internal_branches)
@@ -365,6 +407,7 @@ class RetrievalService:
             raise ValueError("reranker is required for retrieval")
         reranked_candidates = list(self._reranker(query, fused_candidates))
         reranked_candidates, parent_backfilled_count = self._apply_parent_backfill(reranked_candidates)
+        reranked_candidates, collapsed_candidate_count = self._collapse_redundant_candidates(reranked_candidates)
         if self._telemetry_service is not None:
             fused_ids = [candidate.chunk_id for candidate in fused_candidates]
             reranked_ids = [candidate.chunk_id for candidate in reranked_candidates]
@@ -408,6 +451,9 @@ class RetrievalService:
                     )
                 reranked_candidates = list(self._reranker(query, fused_candidates))
                 reranked_candidates, parent_backfilled_count = self._apply_parent_backfill(reranked_candidates)
+                reranked_candidates, collapsed_candidate_count = self._collapse_redundant_candidates(
+                    reranked_candidates
+                )
                 if self._telemetry_service is not None:
                     fused_ids = [candidate.chunk_id for candidate in fused_candidates]
                     reranked_ids = [candidate.chunk_id for candidate in reranked_candidates]
@@ -476,6 +522,7 @@ class RetrievalService:
                     "vector": len(vector_candidates),
                     "section": len(section_candidates),
                     **({"special": len(special_candidates)} if special_candidates else {}),
+                    **({"metadata": len(metadata_candidates)} if metadata_candidates else {}),
                     **({"web": len(web_candidates)} if web_candidates else {}),
                 },
                 reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
@@ -490,6 +537,7 @@ class RetrievalService:
                 graph_expanded=graph_expanded,
                 query_understanding=query_understanding,
                 parent_backfilled_count=parent_backfilled_count,
+                collapsed_candidate_count=collapsed_candidate_count,
             ),
             preservation_suggestion=preservation_suggestion,
         )

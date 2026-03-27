@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
+
 from pkp.types.query import QueryUnderstanding
 from pkp.types.text import focus_terms
 
 
 class QueryUnderstandingService:
+    _PAGE_PATTERN = re.compile(r"(?:第\s*(\d+)\s*页|page\s*(\d+))", re.IGNORECASE)
     _SPECIAL_SIGNAL_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("table", ("表格", "表", "table", "指标", "数值", "统计表")),
         ("figure", ("图片", "图", "figure", "截图", "流程图")),
@@ -27,6 +30,12 @@ class QueryUnderstandingService:
         "module",
         "architecture",
     )
+    _SOURCE_TYPE_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("pdf", ("pdf", "pdf文档", "扫描件")),
+        ("markdown", ("markdown", "md", "markdown文档")),
+        ("docx", ("docx", "word", "word文档", "文档")),
+        ("image", ("图片", "图像", "image", "截图")),
+    )
 
     def analyze(self, query: str) -> QueryUnderstanding:
         normalized = query.strip()
@@ -38,17 +47,38 @@ class QueryUnderstandingService:
         ]
         structure_hit = any(term in normalized or term in lowered for term in self._STRUCTURE_TERMS)
         preferred_sections = self._preferred_section_terms(normalized)
+        page_numbers = self._page_numbers(normalized)
+        source_types = [
+            source_type
+            for source_type, keywords in self._SOURCE_TYPE_TERMS
+            if any(keyword in lowered for keyword in keywords)
+        ]
+        metadata_filters: dict[str, list[str] | str | bool] = {}
+        if page_numbers:
+            metadata_filters["page_numbers"] = page_numbers
+        if source_types:
+            metadata_filters["source_types"] = source_types
+        if special_targets:
+            metadata_filters["special_targets"] = special_targets
+        if preferred_sections:
+            metadata_filters["preferred_section_terms"] = preferred_sections
+        needs_metadata = bool(page_numbers or source_types)
 
         confidence = 0.35
         if special_targets:
             confidence += 0.25
         if structure_hit or preferred_sections:
             confidence += 0.2
+        if needs_metadata:
+            confidence += 0.15
         if len(normalized) >= 8:
             confidence += 0.1
         confidence = min(confidence, 0.95)
 
-        if special_targets:
+        if needs_metadata:
+            intent = "localized_lookup"
+            query_type = "page_lookup" if page_numbers else "metadata_lookup"
+        elif special_targets:
             intent = "special_lookup"
             query_type = special_targets[0]
         elif structure_hit or preferred_sections:
@@ -65,10 +95,12 @@ class QueryUnderstandingService:
             needs_sparse=True,
             needs_special=bool(special_targets),
             needs_structure=structure_hit or bool(preferred_sections),
+            needs_metadata=needs_metadata,
             structure_constraints={
                 "preferred_section_terms": preferred_sections,
                 "prefer_heading_match": structure_hit or bool(preferred_sections),
             },
+            metadata_filters=metadata_filters,
             special_targets=special_targets,
             confidence=confidence,
         )
@@ -99,3 +131,12 @@ class QueryUnderstandingService:
             seen.add(term)
             ordered.append(term)
         return ordered[:3]
+
+    @classmethod
+    def _page_numbers(cls, query: str) -> list[str]:
+        numbers: list[str] = []
+        for direct, english in cls._PAGE_PATTERN.findall(query):
+            value = direct or english
+            if value and value not in numbers:
+                numbers.append(value)
+        return numbers

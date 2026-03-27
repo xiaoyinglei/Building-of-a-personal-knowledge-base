@@ -14,6 +14,7 @@ from pkp.runtime.provider_metadata import provider_model, provider_name
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService
 from pkp.service.ingest_service import IngestService
+from pkp.service.query_understanding_service import QueryUnderstandingService
 from pkp.service.retrieval_service import RetrievalResult, RetrievalService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.types import (
@@ -64,6 +65,7 @@ class RetrievedCandidate:
     special_chunk_type: str | None = None
     parent_chunk_id: str | None = None
     parent_text: str | None = None
+    metadata: dict[str, str] | None = None
 
 
 class VectorSearchRepoProtocol(Protocol):
@@ -227,6 +229,7 @@ class MultiProviderBackedVectorRetriever:
                 special_chunk_type=candidate.special_chunk_type,
                 parent_chunk_id=candidate.parent_chunk_id,
                 parent_text=candidate.parent_text,
+                metadata=candidate.metadata,
             )
             for index, candidate in enumerate(candidates, start=1)
         ]
@@ -277,6 +280,7 @@ class SearchBackedRetrievalFactory:
         self._metadata_repo = metadata_repo
         self._fts_repo = fts_repo
         self._graph_repo = graph_repo
+        self._query_understanding = QueryUnderstandingService()
 
     def full_text_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
         return self._build_candidates_from_chunk_ids(
@@ -365,6 +369,71 @@ class SearchBackedRetrievalFactory:
         candidates.sort(key=lambda item: (-item.score, item.chunk_id))
         return candidates[:12]
 
+    def metadata_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
+        understanding = self._query_understanding.analyze(query)
+        page_numbers = set(self._as_str_list(understanding.metadata_filters.get("page_numbers")))
+        source_types = set(self._as_str_list(understanding.metadata_filters.get("source_types")))
+        preferred_sections = set(
+            self._as_str_list(understanding.structure_constraints.get("preferred_section_terms"))
+        )
+        if not (page_numbers or source_types or preferred_sections or understanding.special_targets):
+            return []
+
+        candidates: list[RetrievedCandidate] = []
+        for document in self._iter_documents(source_scope):
+            source = self._metadata_repo.get_source(document.source_id)
+            source_type = "" if source is None else source.source_type.value
+            for chunk in self._metadata_repo.list_chunks(document.doc_id):
+                if chunk.chunk_role is ChunkRole.PARENT:
+                    continue
+                segment = self._metadata_repo.get_segment(chunk.segment_id)
+                section_text = "" if segment is None else " ".join(segment.toc_path)
+                score = 0.0
+                if source_types and source_type in source_types:
+                    score += 3.0
+                if preferred_sections and any(term in section_text for term in preferred_sections):
+                    score += 3.5
+                if page_numbers:
+                    page_no = chunk.metadata.get("page_no", "")
+                    if page_no in page_numbers:
+                        score += 4.0
+                    elif segment is not None and segment.page_range is not None:
+                        start, end = segment.page_range
+                        if any(start <= int(page) <= end for page in page_numbers):
+                            score += 2.5
+                if understanding.special_targets and chunk.special_chunk_type in understanding.special_targets:
+                    score += 2.0
+                if score <= 0:
+                    continue
+                candidates.extend(
+                    self._build_candidates_from_chunk_ids(
+                        [chunk.chunk_id],
+                        source_kind="internal",
+                        scope=source_scope,
+                    )
+                )
+                if candidates:
+                    latest = candidates[-1]
+                    candidates[-1] = RetrievedCandidate(
+                        chunk_id=latest.chunk_id,
+                        doc_id=latest.doc_id,
+                        source_id=latest.source_id,
+                        text=latest.text,
+                        citation_anchor=latest.citation_anchor,
+                        score=score,
+                        rank=1,
+                        source_kind=latest.source_kind,
+                        section_path=latest.section_path,
+                        effective_access_policy=latest.effective_access_policy,
+                        chunk_role=latest.chunk_role,
+                        special_chunk_type=latest.special_chunk_type,
+                        parent_chunk_id=latest.parent_chunk_id,
+                        parent_text=latest.parent_text,
+                        metadata=latest.metadata,
+                    )
+        candidates.sort(key=lambda item: (-item.score, item.chunk_id))
+        return candidates[:12]
+
     def graph_expander(
         self,
         query: str,
@@ -419,6 +488,14 @@ class SearchBackedRetrievalFactory:
         allowed = set(source_scope)
         return [document for document in documents if {document.doc_id, document.source_id} & allowed]
 
+    @staticmethod
+    def _as_str_list(value: list[str] | str | bool | None) -> list[str]:
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, str)]
+        if isinstance(value, str):
+            return [value]
+        return []
+
     def _build_candidates_from_chunk_ids(
         self,
         chunk_ids: list[str],
@@ -462,6 +539,7 @@ class SearchBackedRetrievalFactory:
                             else parent_chunk.text
                         )
                     ),
+                    metadata=dict(chunk.metadata),
                 )
             )
         return candidates
