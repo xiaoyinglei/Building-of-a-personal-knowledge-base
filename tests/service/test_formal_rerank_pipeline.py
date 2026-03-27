@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
+from pytest import MonkeyPatch
+
 from pkp.rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
 from pkp.rerank.evaluation import RerankEvaluator
 from pkp.rerank.models import RerankCandidate, RerankEvaluationCase, RerankRequest
@@ -308,7 +313,11 @@ def test_training_sample_exporter_outputs_pairwise_samples_with_hard_negatives()
     assert {sample.hard_negative_candidates[0].chunk_id for sample in samples} == {"chunk-general", "chunk-cli"}
 
 
-def test_provider_backed_cross_encoder_uses_provider_ranking_as_scores() -> None:
+def test_provider_backed_cross_encoder_uses_provider_ranking_as_scores(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "pkp.rerank.cross_encoder.ProviderBackedCrossEncoder._try_flag_embedding_backend",
+        lambda self: None,
+    )
     encoder = ProviderBackedCrossEncoder(provider=FakeProvider(), config=CrossEncoderConfig(batch_size=2))
 
     scores = encoder.score(
@@ -334,3 +343,57 @@ def test_provider_backed_cross_encoder_uses_provider_ranking_as_scores() -> None
 
     assert encoder.backend_name == "provider_rerank"
     assert scores[1] > scores[0]
+
+
+def test_provider_backed_cross_encoder_prefers_snapshot_resolved_model_path(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_root = tmp_path / "models--BAAI--bge-reranker-v2-m3"
+    snapshot = model_root / "snapshots" / "abc123"
+    snapshot.mkdir(parents=True)
+    (model_root / "refs").mkdir(parents=True)
+    (model_root / "refs" / "main").write_text("abc123\n", encoding="utf-8")
+    (snapshot / "config.json").write_text("{}", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class FakeFlagReranker:
+        def __init__(self, model_name_or_path: str, *, use_fp16: bool) -> None:
+            captured["model_name_or_path"] = model_name_or_path
+            captured["use_fp16"] = use_fp16
+
+        def compute_score(self, pairs: list[list[str]], *, batch_size: int, max_length: int) -> list[float]:
+            captured["pairs"] = pairs
+            captured["batch_size"] = batch_size
+            captured["max_length"] = max_length
+            return [0.88 for _ in pairs]
+
+    monkeypatch.setattr(
+        "pkp.rerank.cross_encoder.importlib.import_module",
+        lambda _name: SimpleNamespace(FlagReranker=FakeFlagReranker),
+    )
+    encoder = ProviderBackedCrossEncoder(
+        config=CrossEncoderConfig(
+            model_name="BAAI/bge-reranker-v2-m3",
+            model_path=str(model_root),
+            batch_size=2,
+            max_length=256,
+        )
+    )
+
+    scores = encoder.score(
+        "本地 BGE rerank 是否可用",
+        [
+            RerankCandidate(
+                chunk_id="chunk-a",
+                doc_id="doc-a",
+                text="本地 BGE rerank 已经走通。",
+                chunk_type="child",
+                unified_rank=1,
+            )
+        ],
+    )
+
+    assert scores == [0.88]
+    assert encoder.backend_name == "bge_local"
+    assert captured["model_name_or_path"] == str(snapshot)

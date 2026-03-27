@@ -38,26 +38,33 @@ cp .env.example .env
 ## Ollama 接入
 
 1. 确保本地 Ollama 服务可用
-2. 准备一个聊天模型，例如 `llama3.1:8b`
+2. 准备一个聊天模型，例如 `qwen3.5:9b`
 3. 在 `.env` 中配置：
 
 ```bash
 PKP_OLLAMA__BASE_URL=http://localhost:11434
-PKP_OLLAMA__CHAT_MODEL=llama3.1:8b
-PKP_OLLAMA__EMBEDDING_MODEL=nomic-embed-text
+PKP_OLLAMA__CHAT_MODEL=qwen3.5:9b
+PKP_OLLAMA__EMBEDDING_MODEL=qwen3-embedding:8b
+PKP_LOCAL_BGE__ENABLED=true
+PKP_LOCAL_BGE__EMBEDDING_MODEL=BAAI/bge-m3
+PKP_LOCAL_BGE__EMBEDDING_MODEL_PATH=~/.cache/huggingface/hub/models--BAAI--bge-m3
+PKP_LOCAL_BGE__RERANK_MODEL=BAAI/bge-reranker-v2-m3
+PKP_LOCAL_BGE__RERANK_MODEL_PATH=~/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3
 PKP_RUNTIME__EXECUTION_LOCATION_PREFERENCE=local_only
 ```
 
 如果你本地已经装好了 Ollama，常见准备命令是：
 
 ```bash
-ollama pull llama3.1:8b
-ollama pull nomic-embed-text
+ollama pull qwen3.5:9b
+ollama pull qwen3-embedding:8b
 ```
 
 说明：
 
-- 配好后，Deep Path 和需要 synthesis 的回答会优先走本地模型
+- 配好后，Deep Path 和需要 synthesis 的回答会优先走本地 `Qwen`
+- embedding 和 rerank 会优先走本地 HuggingFace/FlagEmbedding 的 `bge-m3` 与 `bge-reranker-v2-m3`
+- `PKP_OLLAMA__EMBEDDING_MODEL` 会保留为可选回退，不再主导向量索引
 - 如果你只想本地运行，建议把 `PKP_RUNTIME__EXECUTION_LOCATION_PREFERENCE` 设成 `local_only`
 
 ## 云端大模型接入

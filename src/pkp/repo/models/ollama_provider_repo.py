@@ -13,8 +13,8 @@ class OllamaProviderRepo(ModelProviderRepo):
         self,
         *,
         base_url: str = "http://localhost:11434",
-        chat_model: str = "llama3.1:8b",
-        embedding_model: str = "nomic-embed-text",
+        chat_model: str = "qwen3.5:9b",
+        embedding_model: str | None = "qwen3-embedding:8b",
         embedding_fallback: FallbackEmbeddingRepo | None = None,
         http_client: httpx.Client | None = None,
         timeout_seconds: float = 120.0,
@@ -27,6 +27,8 @@ class OllamaProviderRepo(ModelProviderRepo):
         self._timeout_seconds = timeout_seconds
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if not self.is_embed_configured or not self._embedding_model:
+            raise RuntimeError("Ollama embedding model is not configured")
         try:
             response = self._client().post(
                 f"{self._base_url}/api/embed",
@@ -69,7 +71,7 @@ class OllamaProviderRepo(ModelProviderRepo):
         return self._chat_model
 
     @property
-    def embedding_model_name(self) -> str:
+    def embedding_model_name(self) -> str | None:
         return self._embedding_model
 
     @property
