@@ -23,6 +23,7 @@ class FakeCandidate:
     special_chunk_type: str | None = None
     parent_chunk_id: str | None = None
     parent_text: str | None = None
+    metadata: dict[str, str] | None = None
 
 
 def _build_service(
@@ -31,6 +32,7 @@ def _build_service(
     vector_candidates: list[FakeCandidate] | None = None,
     section_candidates: list[FakeCandidate] | None = None,
     special_candidates: list[FakeCandidate] | None = None,
+    metadata_candidates: list[FakeCandidate] | None = None,
     graph_candidates: list[FakeCandidate] | None = None,
     web_candidates: list[FakeCandidate] | None = None,
 ) -> tuple[RetrievalService, dict[str, object]]:
@@ -40,6 +42,7 @@ def _build_service(
         "web_calls": 0,
         "special_calls": 0,
         "structure_calls": 0,
+        "metadata_calls": 0,
     }
 
     def full_text_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
@@ -64,6 +67,12 @@ def _build_service(
         calls["special_calls"] = cast(int, calls["special_calls"]) + 1
         return list(special_candidates or [])
 
+    def metadata_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+        calls["metadata_query"] = query
+        calls["metadata_scope"] = list(source_scope)
+        calls["metadata_calls"] = cast(int, calls["metadata_calls"]) + 1
+        return list(metadata_candidates or [])
+
     def graph_expander(
         query: str, source_scope: list[str], non_graph_evidence: list[FakeCandidate]
     ) -> list[FakeCandidate]:
@@ -86,6 +95,7 @@ def _build_service(
         vector_retriever=cast(Any, vector_retriever),
         section_retriever=cast(Any, section_retriever),
         special_retriever=cast(Any, special_retriever),
+        metadata_retriever=cast(Any, metadata_retriever),
         graph_expander=cast(Any, graph_expander),
         web_retriever=cast(Any, web_retriever),
         reranker=cast(Any, reranker),
@@ -360,3 +370,73 @@ def test_retrieval_service_uses_structure_constraints_for_heading_queries() -> N
     assert calls["structure_calls"] == 1
     assert result.diagnostics.query_understanding is not None
     assert result.diagnostics.query_understanding.structure_constraints["preferred_section_terms"] == ["系统架构"]
+
+
+def test_retrieval_service_uses_metadata_branch_for_page_constrained_queries() -> None:
+    service, calls = _build_service(
+        metadata_candidates=[
+            FakeCandidate(
+                "chunk-page",
+                "doc-a",
+                "第二页记录了主要风险与缓解计划。",
+                "#page-2",
+                0.9,
+                1,
+                metadata={"page_no": "2"},
+            ),
+        ],
+    )
+
+    result = service.retrieve(
+        "第2页讲了什么风险？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+    )
+
+    assert calls["metadata_calls"] == 1
+    assert result.diagnostics.query_understanding is not None
+    assert result.diagnostics.query_understanding.metadata_filters["page_numbers"] == ["2"]
+    assert result.diagnostics.branch_hits["metadata"] == 1
+
+
+def test_retrieval_service_collapses_duplicate_child_hits_from_same_parent() -> None:
+    service, _calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate(
+                "chunk-a1",
+                "doc-a",
+                "这是父块里的第一小段。",
+                "#a1",
+                0.95,
+                1,
+                parent_chunk_id="parent-a",
+            ),
+            FakeCandidate(
+                "chunk-a2",
+                "doc-a",
+                "这是父块里的第二小段。",
+                "#a2",
+                0.92,
+                2,
+                parent_chunk_id="parent-a",
+            ),
+            FakeCandidate(
+                "chunk-b1",
+                "doc-a",
+                "这是另一个父块里的内容。",
+                "#b1",
+                0.88,
+                3,
+                parent_chunk_id="parent-b",
+            ),
+        ],
+    )
+
+    result = service.retrieve(
+        "这个文档里提到了哪些内容？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+    )
+
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-a1", "chunk-b1"]
+    assert result.diagnostics.collapsed_candidate_count == 1

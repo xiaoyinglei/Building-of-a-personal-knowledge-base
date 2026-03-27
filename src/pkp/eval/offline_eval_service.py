@@ -181,6 +181,10 @@ class OfflineEvalService:
             Callable[[str, list[str]], Sequence[CandidateLike]],
             factory.special_retriever,
         )
+        metadata_retriever = cast(
+            Callable[[str, list[str]], Sequence[CandidateLike]],
+            factory.metadata_retriever,
+        )
         graph_expander = cast(
             Callable[[str, list[str], list[CandidateLike]], Sequence[CandidateLike]],
             factory.graph_expander,
@@ -191,6 +195,7 @@ class OfflineEvalService:
             vector_retriever=instrumented_vector_retriever,
             section_retriever=section_retriever,
             special_retriever=special_retriever,
+            metadata_retriever=metadata_retriever,
             graph_expander=graph_expander,
             web_retriever=cast(
                 Callable[[str, list[str]], Sequence[CandidateLike]],

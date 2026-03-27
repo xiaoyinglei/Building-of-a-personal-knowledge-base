@@ -46,6 +46,8 @@ class QueryUnderstanding(BaseModel):
     needs_sparse: bool = True
     needs_special: bool = False
     needs_structure: bool = False
+    needs_metadata: bool = False
     structure_constraints: dict[str, list[str] | str | bool] = Field(default_factory=dict)
+    metadata_filters: dict[str, list[str] | str | bool] = Field(default_factory=dict)
     special_targets: list[str] = Field(default_factory=list)
     confidence: float = 0.0
