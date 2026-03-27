@@ -1,0 +1,35 @@
+{
+  "questions": [
+    {
+      "question_id": "monthly_rebate_issues",
+      "question": "月返抽查专项工作中我遇到了哪些问题？",
+      "category": "parent_backfill",
+      "expected_terms": [
+        "所有提报数据均由商务提供",
+        "任务量都比较重",
+        "抽查工作进展缓慢"
+      ],
+      "min_expected_terms": 2,
+      "expected_chunk_role": "child",
+      "expect_parent_backfill": true,
+      "top_k": 5,
+      "notes": "问题点分散在两个子块里，适合检查 child 命中后是否需要 parent 回填。"
+    },
+    {
+      "question_id": "january_rebate_completed_work",
+      "question": "龙牌集团月返抽查专项工作中，一月我完成了哪些工作？",
+      "category": "parent_backfill",
+      "expected_terms": [
+        "华东、云贵、西南区域8月返利全量核查工作",
+        "检查返利促销政策7条",
+        "核查返利金额1472.6万元",
+        "完成北方、南方、华东、云贵、东北、闽赣地区的单月返利"
+      ],
+      "min_expected_terms": 2,
+      "expected_chunk_role": "child",
+      "expect_parent_backfill": true,
+      "top_k": 5,
+      "notes": "完成项横跨多个句子，适合检查检索命中与 parent 补全是否有效。"
+    }
+  ]
+}

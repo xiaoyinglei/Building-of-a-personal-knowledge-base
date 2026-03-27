@@ -139,6 +139,9 @@ def test_image_pipeline_produces_special_chunks_and_parent_child_links(tmp_path:
         "image_summary",
         "ocr_region",
     }
+    assert len({chunk.chunk_id for chunk in result.processing.special_chunks}) == len(
+        result.processing.special_chunks
+    )
 
 
 def test_pipeline_reports_clear_error_for_unsupported_file_types(tmp_path: Path) -> None:

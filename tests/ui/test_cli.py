@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -18,6 +19,7 @@ from pkp.types import (
     RetrievalDiagnostics,
     RuntimeMode,
 )
+from pkp.ui import cli
 from pkp.ui.cli import app, set_container_factory
 
 runner = CliRunner()
@@ -435,6 +437,94 @@ def test_cli_exposes_process_file_entry() -> None:
     ]
 
 
+def test_cli_exposes_offline_retrieval_evaluation_entry(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_builtin_offline_eval(output_dir: Path, *, top_k: int) -> dict[str, object]:
+        captured["output_dir"] = output_dir
+        captured["top_k"] = top_k
+        return {
+            "output_dir": str(output_dir),
+            "report_json_path": str(output_dir / "report.json"),
+            "report_markdown_path": str(output_dir / "report.md"),
+            "report": {
+                "summary": {
+                    "total_documents": 4,
+                    "total_questions": 6,
+                    "runtime_hit_rate": 1.0,
+                }
+            },
+        }
+
+    monkeypatch.setattr("pkp.ui.cli.run_builtin_offline_eval", fake_run_builtin_offline_eval)
+
+    result = runner.invoke(
+        app,
+        ["evaluate-retrieval", "--output-dir", str(tmp_path / "offline-eval"), "--top-k", "7"],
+    )
+
+    assert result.exit_code == 0
+    assert '"runtime_hit_rate": 1.0' in result.stdout
+    assert captured == {
+        "output_dir": tmp_path / "offline-eval",
+        "top_k": 7,
+    }
+
+
+def test_cli_exposes_single_file_evaluation_entry(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_file_offline_eval(
+        *,
+        file_path: Path,
+        questions_path: Path,
+        output_dir: Path,
+        top_k: int,
+    ) -> dict[str, object]:
+        captured["file_path"] = file_path
+        captured["questions_path"] = questions_path
+        captured["output_dir"] = output_dir
+        captured["top_k"] = top_k
+        return {
+            "output_dir": str(output_dir),
+            "report_json_path": str(output_dir / "report.json"),
+            "report_markdown_path": str(output_dir / "report.md"),
+            "report": {
+                "summary": {
+                    "total_documents": 1,
+                    "total_questions": 2,
+                    "runtime_hit_rate": 1.0,
+                }
+            },
+        }
+
+    monkeypatch.setattr("pkp.ui.cli.run_file_offline_eval", fake_run_file_offline_eval)
+
+    result = runner.invoke(
+        app,
+        [
+            "evaluate-file",
+            "--location",
+            str(tmp_path / "note.md"),
+            "--questions-file",
+            str(tmp_path / "questions.json"),
+            "--output-dir",
+            str(tmp_path / "single-file-eval"),
+            "--top-k",
+            "4",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"total_documents": 1' in result.stdout
+    assert captured == {
+        "file_path": tmp_path / "note.md",
+        "questions_path": tmp_path / "questions.json",
+        "output_dir": tmp_path / "single-file-eval",
+        "top_k": 4,
+    }
+
+
 def test_cli_query_transmits_session_id_into_deep_runtime() -> None:
     deep_runtime = FakeQueryRuntime(mode=RuntimeMode.DEEP)
     set_container_factory(
@@ -483,3 +573,17 @@ def test_cli_show_session_returns_session_snapshot() -> None:
     assert result.exit_code == 0
     assert '"sub_questions": ["What changed?", "Why?"]' in result.stdout
     assert '"evidence_matrix": [{"claim": "A", "sources": ["doc-1"]}]' in result.stdout
+
+
+def test_cli_main_delegates_to_typer_app(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeApp:
+        def __call__(self) -> None:
+            calls.append("called")
+
+    monkeypatch.setattr(cli, "app", FakeApp())
+
+    cli.main()
+
+    assert calls == ["called"]

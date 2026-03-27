@@ -5,6 +5,7 @@ from collections.abc import Iterable
 
 _ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 _CJK_RUN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;.\n])")
 _COMMAND_FLAG_RE = re.compile(r"(^|\s)-{1,2}[a-zA-Z][a-zA-Z-]*")
 _COMMAND_MARKERS = ("uv run", "curl -x", "--query", "--mode", "pkp_", "```", "ollama ", "python -m")
@@ -122,6 +123,15 @@ def split_sentences(text: str) -> tuple[str, ...]:
         return ()
     chunks = [part.strip() for part in _SENTENCE_SPLIT_RE.split(normalized) if part.strip()]
     return tuple(chunks or [normalized])
+
+
+def text_unit_count(text: str) -> int:
+    normalized = text.strip()
+    if not normalized:
+        return 0
+    ascii_count = len(_ASCII_TOKEN_RE.findall(normalized))
+    cjk_count = len(_CJK_CHAR_RE.findall(normalized))
+    return ascii_count + cjk_count
 
 
 def keyword_overlap(query_terms: Iterable[str], text: str) -> int:

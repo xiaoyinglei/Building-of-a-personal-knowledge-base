@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from pkp.types.query import QueryUnderstanding
+
 
 class ProviderAttempt(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -26,6 +28,8 @@ class RetrievalDiagnostics(BaseModel):
     fusion_input_count: int = 0
     fused_count: int = 0
     graph_expanded: bool = False
+    query_understanding: QueryUnderstanding | None = None
+    parent_backfilled_count: int = 0
 
 
 class ModelDiagnostics(BaseModel):

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pkp.config.policies import RoutingThresholds
 from pkp.types.access import AccessPolicy, RuntimeMode
+from pkp.types.content import ChunkRole
 from pkp.types.envelope import EvidenceItem
 from pkp.types.query import ComplexityLevel, TaskType
 
@@ -22,6 +23,9 @@ class CandidateLike(Protocol):
     source_kind: str
     source_id: str | None
     section_path: Sequence[str]
+    chunk_role: ChunkRole | None
+    special_chunk_type: str | None
+    parent_chunk_id: str | None
 
 
 class EvidenceBundle(BaseModel):
@@ -107,6 +111,9 @@ class EvidenceService:
             text=candidate.text,
             score=float(candidate.score),
             evidence_kind=evidence_kind,
+            chunk_role=getattr(candidate, "chunk_role", None),
+            special_chunk_type=getattr(candidate, "special_chunk_type", None),
+            parent_chunk_id=getattr(candidate, "parent_chunk_id", None),
         )
 
     def assemble_bundle(self, candidates: Sequence[CandidateLike]) -> EvidenceBundle:

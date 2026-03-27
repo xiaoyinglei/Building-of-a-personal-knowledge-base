@@ -227,6 +227,10 @@ def _build_runtime_container(
         Callable[[str, list[str]], Sequence[CandidateLike]],
         retrieval_factory.section_retriever,
     )
+    special_retriever = cast(
+        Callable[[str, list[str]], Sequence[CandidateLike]],
+        retrieval_factory.special_retriever,
+    )
     graph_expander = cast(
         Callable[[str, list[str], list[CandidateLike]], Sequence[CandidateLike]],
         retrieval_factory.graph_expander,
@@ -243,6 +247,7 @@ def _build_runtime_container(
         full_text_retriever=standard_retriever,
         vector_retriever=vector_retriever,
         section_retriever=section_retriever,
+        special_retriever=special_retriever,
         graph_expander=graph_expander,
         web_retriever=web_retriever,
         reranker=cast(Reranker, instrumented_reranker),
