@@ -9,7 +9,7 @@ import httpx
 from pkp.config import AppSettings
 from pkp.config.policies import RoutingThresholds
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import EmbeddingProviderBinding, OcrResult, VectorRepo
+from pkp.repo.interfaces import EmbeddingProviderBinding, OcrResult, OcrVisionRepo, VectorRepo
 from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
 from pkp.repo.models.local_bge_provider_repo import LocalBgeProviderRepo
 from pkp.repo.models.ollama_provider_repo import OllamaProviderRepo
@@ -26,7 +26,7 @@ from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
 from pkp.repo.storage.sqlite_memory_repo import SQLiteMemoryRepo
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
-from pkp.repo.vision.ocr_vision_repo import DeterministicOcrVisionRepo
+from pkp.repo.vision.ocr_vision_repo import DeterministicOcrVisionRepo, create_default_ocr_repo
 from pkp.rerank.cross_encoder import CrossEncoderConfig
 from pkp.rerank.pipeline import RerankPipelineConfig
 from pkp.runtime.adapters import (
@@ -151,7 +151,7 @@ def _build_ingest_service(
     runtime_root: Path,
     object_store_root: Path,
     *,
-    ocr_repo: DeterministicOcrVisionRepo,
+    ocr_repo: OcrVisionRepo,
     web_fetch_repo: HttpWebFetchRepo,
     embedding_bindings: tuple[EmbeddingProviderBinding, ...],
 ) -> IngestService:
@@ -185,7 +185,7 @@ def _build_runtime_container(
     max_retrieval_rounds: int,
     max_recursive_depth: int,
     thresholds: RoutingThresholds,
-    ocr_repo: DeterministicOcrVisionRepo,
+    ocr_repo: OcrVisionRepo,
     web_fetch_repo: HttpWebFetchRepo,
     cloud_providers: Sequence[object] = (),
     local_providers: Sequence[object] = (),
@@ -369,7 +369,7 @@ def build_runtime_container(settings: AppSettings) -> RuntimeContainer:
         max_retrieval_rounds=settings.runtime.max_retrieval_rounds,
         max_recursive_depth=settings.runtime.max_recursive_depth,
         thresholds=thresholds,
-        ocr_repo=_sample_ocr_repo(),
+        ocr_repo=create_default_ocr_repo(),
         web_fetch_repo=HttpWebFetchRepo(),
         cloud_providers=(
             OpenAIProviderRepo(
