@@ -56,6 +56,7 @@ class _FusedCandidate:
     fused_score: float
     rank: int
     supporting_branches: int
+    branch_scores: dict[str, float]
 
 
 @dataclass
@@ -75,6 +76,15 @@ class _FusedCandidateView:
     parent_chunk_id: str | None = None
     parent_text: str | None = None
     metadata: dict[str, str] | None = None
+    retrieval_channels: list[str] | None = None
+    dense_score: float | None = None
+    sparse_score: float | None = None
+    special_score: float | None = None
+    structure_score: float | None = None
+    metadata_score: float | None = None
+    fusion_score: float | None = None
+    rrf_score: float | None = None
+    unified_rank: int | None = None
 
 
 class RetrievalService:
@@ -223,13 +233,17 @@ class RetrievalService:
                         fused_score=score,
                         rank=index,
                         supporting_branches=1,
+                        branch_scores={branch_name: max(float(candidate.score), 0.0)},
                     )
                     continue
+                branch_scores = dict(existing.branch_scores)
+                branch_scores[branch_name] = max(float(candidate.score), 0.0)
                 fused[key] = _FusedCandidate(
                     candidate=existing.candidate,
                     fused_score=existing.fused_score + score,
                     rank=min(existing.rank, index),
                     supporting_branches=existing.supporting_branches + 1,
+                    branch_scores=branch_scores,
                 )
 
         ordered = sorted(
@@ -257,8 +271,17 @@ class RetrievalService:
                 parent_chunk_id=getattr(item.candidate, "parent_chunk_id", None),
                 parent_text=getattr(item.candidate, "parent_text", None),
                 metadata=getattr(item.candidate, "metadata", None),
+                retrieval_channels=sorted(item.branch_scores),
+                dense_score=item.branch_scores.get("vector"),
+                sparse_score=item.branch_scores.get("full_text"),
+                special_score=item.branch_scores.get("special"),
+                structure_score=item.branch_scores.get("section"),
+                metadata_score=item.branch_scores.get("metadata"),
+                fusion_score=item.fused_score + max(0, item.supporting_branches - 1) * 0.05,
+                rrf_score=item.fused_score + max(0, item.supporting_branches - 1) * 0.05,
+                unified_rank=index,
             )
-            for item in ordered
+            for index, item in enumerate(ordered, start=1)
         ]
 
     @staticmethod
@@ -286,6 +309,15 @@ class RetrievalService:
                         parent_chunk_id=parent_chunk_id,
                         parent_text=parent_text,
                         metadata=getattr(candidate, "metadata", None),
+                        retrieval_channels=list(getattr(candidate, "retrieval_channels", []) or []),
+                        dense_score=getattr(candidate, "dense_score", None),
+                        sparse_score=getattr(candidate, "sparse_score", None),
+                        special_score=getattr(candidate, "special_score", None),
+                        structure_score=getattr(candidate, "structure_score", None),
+                        metadata_score=getattr(candidate, "metadata_score", None),
+                        fusion_score=getattr(candidate, "fusion_score", None),
+                        rrf_score=getattr(candidate, "rrf_score", None),
+                        unified_rank=getattr(candidate, "unified_rank", None),
                     )
                 )
                 backfilled += 1
