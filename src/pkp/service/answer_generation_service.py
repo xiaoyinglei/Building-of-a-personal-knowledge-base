@@ -57,7 +57,10 @@ class AnswerGenerationService:
             )
             lines.extend(
                 [
-                    f"{evidence_id} | file={file_name} | section={section}{page_hint} | chunk_type={chunk_type}",
+                    (
+                        f"{evidence_id} | kind={item.evidence_kind} | file={file_name} "
+                        f"| section={section}{page_hint} | chunk_type={chunk_type}"
+                    ),
                     item.text,
                 ]
             )

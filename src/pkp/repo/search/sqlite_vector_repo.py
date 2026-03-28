@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from math import sqrt
 from pathlib import Path
 
-from pkp.repo.interfaces import VectorSearchResult
+from pkp.repo.interfaces import StoredVectorEntry, VectorSearchResult
 
 
 class SQLiteVectorRepo:
@@ -134,16 +134,15 @@ class SQLiteVectorRepo:
             WHERE embedding_space = ? AND item_kind = ?
         """
         params: list[object] = [embedding_space, item_kind]
-        if doc_ids:
-            placeholders = ", ".join("?" for _ in doc_ids)
-            sql += f" AND doc_id IN ({placeholders})"
-            params.extend(doc_ids)
         rows = self._conn.execute(sql, tuple(params)).fetchall()
 
         scored: list[VectorSearchResult] = []
+        requested_scope = set(doc_ids or [])
         for row in rows:
             vector = tuple(float(value) for value in json.loads(row["vector_json"]))
             metadata = json.loads(row["metadata_json"])
+            if requested_scope and not (self._vector_scope_tokens(metadata=metadata, row_doc_id=row["doc_id"]) & requested_scope):
+                continue
             scored.append(
                 VectorSearchResult(
                     item_id=row["item_id"],
@@ -159,6 +158,34 @@ class SQLiteVectorRepo:
 
         scored.sort(key=lambda result: (-result.score, result.item_id))
         return scored[:limit]
+
+    def get_entry(
+        self,
+        item_id: str,
+        *,
+        embedding_space: str = "default",
+        item_kind: str = "chunk",
+    ) -> StoredVectorEntry | None:
+        row = self._conn.execute(
+            """
+            SELECT item_id, item_kind, embedding_space, doc_id, segment_id, text, metadata_json, vector_json
+            FROM vectors
+            WHERE item_id = ? AND item_kind = ? AND embedding_space = ?
+            """,
+            (item_id, item_kind, embedding_space),
+        ).fetchone()
+        if row is None:
+            return None
+        return StoredVectorEntry(
+            item_id=str(row["item_id"]),
+            item_kind=str(row["item_kind"]),
+            embedding_space=str(row["embedding_space"]),
+            doc_id=str(row["doc_id"]),
+            segment_id=str(row["segment_id"]),
+            text=str(row["text"]),
+            metadata=json.loads(row["metadata_json"]),
+            vector=[float(value) for value in json.loads(row["vector_json"])],
+        )
 
     def existing_item_ids(
         self,
@@ -225,6 +252,20 @@ class SQLiteVectorRepo:
 
     def close(self) -> None:
         self._conn.close()
+
+    @staticmethod
+    def _vector_scope_tokens(*, metadata: dict[str, str], row_doc_id: str) -> set[str]:
+        tokens = {row_doc_id}
+        for key in ("doc_id", "source_id"):
+            value = metadata.get(key)
+            if value:
+                tokens.add(value)
+        for key in ("doc_ids", "source_ids"):
+            value = metadata.get(key)
+            if not value:
+                continue
+            tokens.update(item.strip() for item in value.split(",") if item.strip())
+        return tokens
 
     @staticmethod
     def _cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:

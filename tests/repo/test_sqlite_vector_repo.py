@@ -79,3 +79,23 @@ def test_sqlite_vector_repo_separates_chunk_entity_and_relation_vectors(tmp_path
     assert repo.count_vectors(item_kind="chunk") == 1
     assert repo.count_vectors(item_kind="entity") == 1
     assert repo.count_vectors(item_kind="relation") == 1
+
+
+def test_sqlite_vector_repo_scopes_aggregated_vectors_by_doc_ids_metadata(tmp_path: Path) -> None:
+    db_path = tmp_path / "vectors.sqlite3"
+    repo = SQLiteVectorRepo(db_path)
+    repo.upsert(
+        "entity-alpha",
+        [1.0, 0.0],
+        metadata={
+            "doc_id": "doc-b",
+            "doc_ids": "doc-a,doc-b",
+            "segment_id": "",
+            "text": "Alpha Engine",
+        },
+        item_kind="entity",
+    )
+
+    results = repo.search([1.0, 0.0], limit=1, doc_ids=["doc-a"], item_kind="entity")
+
+    assert [item.item_id for item in results] == ["entity-alpha"]

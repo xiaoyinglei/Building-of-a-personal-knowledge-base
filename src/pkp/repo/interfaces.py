@@ -78,6 +78,18 @@ class EmbeddingProviderBinding:
 
 
 @dataclass(frozen=True)
+class StoredVectorEntry:
+    item_id: str
+    item_kind: str
+    embedding_space: str
+    doc_id: str
+    segment_id: str
+    text: str
+    metadata: dict[str, str] = field(default_factory=dict)
+    vector: list[float] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class GraphNodeRecord:
     node_id: str
     node_type: str

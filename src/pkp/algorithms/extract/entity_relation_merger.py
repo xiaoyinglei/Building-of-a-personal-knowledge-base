@@ -49,7 +49,7 @@ class EntityRelationMerger:
     ) -> MergedGraph:
         merged_entities: dict[str, MergedEntity] = {}
         for entity in extraction.entities:
-            node_id = self._deterministic_id(document.doc_id, entity.key, "entity")
+            node_id = self._deterministic_id(entity.key, "entity")
             existing = merged_entities.get(entity.key)
             evidence_chunk_ids = self._merge_chunk_ids(
                 [] if existing is None else existing.evidence_chunk_ids,
@@ -68,6 +68,7 @@ class EntityRelationMerger:
                 evidence_chunk_ids=evidence_chunk_ids,
                 metadata={
                     "doc_id": document.doc_id,
+                    "doc_ids": document.doc_id,
                     "entity_key": entity.key,
                     "evidence_count": str(len(evidence_chunk_ids)),
                 },
@@ -91,7 +92,6 @@ class EntityRelationMerger:
             )
             merged_relations[relation_key] = MergedRelation(
                 edge_id=self._deterministic_id(
-                    document.doc_id,
                     source.node_id,
                     target.node_id,
                     relation.relation_type,
@@ -105,6 +105,7 @@ class EntityRelationMerger:
                 evidence_chunk_ids=evidence_chunk_ids,
                 metadata={
                     "doc_id": document.doc_id,
+                    "doc_ids": document.doc_id,
                     "from_label": source.label,
                     "to_label": target.label,
                     "evidence_count": str(len(evidence_chunk_ids)),

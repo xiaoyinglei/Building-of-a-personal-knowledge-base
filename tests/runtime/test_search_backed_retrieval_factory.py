@@ -4,12 +4,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pkp.algorithms.retrieval.search_backed_factory import SearchBackedRetrievalFactory
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import EmbeddingProviderBinding
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
-from pkp.runtime.adapters import SearchBackedRetrievalFactory
 from pkp.types import (
     AccessPolicy,
     Chunk,
@@ -58,8 +58,9 @@ def test_search_backed_retrieval_factory_local_retriever_returns_seed_and_neighb
 
     results = retriever("Alpha Engine", ["doc-1"])
 
-    assert [candidate.chunk_id for candidate in results[:2]] == ["chunk-1", "chunk-2"]
+    assert [candidate.chunk_id for candidate in results[:3]] == ["chunk-1", "chunk-2", "chunk-table"]
     assert results[0].score > results[1].score
+    assert results[2].special_chunk_type == "table"
 
 
 def test_search_backed_retrieval_factory_global_retriever_returns_relation_supported_evidence(
@@ -88,8 +89,9 @@ def test_search_backed_retrieval_factory_global_retriever_returns_relation_suppo
 
     results = retriever("depends on", ["doc-1"])
 
-    assert [candidate.chunk_id for candidate in results[:2]] == ["chunk-2", "chunk-1"]
+    assert [candidate.chunk_id for candidate in results[:3]] == ["chunk-2", "chunk-1", "chunk-table"]
     assert results[0].score > results[1].score
+    assert results[2].special_chunk_type == "table"
 
 
 def _seed_graph_backed_retrieval_state(
@@ -155,12 +157,28 @@ def _seed_graph_backed_retrieval_state(
         embedding_ref=None,
         order_index=1,
     )
+    chunk_table = Chunk(
+        chunk_id="chunk-table",
+        segment_id=segment.segment_id,
+        doc_id=document.doc_id,
+        text="Table: Alpha Engine throughput and Beta Service dependency metrics.",
+        token_count=10,
+        citation_anchor="#chunk-table",
+        citation_span=(98, 160),
+        effective_access_policy=policy,
+        extraction_quality=0.95,
+        embedding_ref=None,
+        order_index=2,
+        chunk_role="special",
+        special_chunk_type="table",
+    )
 
     metadata_repo.save_source(source)
     metadata_repo.save_document(document, location=source.location, content_hash=source.content_hash)
     metadata_repo.save_segment(segment)
     metadata_repo.save_chunk(chunk_one)
     metadata_repo.save_chunk(chunk_two)
+    metadata_repo.save_chunk(chunk_table)
 
     alpha = GraphNode(node_id="entity-alpha", node_type="entity", label="Alpha Engine")
     beta = GraphNode(node_id="entity-beta", node_type="entity", label="Beta Service")

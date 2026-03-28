@@ -13,7 +13,7 @@ class GraphStore:
     def save_node(self, node: GraphNode, *, evidence_chunk_ids: list[str] | None = None) -> None:
         self.graph_repo.save_node(node)
         if evidence_chunk_ids is not None:
-            self.graph_repo.bind_node_evidence(node.node_id, evidence_chunk_ids)
+            self.graph_repo.merge_node_evidence(node.node_id, evidence_chunk_ids)
 
     def get_node(self, node_id: str) -> GraphNode | None:
         return self.graph_repo.get_node(node_id)

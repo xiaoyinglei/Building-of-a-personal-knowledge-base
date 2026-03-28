@@ -459,8 +459,8 @@ class IngestPipeline:
             )
             self.graph.save_edge(edge)
 
-        self._index_entity_vectors(document=document, entities=merged.entities)
-        self._index_relation_vectors(document=document, relations=merged.relations)
+        self._index_entity_vectors(source=source, document=document, entities=merged.entities)
+        self._index_relation_vectors(source=source, document=document, relations=merged.relations)
         return len(merged.entities), len(merged.relations)
 
     def _extract_entities_and_relations(
@@ -493,7 +493,7 @@ class IngestPipeline:
             relations.extend(result.relations)
         return EntityRelationExtractionResult(entities=entities, relations=relations)
 
-    def _index_entity_vectors(self, *, document: Document, entities: list[object]) -> None:
+    def _index_entity_vectors(self, *, source: Source, document: Document, entities: list[object]) -> None:
         texts = [f"{entity.label}: {entity.description}" for entity in entities]
         if not texts:
             return
@@ -502,11 +502,15 @@ class IngestPipeline:
             if vectors is None:
                 continue
             for entity, vector in zip(entities, vectors, strict=True):
-                self.vectors.upsert_entity(
-                    entity.node_id,
-                    vector,
+                self._upsert_graph_vector(
+                    item_id=entity.node_id,
+                    item_kind="entity",
+                    vector=vector,
                     metadata={
                         "doc_id": document.doc_id,
+                        "doc_ids": document.doc_id,
+                        "source_id": source.source_id,
+                        "source_ids": source.source_id,
                         "segment_id": "",
                         "text": f"{entity.label}: {entity.description}",
                         "entity_type": entity.entity_type,
@@ -514,7 +518,7 @@ class IngestPipeline:
                     embedding_space=binding.space,
                 )
 
-    def _index_relation_vectors(self, *, document: Document, relations: list[object]) -> None:
+    def _index_relation_vectors(self, *, source: Source, document: Document, relations: list[object]) -> None:
         texts = [
             (
                 f"{relation.metadata.get('from_label', relation.from_node_id)} "
@@ -531,11 +535,15 @@ class IngestPipeline:
             if vectors is None:
                 continue
             for relation, vector, text in zip(relations, vectors, texts, strict=True):
-                self.vectors.upsert_relation(
-                    relation.edge_id,
-                    vector,
+                self._upsert_graph_vector(
+                    item_id=relation.edge_id,
+                    item_kind="relation",
+                    vector=vector,
                     metadata={
                         "doc_id": document.doc_id,
+                        "doc_ids": document.doc_id,
+                        "source_id": source.source_id,
+                        "source_ids": source.source_id,
                         "segment_id": "",
                         "text": text,
                         "relation_type": relation.relation_type,
@@ -795,6 +803,79 @@ class IngestPipeline:
         if len(vectors) != len(texts):
             return None
         return vectors
+
+    def _upsert_graph_vector(
+        self,
+        *,
+        item_id: str,
+        item_kind: str,
+        vector: list[float],
+        metadata: dict[str, str],
+        embedding_space: str,
+    ) -> None:
+        existing = self.vectors.vector_repo.get_entry(
+            item_id,
+            embedding_space=embedding_space,
+            item_kind=item_kind,
+        )
+        merged_metadata = self._merge_vector_metadata(
+            existing=None if existing is None else existing.metadata,
+            incoming=metadata,
+        )
+        merged_vector = self._merge_vector_values(
+            existing=None if existing is None else existing.vector,
+            incoming=vector,
+            previous_count=0 if existing is None else int(existing.metadata.get("merge_count", "1")),
+        )
+        self.vectors.vector_repo.upsert(
+            item_id,
+            merged_vector,
+            metadata=merged_metadata,
+            embedding_space=embedding_space,
+            item_kind=item_kind,
+        )
+
+    @staticmethod
+    def _merge_vector_metadata(
+        *,
+        existing: dict[str, str] | None,
+        incoming: dict[str, str],
+    ) -> dict[str, str]:
+        merged = dict(existing or {})
+        merged.update(incoming)
+        for scalar_key, plural_key in (("doc_id", "doc_ids"), ("source_id", "source_ids")):
+            values: list[str] = []
+            for container in (existing or {}, incoming):
+                scalar_value = container.get(scalar_key)
+                if scalar_value:
+                    values.append(scalar_value)
+                plural_value = container.get(plural_key)
+                if plural_value:
+                    values.extend(item.strip() for item in plural_value.split(",") if item.strip())
+            if values:
+                merged[plural_key] = ",".join(sorted(dict.fromkeys(values)))
+        existing_count = 0 if existing is None else int(existing.get("merge_count", "1"))
+        merged["merge_count"] = str(existing_count + 1)
+        current_text = incoming.get("text", "")
+        previous_text = "" if existing is None else existing.get("text", "")
+        if previous_text and len(previous_text) > len(current_text):
+            merged["text"] = previous_text
+        return merged
+
+    @staticmethod
+    def _merge_vector_values(
+        *,
+        existing: list[float] | None,
+        incoming: list[float],
+        previous_count: int,
+    ) -> list[float]:
+        if existing is None or not existing or len(existing) != len(incoming):
+            return [float(value) for value in incoming]
+        weight = max(previous_count, 1)
+        return [
+            ((float(current) * weight) + float(next_value)) / (weight + 1)
+            for current, next_value in zip(existing, incoming, strict=True)
+        ]
 
     @staticmethod
     def _retrievable_chunks(chunks: list[Chunk]) -> list[Chunk]:

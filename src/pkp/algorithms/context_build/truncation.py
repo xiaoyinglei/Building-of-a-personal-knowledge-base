@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Final
 
 from pkp.core.results import ContextEvidence
@@ -29,36 +30,29 @@ class EvidenceTruncator:
         max_evidence_chunks: int,
     ) -> ContextTruncationResult:
         normalized_budget = max(token_budget, 1)
-        normalized_max_chunks = max(max_evidence_chunks, 1)
+        normalized_max_chunks = min(max(max_evidence_chunks, 1), normalized_budget)
+        prioritized_items = self._prioritize_evidence(evidence, normalized_max_chunks)
+        assigned_budgets = self._allocate_token_budgets(prioritized_items, normalized_budget)
+
         selected: list[ContextEvidence] = []
         consumed = 0
-        truncated_count = 0
-        skipped_count = 0
+        clipped_count = 0
 
-        for item in evidence:
-            if len(selected) >= normalized_max_chunks:
-                skipped_count += 1
-                continue
-            remaining = normalized_budget - consumed
-            if remaining <= 0:
-                skipped_count += 1
-                continue
-
+        for item, item_budget in zip(prioritized_items, assigned_budgets, strict=False):
             original_token_count = text_unit_count(item.text)
+            effective_budget = max(item_budget, 1)
             selected_text = item.text
             selected_token_count = original_token_count
             was_truncated = False
 
-            if original_token_count > remaining:
-                clipped = self._clip_text(item.text, remaining)
+            if original_token_count > effective_budget:
+                clipped = self._clip_text(item.text, effective_budget)
                 clipped_token_count = text_unit_count(clipped)
-                if clipped.strip():
-                    selected_text = clipped
-                    selected_token_count = min(clipped_token_count, remaining)
-                    was_truncated = clipped_token_count < original_token_count or clipped.endswith(" ...")
-                else:
-                    skipped_count += 1
+                if not clipped.strip():
                     continue
+                selected_text = clipped
+                selected_token_count = min(clipped_token_count, effective_budget)
+                was_truncated = clipped_token_count < original_token_count or clipped.endswith(" ...")
 
             selected.append(
                 ContextEvidence(
@@ -86,15 +80,192 @@ class EvidenceTruncator:
             )
             consumed += selected_token_count
             if was_truncated:
-                truncated_count += 1
+                clipped_count += 1
 
-        truncated_count += skipped_count
+        skipped_count = max(0, len(evidence) - len(prioritized_items))
+        truncated_count = skipped_count + clipped_count
         return ContextTruncationResult(
             evidence=selected,
             token_budget=normalized_budget,
             token_count=consumed,
             truncated_count=truncated_count,
         )
+
+    def _prioritize_evidence(self, evidence: list[EvidenceItem], max_evidence_chunks: int) -> list[EvidenceItem]:
+        if len(evidence) <= max_evidence_chunks:
+            return list(evidence)
+
+        indexed_items = list(enumerate(evidence))
+        selected_indices: list[int] = []
+        selected_docs: set[str] = set()
+        selected_groups: set[str] = set()
+
+        def pick_best(predicate: Callable[[EvidenceItem], bool] | None = None) -> None:
+            remaining = [
+                (index, item)
+                for index, item in indexed_items
+                if index not in selected_indices and (predicate(item) if predicate is not None else True)
+            ]
+            if not remaining or len(selected_indices) >= max_evidence_chunks:
+                return
+            best_index, best_item = max(
+                remaining,
+                key=lambda pair: self._selection_score(
+                    pair[1],
+                    original_index=pair[0],
+                    selected_docs=selected_docs,
+                    selected_groups=selected_groups,
+                ),
+            )
+            selected_indices.append(best_index)
+            selected_docs.add(best_item.doc_id)
+            selected_groups.add(self._evidence_group(best_item))
+
+        pick_best()
+        if max_evidence_chunks >= 2:
+            pick_best(lambda item: self._evidence_group(item) == "special")
+        if max_evidence_chunks >= 3:
+            pick_best(lambda item: self._evidence_group(item) == "graph")
+        if max_evidence_chunks >= 4:
+            pick_best(lambda item: self._evidence_group(item) == "external")
+        while len(selected_indices) < max_evidence_chunks:
+            before = len(selected_indices)
+            pick_best()
+            if len(selected_indices) == before:
+                break
+
+        selected_set = set(selected_indices)
+        prioritized = [item for index, item in indexed_items if index in selected_set]
+        prioritized.sort(
+            key=lambda item: (
+                self._group_priority(self._evidence_group(item)),
+                -float(item.score),
+                item.doc_id,
+                item.chunk_id,
+            )
+        )
+        return prioritized
+
+    def _allocate_token_budgets(self, evidence: list[EvidenceItem], token_budget: int) -> list[int]:
+        if not evidence:
+            return []
+
+        count = len(evidence)
+        base_share = max(1, token_budget // count)
+        budgets = [1 for _item in evidence]
+        remaining_budget = max(0, token_budget - count)
+        distribution_order = sorted(
+            range(count),
+            key=lambda index: (
+                self._group_priority(self._evidence_group(evidence[index])),
+                -float(evidence[index].score),
+                index,
+            ),
+        )
+
+        floor_targets = [
+            min(text_unit_count(item.text), self._floor_target(item, base_share))
+            for item in evidence
+        ]
+        remaining_budget = self._distribute_budget(budgets, floor_targets, remaining_budget, distribution_order)
+
+        cap_targets = [
+            min(text_unit_count(item.text), self._cap_target(item, base_share))
+            for item in evidence
+        ]
+        remaining_budget = self._distribute_budget(budgets, cap_targets, remaining_budget, distribution_order)
+
+        original_targets = [text_unit_count(item.text) for item in evidence]
+        self._distribute_budget(budgets, original_targets, remaining_budget, distribution_order)
+        return budgets
+
+    @staticmethod
+    def _distribute_budget(
+        budgets: list[int],
+        targets: list[int],
+        remaining_budget: int,
+        order: list[int],
+    ) -> int:
+        while remaining_budget > 0:
+            changed = False
+            for index in order:
+                if budgets[index] >= targets[index]:
+                    continue
+                budgets[index] += 1
+                remaining_budget -= 1
+                changed = True
+                if remaining_budget <= 0:
+                    break
+            if not changed:
+                break
+        return remaining_budget
+
+    def _floor_target(self, item: EvidenceItem, base_share: int) -> int:
+        group = self._evidence_group(item)
+        if group == "special":
+            return max(24, int(base_share * 0.55))
+        if group == "graph":
+            return max(20, int(base_share * 0.50))
+        if group == "external":
+            return max(16, int(base_share * 0.35))
+        return max(18, int(base_share * 0.45))
+
+    def _cap_target(self, item: EvidenceItem, base_share: int) -> int:
+        group = self._evidence_group(item)
+        if group == "special":
+            multiplier = 1.45 if (item.special_chunk_type or "") in {"table", "figure", "caption", "ocr_region", "image_summary"} else 1.25
+            return max(self._floor_target(item, base_share), int(base_share * multiplier))
+        if group == "graph":
+            return max(self._floor_target(item, base_share), int(base_share * 1.20))
+        if group == "external":
+            return max(self._floor_target(item, base_share), int(base_share * 0.90))
+        return max(self._floor_target(item, base_share), int(base_share * 1.10))
+
+    def _selection_score(
+        self,
+        item: EvidenceItem,
+        *,
+        original_index: int,
+        selected_docs: set[str],
+        selected_groups: set[str],
+    ) -> float:
+        group = self._evidence_group(item)
+        score = float(item.score)
+        if group == "special":
+            score += 0.35
+        elif group == "graph":
+            score += 0.22
+        elif group == "internal":
+            score += 0.08
+        else:
+            score -= 0.02
+        if item.doc_id not in selected_docs:
+            score += 0.06
+        if group not in selected_groups:
+            score += 0.04
+        if (item.special_chunk_type or "") in {"table", "figure", "caption", "ocr_region", "image_summary"}:
+            score += 0.08
+        return score - original_index * 1e-6
+
+    @staticmethod
+    def _evidence_group(item: EvidenceItem) -> str:
+        if item.special_chunk_type:
+            return "special"
+        if item.evidence_kind == "graph":
+            return "graph"
+        if item.evidence_kind == "external":
+            return "external"
+        return "internal"
+
+    @staticmethod
+    def _group_priority(group: str) -> int:
+        priorities = {
+            "special": 0,
+            "graph": 1,
+            "internal": 2,
+            "external": 3,
+        }
+        return priorities.get(group, 9)
 
     @staticmethod
     def _clip_text(text: str, budget: int) -> str:

@@ -59,6 +59,7 @@ def test_ragcore_query_returns_grounded_answer_retrieval_and_context() -> None:
     assert result.retrieval.evidence.internal
     assert result.context.evidence
     assert "E1" in result.context.prompt
+    assert "kind=internal" in result.context.prompt
     assert result.context.token_count <= result.context.token_budget
     assert result.context.grounded_candidate
 
