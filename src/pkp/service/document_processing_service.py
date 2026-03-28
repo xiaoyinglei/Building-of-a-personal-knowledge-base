@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from docling_core.transforms.chunker.hierarchical_chunker import HierarchicalChunker
 from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
+from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from docling_core.types.doc.document import PictureItem, TableItem
 
 from pkp.repo.interfaces import ParsedDocument, ParsedElement
@@ -42,6 +43,8 @@ class ChunkSeed:
 
 class DocumentProcessingService:
     _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s*")
+    _DEFAULT_TOKENIZER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+    _DEFAULT_TOKENIZER_MAX_TOKENS = 512
 
     def __init__(
         self,
@@ -56,7 +59,15 @@ class DocumentProcessingService:
         self._routing_service = routing_service or ChunkRoutingService()
         self._postprocessing_service = postprocessing_service or ChunkPostprocessingService()
         self._hierarchical_chunker = HierarchicalChunker()
-        self._hybrid_chunker = HybridChunker()
+        self._hybrid_chunker = HybridChunker(tokenizer=self._build_cached_tokenizer())
+
+    @classmethod
+    def _build_cached_tokenizer(cls) -> Any:
+        return HuggingFaceTokenizer.from_pretrained(
+            model_name=cls._DEFAULT_TOKENIZER_MODEL,
+            max_tokens=cls._DEFAULT_TOKENIZER_MAX_TOKENS,
+            local_files_only=True,
+        )
 
     def build(
         self,
