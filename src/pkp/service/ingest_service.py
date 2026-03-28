@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -34,7 +34,7 @@ from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.toc_service import TOCService
 from pkp.types.access import AccessPolicy
-from pkp.types.content import Chunk, Document, GraphEdge, GraphNode, Segment, Source, SourceType
+from pkp.types.content import Chunk, ChunkRole, Document, GraphEdge, GraphNode, Segment, Source, SourceType
 from pkp.types.processing import DocumentProcessingPackage
 
 
@@ -176,6 +176,7 @@ class IngestService:
             title=title,
             owner=owner,
         )
+        parsed = replace(parsed, source_type=SourceType(source_type))
         return self._ingest_parsed_document(
             location=location,
             raw_bytes=text.replace("\r\n", "\n").encode("utf-8"),
@@ -296,6 +297,7 @@ class IngestService:
         source_type: SourceType | str = SourceType.WEB,
     ) -> IngestResult:
         parsed = self.web_parser.parse(html, location=location, title=title, owner=owner)
+        parsed = replace(parsed, source_type=SourceType(source_type))
         return self._ingest_parsed_document(
             location=location,
             raw_bytes=html.encode("utf-8"),
@@ -330,7 +332,8 @@ class IngestService:
             if source is None:
                 continue
             segments = self.metadata_repo.list_segments(document.doc_id)
-            chunks = self.metadata_repo.list_chunks(document.doc_id)
+            stored_chunks = self.metadata_repo.list_chunks(document.doc_id)
+            chunks = self._retrievable_chunks(stored_chunks)
             chunk_count += len(chunks)
             repaired_vector_count += self._repair_duplicate_indexes(
                 source=source,
@@ -369,7 +372,8 @@ class IngestService:
             if existing_document is None:
                 raise RuntimeError("duplicate source exists without an active document")
             existing_segments = self.metadata_repo.list_segments(existing_document.doc_id)
-            existing_chunks = self.metadata_repo.list_chunks(existing_document.doc_id)
+            stored_existing_chunks = self.metadata_repo.list_chunks(existing_document.doc_id)
+            existing_chunks = self._retrievable_chunks(stored_existing_chunks)
             self._repair_duplicate_indexes(
                 source=existing_source,
                 document=existing_document,
@@ -615,6 +619,10 @@ class IngestService:
                     embedding_space=binding.space,
                 )
         return repaired
+
+    @staticmethod
+    def _retrievable_chunks(chunks: list[Chunk]) -> list[Chunk]:
+        return [chunk for chunk in chunks if chunk.chunk_role is not ChunkRole.PARENT]
 
     @staticmethod
     def _embed_texts(provider: object, texts: list[str]) -> list[list[float]] | None:

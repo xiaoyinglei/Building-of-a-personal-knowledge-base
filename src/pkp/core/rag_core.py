@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pkp.core.options import QueryOptions
 from pkp.core.storage_config import StorageConfig
+from pkp.stores import StorageBundle
 
 
 @dataclass(slots=True)
 class RAGCore:
     storage: StorageConfig
+    stores: StorageBundle = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.stores = self.storage.build()
 
     def insert(self, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError("insert pipeline is not implemented yet")

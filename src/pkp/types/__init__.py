@@ -54,6 +54,12 @@ from pkp.types.query import (
     ResearchSubQuestion,
     TaskType,
 )
+from pkp.types.storage import (
+    CacheEntry,
+    DocumentPipelineStage,
+    DocumentProcessingStatus,
+    DocumentStatusRecord,
+)
 
 __all__ = [
     "AccessPolicy",
@@ -69,8 +75,12 @@ __all__ = [
     "ChunkStatistics",
     "ComplexityLevel",
     "CapabilityHealth",
+    "CacheEntry",
     "Document",
     "DocumentFeatures",
+    "DocumentPipelineStage",
+    "DocumentProcessingStatus",
+    "DocumentStatusRecord",
     "DocumentType",
     "DocumentProcessingPackage",
     "EvidenceItem",

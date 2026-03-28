@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
@@ -14,6 +14,7 @@ from pkp.types import (
     Source,
     SourceType,
 )
+from pkp.types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
 
 
 def test_sqlite_metadata_repo_persists_source_document_chunks_and_artifacts(tmp_path: Path) -> None:
@@ -106,3 +107,30 @@ def test_sqlite_metadata_repo_supports_content_hash_lookup_for_dedup(tmp_path: P
     loaded = repo.find_source_by_content_hash("hash-dedup")
     assert loaded is not None
     assert loaded.source_id == "src-1"
+
+
+def test_sqlite_metadata_repo_persists_document_status_and_cache_entries(tmp_path: Path) -> None:
+    repo = SQLiteMetadataRepo(tmp_path / "metadata.sqlite3")
+    status = DocumentStatusRecord(
+        doc_id="doc-1",
+        source_id="src-1",
+        location="data/samples/agent-rag-overview.md",
+        content_hash="hash-1",
+        status=DocumentProcessingStatus.READY,
+        stage=DocumentPipelineStage.PERSIST,
+        attempts=1,
+    )
+    cache_entry = CacheEntry(
+        namespace="query",
+        cache_key="doc-1::summary",
+        payload={"answer": "grounded"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    saved_status = repo.save_document_status(status)
+    saved_cache = repo.save_cache_entry(cache_entry)
+
+    assert repo.get_document_status(status.doc_id) == saved_status
+    assert repo.list_document_statuses(status=DocumentProcessingStatus.READY.value) == [saved_status]
+    assert repo.get_cache_entry(cache_entry.cache_key, namespace=cache_entry.namespace) == saved_cache
+    assert repo.list_cache_entries(namespace="query") == [saved_cache]
