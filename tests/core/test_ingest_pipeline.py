@@ -115,3 +115,53 @@ def test_ragcore_insert_persists_document_chunks_entities_relations_and_status()
         assert core.stores.cache.list(namespace="extract")
     finally:
         core.stores.close()
+
+
+def test_ragcore_merges_graph_and_entity_indexes_across_documents() -> None:
+    core = RAGCore(storage=StorageConfig.in_memory())
+    try:
+        first = core.insert(
+            location="memory://alpha.txt",
+            source_type="plain_text",
+            owner="user",
+            content_text="Alpha Engine supports Beta Service.",
+        )
+        second = core.insert(
+            location="memory://beta.txt",
+            source_type="plain_text",
+            owner="user",
+            content_text="Alpha Engine supports Beta Service.",
+        )
+
+        entity_nodes = sorted(core.stores.graph.list_nodes(node_type="entity"), key=lambda node: node.label)
+        alpha_node = next(node for node in entity_nodes if node.label == "Alpha Engine")
+        relation_edges = [edge for edge in core.stores.graph.list_edges() if edge.relation_type == "supports"]
+        alpha_vector = core.stores.vector_repo.get_entry(alpha_node.node_id, item_kind="entity")
+
+        assert [node.label for node in entity_nodes] == ["Alpha Engine", "Beta Service"]
+        assert set(core.stores.graph.list_node_evidence_chunk_ids(alpha_node.node_id)) == {
+            first.chunks[0].chunk_id,
+            second.chunks[0].chunk_id,
+        }
+        assert len(relation_edges) == 1
+        assert set(relation_edges[0].evidence_chunk_ids) == {
+            first.chunks[0].chunk_id,
+            second.chunks[0].chunk_id,
+        }
+        assert alpha_vector is not None
+        assert set(alpha_vector.metadata.get("doc_ids", "").split(",")) == {
+            first.document_id,
+            second.document_id,
+        }
+
+        core.delete(doc_id=first.document_id)
+
+        assert core.stores.graph.get_node(alpha_node.node_id) is not None
+        assert set(core.stores.graph.list_node_evidence_chunk_ids(alpha_node.node_id)) == {
+            second.chunks[0].chunk_id
+        }
+        remaining_edge = core.stores.graph.get_edge(relation_edges[0].edge_id)
+        assert remaining_edge is not None
+        assert remaining_edge.evidence_chunk_ids == [second.chunks[0].chunk_id]
+    finally:
+        core.stores.close()

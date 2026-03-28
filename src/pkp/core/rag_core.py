@@ -8,6 +8,7 @@ from pkp.algorithms.context_build.merge import ContextEvidenceMerger
 from pkp.algorithms.context_build.prompt_builder import ContextPromptBuilder
 from pkp.algorithms.context_build.truncation import EvidenceTruncator
 from pkp.algorithms.generation.answer_generator import AnswerGenerator
+from pkp.algorithms.retrieval.search_backed_factory import SearchBackedRetrievalFactory
 from pkp.core.options import QueryOptions
 from pkp.core.pipelines.delete_pipeline import DeletePipeline, DeletePipelineResult, DeleteRequest
 from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult, IngestRequest
@@ -175,8 +176,6 @@ class RAGCore:
         return self.rebuild_pipeline.run(request)
 
     def _build_retrieval_service(self) -> RetrievalService:
-        from pkp.runtime.adapters import SearchBackedRetrievalFactory
-
         retrieval_factory = SearchBackedRetrievalFactory(
             metadata_repo=self.stores.metadata_repo,
             fts_repo=self._fts_repo,

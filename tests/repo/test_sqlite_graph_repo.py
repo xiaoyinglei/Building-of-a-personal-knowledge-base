@@ -42,3 +42,29 @@ def test_sqlite_graph_repo_keeps_node_and_edge_provenance_indexes(tmp_path: Path
     assert repo.list_node_evidence_chunk_ids(node.node_id) == ["chunk-1", "chunk-2"]
     assert repo.list_edges_for_node("entity-1", include_candidates=True) == [edge]
     assert repo.list_edges_for_chunk("chunk-1", include_candidates=True) == [edge]
+
+
+def test_sqlite_graph_repo_accumulates_node_and_edge_evidence_across_writes(tmp_path: Path) -> None:
+    repo = SQLiteGraphRepo(tmp_path / "graph.sqlite3")
+    node = GraphNode(node_id="entity-alpha", node_type="entity", label="Alpha Engine")
+    first_edge = GraphEdge(
+        edge_id="edge-supports",
+        from_node_id="entity-alpha",
+        to_node_id="entity-beta",
+        relation_type="supports",
+        confidence=0.9,
+        evidence_chunk_ids=["chunk-1"],
+    )
+    second_edge = first_edge.model_copy(update={"evidence_chunk_ids": ["chunk-2"]})
+
+    repo.save_node(node)
+    repo.merge_node_evidence(node.node_id, ["chunk-1"])
+    repo.merge_node_evidence(node.node_id, ["chunk-2", "chunk-1"])
+    repo.save_edge(first_edge)
+    repo.save_edge(second_edge)
+
+    merged_edge = repo.get_edge("edge-supports")
+
+    assert repo.list_node_evidence_chunk_ids(node.node_id) == ["chunk-1", "chunk-2"]
+    assert merged_edge is not None
+    assert merged_edge.evidence_chunk_ids == ["chunk-1", "chunk-2"]
