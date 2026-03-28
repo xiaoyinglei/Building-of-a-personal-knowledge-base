@@ -1,0 +1,21 @@
+{
+  "dataset": "nielsr/docvqa_1200_examples",
+  "dataset_url": "https://huggingface.co/datasets/nielsr/docvqa_1200_examples",
+  "split": "train",
+  "sample_id": "train_11",
+  "question": "What sort of communication/letter is this ?",
+  "answers": [
+    "INTER-OFFICE CORRESPONDENCE"
+  ],
+  "image_file": "docvqa_interoffice_correspondence_train_11.jpg",
+  "image_size": [
+    1706,
+    2198
+  ],
+  "mode": "L",
+  "notes": [
+    "scanned_like",
+    "header_text",
+    "ocr_metadata"
+  ]
+}

@@ -1,0 +1,171 @@
+[
+  {
+    "doc_id": "arxiv_attention_is_all_you_need",
+    "title": "Attention Is All You Need",
+    "file_name": "arxiv_attention_is_all_you_need_1706.03762.pdf",
+    "local_path": "test_corpus/pdf/arxiv_attention_is_all_you_need_1706.03762.pdf",
+    "source_url": "https://arxiv.org/pdf/1706.03762",
+    "source_type": "arxiv_pdf",
+    "format": "pdf",
+    "language": "en",
+    "notes": [
+      "contains_figures",
+      "contains_tables",
+      "long_sections",
+      "citation_friendly"
+    ]
+  },
+  {
+    "doc_id": "arxiv_retrieval_augmented_generation",
+    "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+    "file_name": "arxiv_retrieval_augmented_generation_2005.11401.pdf",
+    "local_path": "test_corpus/pdf/arxiv_retrieval_augmented_generation_2005.11401.pdf",
+    "source_url": "https://arxiv.org/pdf/2005.11401",
+    "source_type": "arxiv_pdf",
+    "format": "pdf",
+    "language": "en",
+    "notes": [
+      "contains_figures",
+      "contains_tables",
+      "long_sections",
+      "citation_friendly"
+    ]
+  },
+  {
+    "doc_id": "github_huggingface_transformers_readme",
+    "title": "Hugging Face Transformers README",
+    "file_name": "github_huggingface_transformers_readme.md",
+    "local_path": "test_corpus/markdown/github_huggingface_transformers_readme.md",
+    "source_url": "https://github.com/huggingface/transformers/blob/main/README.md",
+    "source_type": "github_markdown",
+    "format": "md",
+    "language": "en",
+    "notes": [
+      "headings",
+      "lists",
+      "code_blocks",
+      "contains_figures"
+    ]
+  },
+  {
+    "doc_id": "github_langchain_readme",
+    "title": "LangChain README",
+    "file_name": "github_langchain_readme.md",
+    "local_path": "test_corpus/markdown/github_langchain_readme.md",
+    "source_url": "https://github.com/langchain-ai/langchain/blob/master/README.md",
+    "source_type": "github_markdown",
+    "format": "md",
+    "language": "en",
+    "notes": [
+      "headings",
+      "lists",
+      "code_blocks",
+      "product_overview"
+    ]
+  },
+  {
+    "doc_id": "nist_ai_rmf_1_0",
+    "title": "Artificial Intelligence Risk Management Framework (AI RMF 1.0)",
+    "file_name": "nist_ai_risk_management_framework_1_0.pdf",
+    "local_path": "test_corpus/reports/nist_ai_risk_management_framework_1_0.pdf",
+    "source_url": "https://nvlpubs.nist.gov/nistpubs/ai/nist.ai.100-1.pdf",
+    "source_type": "public_report_pdf",
+    "format": "pdf",
+    "language": "en",
+    "notes": [
+      "contains_tables",
+      "contains_figures",
+      "table_of_contents",
+      "long_sections",
+      "formal_report"
+    ]
+  },
+  {
+    "doc_id": "nist_generative_ai_profile_600_1",
+    "title": "Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile",
+    "file_name": "nist_ai_600_1_generative_ai_profile.pdf",
+    "local_path": "test_corpus/reports/nist_ai_600_1_generative_ai_profile.pdf",
+    "source_url": "https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf",
+    "source_type": "public_report_pdf",
+    "format": "pdf",
+    "language": "en",
+    "notes": [
+      "table_of_contents",
+      "long_sections",
+      "formal_report",
+      "appendices",
+      "policy_language"
+    ]
+  },
+  {
+    "doc_id": "hf_transformers_question_answering_doc",
+    "title": "Transformers Docs: Question answering",
+    "file_name": "hf_transformers_question_answering.md",
+    "local_path": "test_corpus/tech_docs/hf_transformers_question_answering.md",
+    "source_url": "https://github.com/huggingface/transformers/blob/main/docs/source/en/tasks/question_answering.md",
+    "source_type": "technical_doc",
+    "format": "md",
+    "language": "en",
+    "notes": [
+      "headings",
+      "code_blocks",
+      "step_by_step_tutorial",
+      "model_training"
+    ]
+  },
+  {
+    "doc_id": "hf_transformers_document_question_answering_doc",
+    "title": "Transformers Docs: Document Question Answering",
+    "file_name": "hf_transformers_document_question_answering.md",
+    "local_path": "test_corpus/tech_docs/hf_transformers_document_question_answering.md",
+    "source_url": "https://github.com/huggingface/transformers/blob/main/docs/source/en/tasks/document_question_answering.md",
+    "source_type": "technical_doc",
+    "format": "md",
+    "language": "en",
+    "notes": [
+      "headings",
+      "code_blocks",
+      "ocr_pipeline",
+      "multimodal",
+      "step_by_step_tutorial"
+    ]
+  },
+  {
+    "doc_id": "docvqa_letter_date_train_0",
+    "title": "DocVQA sample: letter date extraction",
+    "file_name": "docvqa_letter_date_train_0.jpg",
+    "local_path": "test_corpus/ocr_images/docvqa_letter_date_train_0.jpg",
+    "source_url": "https://huggingface.co/datasets/nielsr/docvqa_1200_examples",
+    "source_type": "ocr_image",
+    "format": "jpg",
+    "language": "en",
+    "notes": [
+      "scanned_like",
+      "ocr_metadata",
+      "short_answers",
+      "header_fields"
+    ],
+    "auxiliary_files": [
+      "test_corpus/ocr_images/docvqa_letter_date_train_0.json"
+    ]
+  },
+  {
+    "doc_id": "docvqa_interoffice_correspondence_train_11",
+    "title": "DocVQA sample: inter-office correspondence",
+    "file_name": "docvqa_interoffice_correspondence_train_11.jpg",
+    "local_path": "test_corpus/ocr_images/docvqa_interoffice_correspondence_train_11.jpg",
+    "source_url": "https://huggingface.co/datasets/nielsr/docvqa_1200_examples",
+    "source_type": "ocr_image",
+    "format": "jpg",
+    "language": "en",
+    "notes": [
+      "scanned_like",
+      "ocr_metadata",
+      "header_text",
+      "longer_body_text"
+    ],
+    "auxiliary_files": [
+      "test_corpus/ocr_images/docvqa_interoffice_correspondence_train_11.json"
+    ]
+  }
+]

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
 import pytest
@@ -6,7 +7,9 @@ from docx import Document as WordDocument
 from PIL import Image, ImageDraw
 
 from pkp.repo.interfaces import OcrRegion, OcrResult
+from pkp.service import document_processing_service as document_processing_module
 from pkp.service.ingest_service import IngestService
+from pkp.service.toc_service import TOCService
 from pkp.types.content import SourceType
 from pkp.types.processing import ChunkingStrategy, ChunkRole
 
@@ -151,3 +154,37 @@ def test_pipeline_reports_clear_error_for_unsupported_file_types(tmp_path: Path)
 
     with pytest.raises(ValueError, match="Unsupported file type"):
         service.ingest_file(location=str(path), file_path=path, owner="user")
+
+
+def test_document_processing_service_uses_cached_tokenizer_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_from_pretrained(
+        model_name: str,
+        *,
+        max_tokens: int | None = None,
+        local_files_only: bool | None = None,
+        **_: object,
+    ) -> object:
+        captured["model_name"] = model_name
+        captured["max_tokens"] = max_tokens
+        captured["local_files_only"] = local_files_only
+        return object()
+
+    class FakeHybridChunker:
+        def __init__(self, *, tokenizer: object, **_: object) -> None:
+            captured["tokenizer"] = tokenizer
+
+    monkeypatch.setattr(
+        document_processing_module,
+        "HuggingFaceTokenizer",
+        SimpleNamespace(from_pretrained=fake_from_pretrained),
+    )
+    monkeypatch.setattr(document_processing_module, "HybridChunker", FakeHybridChunker)
+
+    document_processing_module.DocumentProcessingService(toc_service=TOCService())
+
+    assert captured["model_name"] == "sentence-transformers/all-MiniLM-L6-v2"
+    assert captured["max_tokens"] == 512
+    assert captured["local_files_only"] is True
+    assert captured["tokenizer"] is not None
