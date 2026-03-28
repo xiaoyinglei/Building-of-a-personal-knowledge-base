@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from pkp.config.model_paths import resolve_local_model_reference
+from pkp.integrations.huggingface import suppress_backend_fast_tokenizer_padding_warning
 
 
 class LocalBgeProviderRepo:
@@ -100,7 +101,7 @@ class LocalBgeProviderRepo:
         if encoder_cls is None:
             raise RuntimeError("FlagEmbedding BGEM3FlagModel is unavailable")
         try:
-            return cast(
+            backend = cast(
                 object,
                 encoder_cls(
                     self._embedding_model_ref,
@@ -113,6 +114,7 @@ class LocalBgeProviderRepo:
                     return_colbert_vecs=False,
                 ),
             )
+            return suppress_backend_fast_tokenizer_padding_warning(backend)
         except Exception as exc:  # pragma: no cover - backend-specific failure
             raise RuntimeError(f"Local BGE embedding load failed: {exc}") from exc
 
@@ -125,7 +127,7 @@ class LocalBgeProviderRepo:
         if reranker_cls is None:
             raise RuntimeError("FlagEmbedding FlagReranker is unavailable")
         try:
-            return cast(
+            backend = cast(
                 object,
                 reranker_cls(
                     self._rerank_model_ref,
@@ -135,6 +137,7 @@ class LocalBgeProviderRepo:
                     normalize=False,
                 ),
             )
+            return suppress_backend_fast_tokenizer_padding_warning(backend)
         except Exception as exc:  # pragma: no cover - backend-specific failure
             raise RuntimeError(f"Local BGE rerank load failed: {exc}") from exc
 
