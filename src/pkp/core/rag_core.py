@@ -4,9 +4,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pkp.algorithms.context_build.merge import ContextEvidenceMerger
+from pkp.algorithms.context_build.prompt_builder import ContextPromptBuilder
+from pkp.algorithms.context_build.truncation import EvidenceTruncator
+from pkp.algorithms.generation.answer_generator import AnswerGenerator
 from pkp.core.options import QueryOptions
 from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult, IngestRequest
+from pkp.core.pipelines.query_pipeline import RAGQueryPipeline
+from pkp.core.results import RAGQueryResult
 from pkp.core.storage_config import StorageConfig
+from pkp.repo.interfaces import EmbeddingProviderBinding
 from pkp.repo.parse.docling_parser_repo import DoclingParserRepo
 from pkp.repo.parse.image_parser_repo import ImageParserRepo
 from pkp.repo.parse.markdown_parser_repo import MarkdownParserRepo
@@ -17,18 +24,67 @@ from pkp.repo.parse.web_parser_repo import WebParserRepo
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
 from pkp.repo.vision.ocr_vision_repo import create_default_ocr_repo
+from pkp.service.answer_generation_service import AnswerGenerationService
+from pkp.service.artifact_service import ArtifactService
 from pkp.service.chunking_service import ChunkingService
 from pkp.service.document_processing_service import DocumentProcessingService
+from pkp.service.evidence_service import CandidateLike, EvidenceService
+from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.policy_resolution_service import PolicyResolutionService
+from pkp.service.query_understanding_service import QueryUnderstandingService
+from pkp.service.retrieval_service import RetrievalService
+from pkp.service.rerank_service import HeuristicRerankService
+from pkp.service.routing_service import RoutingService
+from pkp.service.telemetry_service import TelemetryService
 from pkp.service.toc_service import TOCService
 from pkp.stores import StorageBundle
+from pkp.types.diagnostics import ProviderAttempt
+
+
+class _CoreInstrumentedReranker:
+    def __init__(self, rerank_service: object) -> None:
+        self._rerank_service = rerank_service
+        self.provider_name = getattr(rerank_service, "provider_name", "heuristic")
+        self.rerank_model_name = getattr(rerank_service, "rerank_model_name", "heuristic")
+        self.last_provider: str | None = self.provider_name
+        self.last_attempts: list[ProviderAttempt] = []
+
+    def __call__(self, query: str, candidates: list[CandidateLike]) -> list[CandidateLike]:
+        attempt = ProviderAttempt(
+            stage="rerank",
+            capability="rerank",
+            provider=self.provider_name,
+            location="core",
+            model=self.rerank_model_name,
+            status="success",
+        )
+        rerank = getattr(self._rerank_service, "rerank", None)
+        if not callable(rerank):
+            self.last_attempts = [attempt.model_copy(update={"status": "failed", "error": "rerank not supported"})]
+            return candidates
+        try:
+            result = list(rerank(query, candidates))
+        except RuntimeError as exc:
+            self.last_attempts = [attempt.model_copy(update={"status": "failed", "error": str(exc)})]
+            raise
+        self.provider_name = getattr(self._rerank_service, "provider_name", self.provider_name)
+        self.rerank_model_name = getattr(self._rerank_service, "rerank_model_name", self.rerank_model_name)
+        self.last_provider = self.provider_name
+        self.last_attempts = [
+            attempt.model_copy(update={"provider": self.provider_name, "model": self.rerank_model_name})
+        ]
+        return result
 
 
 @dataclass(slots=True)
 class RAGCore:
     storage: StorageConfig
+    embedding_bindings: tuple[EmbeddingProviderBinding, ...] = ()
+    telemetry_service: TelemetryService | None = None
     stores: StorageBundle = field(init=False)
     ingest_pipeline: IngestPipeline = field(init=False)
+    retrieval_service: RetrievalService = field(init=False, repr=False)
+    query_pipeline: RAGQueryPipeline = field(init=False, repr=False)
     _fts_repo: SQLiteFTSRepo = field(init=False, repr=False)
     _object_store: FileObjectStore = field(init=False, repr=False)
 
@@ -57,6 +113,22 @@ class RAGCore:
             toc_service=TOCService(),
             chunking_service=ChunkingService(),
             document_processing_service=DocumentProcessingService(toc_service=TOCService()),
+            embedding_bindings=self.embedding_bindings,
+        )
+        self.embedding_bindings = self.ingest_pipeline.embedding_bindings
+        self.retrieval_service = self._build_retrieval_service()
+        answer_generation_service = AnswerGenerationService()
+        self.query_pipeline = RAGQueryPipeline(
+            retrieval=self.retrieval_service,
+            context_merger=ContextEvidenceMerger(),
+            truncator=EvidenceTruncator(),
+            prompt_builder=ContextPromptBuilder(
+                answer_generation_service=answer_generation_service,
+            ),
+            answer_generator=AnswerGenerator(
+                answer_generation_service=answer_generation_service,
+                provider_bindings=self.embedding_bindings,
+            ),
         )
 
     def insert(self, request: IngestRequest | None = None, /, **kwargs: Any) -> IngestPipelineResult:
@@ -67,12 +139,82 @@ class RAGCore:
             request = IngestRequest(**normalized_kwargs)
         return self.ingest_pipeline.run(request)
 
-    def query(self, *args: Any, options: QueryOptions | None = None, **kwargs: Any) -> None:
-        del options
-        raise NotImplementedError("query pipeline is not implemented yet")
+    def query(
+        self,
+        *args: Any,
+        options: QueryOptions | None = None,
+        **kwargs: Any,
+    ) -> RAGQueryResult:
+        query_text = self._coerce_query_text(*args, **kwargs)
+        return self.query_pipeline.run(query_text, options=options or QueryOptions())
 
     def delete(self, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError("delete pipeline is not implemented yet")
 
     def rebuild(self, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError("rebuild pipeline is not implemented yet")
+
+    def _build_retrieval_service(self) -> RetrievalService:
+        from pkp.runtime.adapters import SearchBackedRetrievalFactory
+
+        retrieval_factory = SearchBackedRetrievalFactory(
+            metadata_repo=self.stores.metadata_repo,
+            fts_repo=self._fts_repo,
+            graph_repo=self.stores.graph_repo,
+        )
+        instrumented_reranker = _CoreInstrumentedReranker(
+            HeuristicRerankService(provider=self._default_rerank_provider()),
+        )
+        return RetrievalService(
+            full_text_retriever=retrieval_factory.full_text_retriever,
+            vector_retriever=retrieval_factory.vector_retriever_from_repo(
+                self.stores.vector_repo,
+                self.embedding_bindings,
+            ),
+            local_retriever=retrieval_factory.local_retriever_from_repo(
+                self.stores.vector_repo,
+                self.embedding_bindings,
+            ),
+            global_retriever=retrieval_factory.global_retriever_from_repo(
+                self.stores.vector_repo,
+                self.embedding_bindings,
+            ),
+            section_retriever=retrieval_factory.section_retriever,
+            special_retriever=retrieval_factory.special_retriever,
+            metadata_retriever=retrieval_factory.metadata_retriever,
+            graph_expander=retrieval_factory.graph_expander,
+            web_retriever=retrieval_factory.web_retriever,
+            reranker=instrumented_reranker,
+            routing_service=RoutingService(),
+            query_understanding_service=QueryUnderstandingService(),
+            evidence_service=EvidenceService(),
+            graph_expansion_service=GraphExpansionService(),
+            artifact_service=ArtifactService(),
+            telemetry_service=self.telemetry_service,
+        )
+
+    def _default_rerank_provider(self) -> object | None:
+        return next(
+            (
+                binding.provider
+                for binding in self.embedding_bindings
+                if callable(getattr(binding.provider, "rerank", None))
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _coerce_query_text(*args: Any, **kwargs: Any) -> str:
+        query_text = kwargs.pop("query", None)
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected keyword arguments: {unexpected}")
+        if args:
+            if len(args) != 1:
+                raise TypeError("query accepts exactly one positional query string")
+            if query_text is not None:
+                raise TypeError("query was provided both positionally and by keyword")
+            query_text = args[0]
+        if not isinstance(query_text, str) or not query_text.strip():
+            raise TypeError("query requires a non-empty string")
+        return query_text
