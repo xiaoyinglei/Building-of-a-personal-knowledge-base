@@ -103,7 +103,7 @@ def test_fast_query_returns_architecture_specific_answer_after_reloading_contain
     )
 
     assert response.evidence
-    assert "Types -> Config -> Repo -> Service -> Runtime -> UI" in response.conclusion
+    assert "Types -> Config -> Repo -> Service/Algorithms -> Core -> Runtime/UI" in response.conclusion
     assert "一个以可靠性为优先的个人知识平台" not in response.conclusion
 
 

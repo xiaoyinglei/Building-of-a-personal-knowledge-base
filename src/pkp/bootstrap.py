@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
@@ -8,6 +9,8 @@ import httpx
 
 from pkp.config import AppSettings
 from pkp.config.policies import RoutingThresholds
+from pkp.core.rag_core import RAGCore
+from pkp.core.storage_config import StorageConfig
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import EmbeddingProviderBinding, OcrResult, OcrVisionRepo, VectorRepo
 from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
@@ -118,6 +121,13 @@ class _DeterministicModelProvider:
         return list(range(len(candidates)))
 
 
+@dataclass(frozen=True, slots=True)
+class _ProviderStack:
+    cloud_providers: tuple[object, ...]
+    local_providers: tuple[object, ...]
+    rerank_service: object
+
+
 def _embedding_bindings(
     *,
     local_providers: Sequence[object],
@@ -145,6 +155,69 @@ def _embedding_bindings(
     if bindings:
         return tuple(bindings)
     return (EmbeddingProviderBinding(provider=FallbackEmbeddingRepo(), space="default", location="runtime"),)
+
+
+def _resolve_provider_stack(settings: AppSettings) -> _ProviderStack:
+    local_bge_provider: object | None = None
+    if settings.local_bge.enabled:
+        local_bge_provider = LocalBgeProviderRepo(
+            embedding_model=settings.local_bge.embedding_model,
+            embedding_model_path=(
+                None
+                if settings.local_bge.embedding_model_path is None
+                else settings.local_bge.embedding_model_path.as_posix()
+            ),
+            rerank_model=settings.local_bge.rerank_model,
+            rerank_model_path=(
+                None
+                if settings.local_bge.rerank_model_path is None
+                else settings.local_bge.rerank_model_path.as_posix()
+            ),
+        )
+
+    rerank_service = (
+        HeuristicRerankService(
+            provider=local_bge_provider,
+            config=RerankPipelineConfig(
+                cross_encoder=CrossEncoderConfig(
+                    model_name=settings.local_bge.rerank_model,
+                    model_path=(
+                        None
+                        if settings.local_bge.rerank_model_path is None
+                        else settings.local_bge.rerank_model_path.as_posix()
+                    ),
+                )
+            ),
+        )
+        if settings.local_bge.enabled
+        else HeuristicRerankService()
+    )
+
+    cloud_providers = (
+        OpenAIProviderRepo(
+            api_key=settings.openai.api_key.get_secret_value(),
+            base_url=settings.openai.base_url,
+            model=settings.openai.model,
+            embedding_model=settings.openai.embedding_model,
+        ),
+    )
+    local_providers = tuple(
+        provider
+        for provider in (
+            local_bge_provider,
+            OllamaProviderRepo(
+                base_url=settings.ollama.base_url,
+                chat_model=settings.ollama.chat_model,
+                embedding_model=None if settings.local_bge.enabled else settings.ollama.embedding_model,
+            ),
+        )
+        if provider is not None
+    )
+    return _ProviderStack(
+        cloud_providers=cloud_providers,
+        local_providers=local_providers,
+        rerank_service=rerank_service,
+    )
 
 
 def _build_ingest_service(
@@ -346,39 +419,7 @@ def build_runtime_container(settings: AppSettings) -> RuntimeContainer:
         default_wall_clock_budget_seconds=settings.runtime.default_wall_clock_budget_seconds,
         default_synthesis_retry_count=settings.runtime.default_synthesis_retry_count,
     )
-    local_bge_provider: object | None = None
-    if settings.local_bge.enabled:
-        local_bge_provider = LocalBgeProviderRepo(
-            embedding_model=settings.local_bge.embedding_model,
-            embedding_model_path=(
-                None
-                if settings.local_bge.embedding_model_path is None
-                else settings.local_bge.embedding_model_path.as_posix()
-            ),
-            rerank_model=settings.local_bge.rerank_model,
-            rerank_model_path=(
-                None
-                if settings.local_bge.rerank_model_path is None
-                else settings.local_bge.rerank_model_path.as_posix()
-            ),
-        )
-    rerank_service = (
-        HeuristicRerankService(
-            provider=local_bge_provider,
-            config=RerankPipelineConfig(
-                cross_encoder=CrossEncoderConfig(
-                    model_name=settings.local_bge.rerank_model,
-                    model_path=(
-                        None
-                        if settings.local_bge.rerank_model_path is None
-                        else settings.local_bge.rerank_model_path.as_posix()
-                    ),
-                )
-            ),
-        )
-        if settings.local_bge.enabled
-        else HeuristicRerankService()
-    )
+    provider_stack = _resolve_provider_stack(settings)
     return _build_runtime_container(
         runtime_root=settings.runtime.data_dir,
         object_store_root=settings.runtime.object_store_dir,
@@ -387,27 +428,20 @@ def build_runtime_container(settings: AppSettings) -> RuntimeContainer:
         thresholds=thresholds,
         ocr_repo=create_default_ocr_repo(),
         web_fetch_repo=HttpWebFetchRepo(),
-        cloud_providers=(
-            OpenAIProviderRepo(
-                api_key=settings.openai.api_key.get_secret_value(),
-                base_url=settings.openai.base_url,
-                model=settings.openai.model,
-                embedding_model=settings.openai.embedding_model,
-            ),
+        cloud_providers=provider_stack.cloud_providers,
+        local_providers=provider_stack.local_providers,
+        rerank_service=provider_stack.rerank_service,
+    )
+
+
+def build_rag_core(settings: AppSettings) -> RAGCore:
+    provider_stack = _resolve_provider_stack(settings)
+    return RAGCore(
+        storage=StorageConfig(backend="sqlite", root=settings.runtime.data_dir),
+        embedding_bindings=_embedding_bindings(
+            local_providers=provider_stack.local_providers,
+            cloud_providers=provider_stack.cloud_providers,
         ),
-        local_providers=tuple(
-            provider
-            for provider in (
-                local_bge_provider,
-                OllamaProviderRepo(
-                    base_url=settings.ollama.base_url,
-                    chat_model=settings.ollama.chat_model,
-                    embedding_model=None if settings.local_bge.enabled else settings.ollama.embedding_model,
-                ),
-            )
-            if provider is not None
-        ),
-        rerank_service=rerank_service,
     )
 
 
