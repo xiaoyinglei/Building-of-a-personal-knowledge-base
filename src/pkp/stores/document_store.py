@@ -46,6 +46,9 @@ class DocumentStore:
     def get_document(self, doc_id: str) -> Document | None:
         return self.metadata_repo.get_document(doc_id)
 
+    def is_active(self, doc_id: str) -> bool:
+        return self.metadata_repo.is_document_active(doc_id)
+
     def list_documents(
         self,
         source_id: str | None = None,
@@ -67,6 +70,9 @@ class DocumentStore:
     def deactivate_documents_for_location(self, location: str) -> None:
         self.metadata_repo.deactivate_documents_for_location(location)
 
+    def set_active(self, doc_id: str, *, active: bool) -> None:
+        self.metadata_repo.set_document_active(doc_id, active=active)
+
     def save_segment(self, segment: Segment) -> None:
         self.metadata_repo.save_segment(segment)
 
@@ -75,3 +81,6 @@ class DocumentStore:
 
     def list_segments(self, doc_id: str) -> list[Segment]:
         return self.metadata_repo.list_segments(doc_id)
+
+    def delete_segments_for_document(self, doc_id: str) -> int:
+        return self.metadata_repo.delete_segments_for_document(doc_id)

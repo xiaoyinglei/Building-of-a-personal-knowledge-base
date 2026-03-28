@@ -378,5 +378,62 @@ class SQLiteGraphRepo:
             edge = self._load_edge(row["payload"])
             self._replace_edge_evidence(edge.edge_id, edge.evidence_chunk_ids)
 
+    def delete_by_chunk_ids(self, chunk_ids: list[str] | tuple[str, ...]) -> tuple[list[str], list[str]]:
+        normalized_ids = tuple(dict.fromkeys(chunk_ids))
+        if not normalized_ids:
+            return ([], [])
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        self._conn.execute(
+            f"DELETE FROM node_evidence WHERE chunk_id IN ({placeholders})",
+            normalized_ids,
+        )
+        self._conn.execute(
+            f"DELETE FROM edge_evidence WHERE chunk_id IN ({placeholders})",
+            normalized_ids,
+        )
+        deleted_edge_ids = self._delete_orphaned_edges("edges")
+        deleted_edge_ids.extend(self._delete_orphaned_edges("candidate_edges"))
+        deleted_node_ids = self._delete_orphaned_nodes()
+        self._conn.commit()
+        return (deleted_node_ids, deleted_edge_ids)
+
+    def _delete_orphaned_edges(self, table_name: str) -> list[str]:
+        rows = self._conn.execute(
+            f"""
+            SELECT edge_id
+            FROM {table_name}
+            WHERE edge_id NOT IN (
+                SELECT DISTINCT edge_id
+                FROM edge_evidence
+            )
+            ORDER BY edge_id
+            """
+        ).fetchall()
+        edge_ids = [str(row["edge_id"]) for row in rows]
+        if edge_ids:
+            placeholders = ", ".join("?" for _ in edge_ids)
+            self._conn.execute(f"DELETE FROM {table_name} WHERE edge_id IN ({placeholders})", tuple(edge_ids))
+            self._conn.execute(f"DELETE FROM edge_evidence WHERE edge_id IN ({placeholders})", tuple(edge_ids))
+        return edge_ids
+
+    def _delete_orphaned_nodes(self) -> list[str]:
+        rows = self._conn.execute(
+            """
+            SELECT node_id
+            FROM nodes
+            WHERE node_id NOT IN (
+                SELECT DISTINCT node_id
+                FROM node_evidence
+            )
+            ORDER BY node_id
+            """
+        ).fetchall()
+        node_ids = [str(row["node_id"]) for row in rows]
+        if node_ids:
+            placeholders = ", ".join("?" for _ in node_ids)
+            self._conn.execute("DELETE FROM node_evidence WHERE node_id IN (" + placeholders + ")", tuple(node_ids))
+            self._conn.execute("DELETE FROM nodes WHERE node_id IN (" + placeholders + ")", tuple(node_ids))
+        return node_ids
+
     def close(self) -> None:
         self._conn.close()

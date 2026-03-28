@@ -226,6 +226,29 @@ class SQLiteFTSRepo:
             for row in rows
         ]
 
+    def delete_by_chunk_ids(self, chunk_ids: list[str] | tuple[str, ...]) -> int:
+        normalized_ids = tuple(dict.fromkeys(chunk_ids))
+        if not normalized_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        rows = self._conn.execute(
+            f"SELECT chunk_pk FROM chunks WHERE chunk_id IN ({placeholders})",
+            normalized_ids,
+        ).fetchall()
+        chunk_pks = [int(row["chunk_pk"]) for row in rows]
+        if chunk_pks:
+            pk_placeholders = ", ".join("?" for _ in chunk_pks)
+            self._conn.execute(
+                f"DELETE FROM chunks_fts WHERE rowid IN ({pk_placeholders})",
+                tuple(chunk_pks),
+            )
+        cursor = self._conn.execute(
+            f"DELETE FROM chunks WHERE chunk_id IN ({placeholders})",
+            normalized_ids,
+        )
+        self._conn.commit()
+        return int(cursor.rowcount)
+
     @staticmethod
     def _normalize_query(query: str) -> str:
         return build_fts_query(query)

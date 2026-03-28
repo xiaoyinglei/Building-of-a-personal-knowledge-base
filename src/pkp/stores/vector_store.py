@@ -118,3 +118,11 @@ class VectorStore:
             embedding_space=embedding_space,
             item_kind="chunk",
         )
+
+    def delete_for_documents(
+        self,
+        doc_ids: list[str] | tuple[str, ...],
+        *,
+        item_kind: str | None = None,
+    ) -> int:
+        return self.vector_repo.delete_for_documents(doc_ids, item_kind=item_kind)

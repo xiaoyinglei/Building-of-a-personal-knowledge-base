@@ -289,6 +289,13 @@ class SQLiteMetadataRepo:
         ).fetchone()
         return None if row is None else self._load(Document, row["payload"])
 
+    def is_document_active(self, doc_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT active FROM documents WHERE doc_id = ?",
+            (doc_id,),
+        ).fetchone()
+        return bool(row["active"]) if row is not None else False
+
     def list_documents(
         self,
         source_id: str | None = None,
@@ -346,6 +353,13 @@ class SQLiteMetadataRepo:
         )
         self._conn.commit()
 
+    def set_document_active(self, doc_id: str, *, active: bool) -> None:
+        self._conn.execute(
+            "UPDATE documents SET active = ? WHERE doc_id = ?",
+            (1 if active else 0, doc_id),
+        )
+        self._conn.commit()
+
     def save_segment(self, segment: Segment) -> None:
         self._conn.execute(
             """
@@ -380,6 +394,11 @@ class SQLiteMetadataRepo:
             (doc_id,),
         ).fetchall()
         return [self._load(Segment, row["payload"]) for row in rows]
+
+    def delete_segments_for_document(self, doc_id: str) -> int:
+        cursor = self._conn.execute("DELETE FROM segments WHERE doc_id = ?", (doc_id,))
+        self._conn.commit()
+        return int(cursor.rowcount)
 
     def save_chunk(self, chunk: Chunk) -> None:
         order_index = int(
@@ -420,6 +439,11 @@ class SQLiteMetadataRepo:
             (doc_id,),
         ).fetchall()
         return [self._load(Chunk, row["payload"]) for row in rows]
+
+    def delete_chunks_for_document(self, doc_id: str) -> int:
+        cursor = self._conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
+        self._conn.commit()
+        return int(cursor.rowcount)
 
     def list_chunks_by_ids(self, chunk_ids: list[str] | tuple[str, ...]) -> list[Chunk]:
         normalized_ids = tuple(dict.fromkeys(chunk_ids))

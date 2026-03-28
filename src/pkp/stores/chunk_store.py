@@ -25,3 +25,6 @@ class ChunkStore:
 
     def list_by_ids(self, chunk_ids: list[str] | tuple[str, ...]) -> list[Chunk]:
         return self.metadata_repo.list_chunks_by_ids(chunk_ids)
+
+    def delete_for_document(self, doc_id: str) -> int:
+        return self.metadata_repo.delete_chunks_for_document(doc_id)

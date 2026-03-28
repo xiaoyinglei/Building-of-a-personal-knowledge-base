@@ -9,8 +9,10 @@ from pkp.algorithms.context_build.prompt_builder import ContextPromptBuilder
 from pkp.algorithms.context_build.truncation import EvidenceTruncator
 from pkp.algorithms.generation.answer_generator import AnswerGenerator
 from pkp.core.options import QueryOptions
+from pkp.core.pipelines.delete_pipeline import DeletePipeline, DeletePipelineResult, DeleteRequest
 from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult, IngestRequest
 from pkp.core.pipelines.query_pipeline import RAGQueryPipeline
+from pkp.core.pipelines.rebuild_pipeline import RebuildPipeline, RebuildPipelineResult, RebuildRequest
 from pkp.core.results import RAGQueryResult
 from pkp.core.storage_config import StorageConfig
 from pkp.repo.interfaces import EmbeddingProviderBinding
@@ -83,6 +85,8 @@ class RAGCore:
     telemetry_service: TelemetryService | None = None
     stores: StorageBundle = field(init=False)
     ingest_pipeline: IngestPipeline = field(init=False)
+    delete_pipeline: DeletePipeline = field(init=False, repr=False)
+    rebuild_pipeline: RebuildPipeline = field(init=False, repr=False)
     retrieval_service: RetrievalService = field(init=False, repr=False)
     query_pipeline: RAGQueryPipeline = field(init=False, repr=False)
     _fts_repo: SQLiteFTSRepo = field(init=False, repr=False)
@@ -116,6 +120,20 @@ class RAGCore:
             embedding_bindings=self.embedding_bindings,
         )
         self.embedding_bindings = self.ingest_pipeline.embedding_bindings
+        self.delete_pipeline = DeletePipeline(
+            documents=self.stores.documents,
+            chunks=self.stores.chunks,
+            vectors=self.stores.vectors,
+            graph=self.stores.graph,
+            status=self.stores.status,
+            fts_repo=self._fts_repo,
+            ingest_pipeline=self.ingest_pipeline,
+        )
+        self.rebuild_pipeline = RebuildPipeline(
+            ingest_pipeline=self.ingest_pipeline,
+            delete_pipeline=self.delete_pipeline,
+            object_store=self._object_store,
+        )
         self.retrieval_service = self._build_retrieval_service()
         answer_generation_service = AnswerGenerationService()
         self.query_pipeline = RAGQueryPipeline(
@@ -148,11 +166,13 @@ class RAGCore:
         query_text = self._coerce_query_text(*args, **kwargs)
         return self.query_pipeline.run(query_text, options=options or QueryOptions())
 
-    def delete(self, *args: Any, **kwargs: Any) -> None:
-        raise NotImplementedError("delete pipeline is not implemented yet")
+    def delete(self, *args: Any, **kwargs: Any) -> DeletePipelineResult:
+        request = self._coerce_delete_request(*args, **kwargs)
+        return self.delete_pipeline.run(request)
 
-    def rebuild(self, *args: Any, **kwargs: Any) -> None:
-        raise NotImplementedError("rebuild pipeline is not implemented yet")
+    def rebuild(self, *args: Any, **kwargs: Any) -> RebuildPipelineResult:
+        request = self._coerce_rebuild_request(*args, **kwargs)
+        return self.rebuild_pipeline.run(request)
 
     def _build_retrieval_service(self) -> RetrievalService:
         from pkp.runtime.adapters import SearchBackedRetrievalFactory
@@ -218,3 +238,23 @@ class RAGCore:
         if not isinstance(query_text, str) or not query_text.strip():
             raise TypeError("query requires a non-empty string")
         return query_text
+
+    @staticmethod
+    def _coerce_delete_request(*args: Any, **kwargs: Any) -> DeleteRequest:
+        if args:
+            if len(args) != 1 or not isinstance(args[0], DeleteRequest):
+                raise TypeError("delete accepts either a DeleteRequest or keyword selectors")
+            if kwargs:
+                raise TypeError("delete request was provided both positionally and by keyword")
+            return args[0]
+        return DeleteRequest(**kwargs)
+
+    @staticmethod
+    def _coerce_rebuild_request(*args: Any, **kwargs: Any) -> RebuildRequest:
+        if args:
+            if len(args) != 1 or not isinstance(args[0], RebuildRequest):
+                raise TypeError("rebuild accepts either a RebuildRequest or keyword selectors")
+            if kwargs:
+                raise TypeError("rebuild request was provided both positionally and by keyword")
+            return args[0]
+        return RebuildRequest(**kwargs)
