@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
+from pkp.algorithms.context_build.merge import ContextEvidenceMerger
+from pkp.algorithms.context_build.prompt_builder import ContextPromptBuilder
+from pkp.algorithms.context_build.truncation import EvidenceTruncator
+from pkp.algorithms.generation.answer_generator import AnswerGenerator
 from pkp.algorithms.retrieval.branch_retrievers import BranchRetrieverRegistry
 from pkp.algorithms.retrieval.contracts import GraphExpander
 from pkp.algorithms.retrieval.fusion import FusedCandidateView, ReciprocalRankFusion
 from pkp.algorithms.retrieval.mode_planner import RetrievalPlanBuilder
 from pkp.algorithms.retrieval.rerank import UnifiedReranker
+from pkp.core.options import QueryOptions
 from pkp.core.query_modes import QueryMode
+from pkp.core.results import BuiltContext, RAGQueryResult
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService
 from pkp.service.graph_expansion_service import GraphExpansionService
@@ -19,6 +26,18 @@ from pkp.types.access import AccessPolicy, ExecutionLocationPreference
 from pkp.types.diagnostics import RetrievalDiagnostics
 from pkp.types.envelope import PreservationSuggestion
 from pkp.types.retrieval import RetrievalResult
+
+
+class RetrievalExecutor(Protocol):
+    def retrieve(
+        self,
+        query: str,
+        *,
+        access_policy: AccessPolicy,
+        source_scope: Sequence[str] = (),
+        execution_location_preference: ExecutionLocationPreference | None = None,
+        query_mode: QueryMode | str | None = None,
+    ) -> RetrievalResult: ...
 
 
 @dataclass(slots=True)
@@ -307,3 +326,67 @@ class QueryPipeline:
             attempts.extend(list(getattr(retriever, "last_attempts", [])))
         attempts.extend(list(getattr(self.reranker.reranker, "last_attempts", [])))
         return attempts
+
+
+@dataclass(slots=True)
+class RAGQueryPipeline:
+    retrieval: RetrievalExecutor
+    context_merger: ContextEvidenceMerger
+    truncator: EvidenceTruncator
+    prompt_builder: ContextPromptBuilder
+    answer_generator: AnswerGenerator
+
+    def run(
+        self,
+        query: str,
+        *,
+        options: QueryOptions,
+    ) -> RAGQueryResult:
+        retrieval = self.retrieval.retrieve(
+            query,
+            access_policy=options.access_policy,
+            source_scope=options.source_scope,
+            execution_location_preference=options.execution_location_preference,
+            query_mode=options.mode,
+        )
+        merged_evidence = self.context_merger.merge(retrieval)
+        truncated = self.truncator.truncate(
+            merged_evidence,
+            token_budget=options.max_context_tokens,
+            max_evidence_chunks=options.max_evidence_chunks,
+        )
+        context_evidence_items = [item.as_evidence_item() for item in truncated.evidence]
+        grounded_candidate = self.answer_generator.grounded_candidate(query, context_evidence_items)
+        prompt_build = self.prompt_builder.build(
+            query=query,
+            grounded_candidate=grounded_candidate,
+            evidence=truncated.evidence,
+            runtime_mode=retrieval.decision.runtime_mode,
+            token_count=truncated.token_count,
+        )
+        generated = self.answer_generator.generate(
+            query=query,
+            prompt=prompt_build.prompt,
+            evidence_pack=context_evidence_items,
+            grounded_candidate=prompt_build.grounded_candidate,
+            runtime_mode=retrieval.decision.runtime_mode,
+            access_policy=options.access_policy,
+            execution_location_preference=options.execution_location_preference,
+        )
+        return RAGQueryResult(
+            query=query,
+            mode=str(options.mode),
+            answer=generated.answer,
+            retrieval=retrieval,
+            context=BuiltContext(
+                evidence=truncated.evidence,
+                token_budget=truncated.token_budget,
+                token_count=truncated.token_count,
+                truncated_count=truncated.truncated_count,
+                grounded_candidate=prompt_build.grounded_candidate,
+                prompt=prompt_build.prompt,
+            ),
+            generation_provider=generated.provider,
+            generation_model=generated.model,
+            generation_attempts=generated.attempts,
+        )
