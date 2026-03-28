@@ -204,6 +204,25 @@ class SQLiteVectorRepo:
         row = self._conn.execute(sql, params).fetchone()
         return int(row["count"]) if row is not None else 0
 
+    def delete_for_documents(
+        self,
+        doc_ids: tuple[str, ...] | list[str],
+        *,
+        item_kind: str | None = None,
+    ) -> int:
+        normalized_ids = tuple(dict.fromkeys(doc_ids))
+        if not normalized_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        sql = f"DELETE FROM vectors WHERE doc_id IN ({placeholders})"
+        params: list[object] = list(normalized_ids)
+        if item_kind is not None:
+            sql += " AND item_kind = ?"
+            params.append(item_kind)
+        cursor = self._conn.execute(sql, tuple(params))
+        self._conn.commit()
+        return int(cursor.rowcount)
+
     def close(self) -> None:
         self._conn.close()
 

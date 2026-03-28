@@ -47,3 +47,6 @@ class GraphStore:
 
     def list_edges_for_chunk(self, chunk_id: str, *, include_candidates: bool = False) -> list[GraphEdge]:
         return self.graph_repo.list_edges_for_chunk(chunk_id, include_candidates=include_candidates)
+
+    def delete_by_chunk_ids(self, chunk_ids: list[str] | tuple[str, ...]) -> tuple[list[str], list[str]]:
+        return self.graph_repo.delete_by_chunk_ids(chunk_ids)
