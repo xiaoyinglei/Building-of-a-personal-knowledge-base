@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import cast
 
+from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import (
     EmbeddingProviderBinding,
@@ -33,6 +34,12 @@ from pkp.service.chunking_service import ChunkingService
 from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.toc_service import TOCService
+from pkp.stores.cache_store import CacheStore
+from pkp.stores.chunk_store import ChunkStore
+from pkp.stores.document_store import DocumentStore
+from pkp.stores.graph_store import GraphStore
+from pkp.stores.status_store import StatusStore
+from pkp.stores.vector_store import VectorStore
 from pkp.types.access import AccessPolicy
 from pkp.types.content import Chunk, ChunkRole, Document, GraphEdge, GraphNode, Segment, Source, SourceType
 from pkp.types.processing import DocumentProcessingPackage
@@ -49,6 +56,9 @@ class IngestResult:
     visible_text: str
     visual_semantics: str | None = None
     processing: DocumentProcessingPackage | None = None
+    entity_count: int = 0
+    relation_count: int = 0
+    status: str = "ready"
 
 
 class IngestService:
@@ -99,6 +109,28 @@ class IngestService:
                     space="default",
                 ),
             )
+        self.ingest_pipeline = IngestPipeline(
+            documents=DocumentStore(metadata_repo=self.metadata_repo),
+            chunks=ChunkStore(metadata_repo=self.metadata_repo),
+            vectors=VectorStore(vector_repo=cast(SQLiteVectorRepo, self.vector_repo)),
+            graph=GraphStore(graph_repo=self.graph_repo),
+            status=StatusStore(metadata_repo=self.metadata_repo),
+            cache=CacheStore(metadata_repo=self.metadata_repo),
+            fts_repo=self.fts_repo,
+            object_store=self.object_store,
+            markdown_parser=self.markdown_parser,
+            pdf_parser=self.pdf_parser,
+            plain_text_parser=self.plain_text_parser,
+            image_parser=self.image_parser,
+            web_parser=self.web_parser,
+            web_fetch_repo=self.web_fetch_repo,
+            docling_parser=self.docling_parser,
+            policy_resolution_service=self.policy_resolution_service,
+            toc_service=self.toc_service,
+            chunking_service=self.chunking_service,
+            document_processing_service=self.document_processing_service,
+            embedding_bindings=self.embedding_bindings,
+        )
 
     @classmethod
     def create_in_memory(
@@ -356,175 +388,30 @@ class IngestService:
         owner: str,
         access_policy: AccessPolicy | None,
     ) -> IngestResult:
-        normalized_policy = access_policy or AccessPolicy.default()
-        content_hash = sha256(raw_bytes).hexdigest()
-        existing_source = self.metadata_repo.get_source_by_location_and_hash(
-            location,
-            content_hash,
-        )
-        if existing_source is not None:
-            existing_document = self.metadata_repo.get_active_document_by_location_and_hash(
-                location,
-                content_hash,
-            )
-            if existing_document is None:
-                existing_document = self.metadata_repo.get_latest_document_for_location(location)
-            if existing_document is None:
-                raise RuntimeError("duplicate source exists without an active document")
-            existing_segments = self.metadata_repo.list_segments(existing_document.doc_id)
-            stored_existing_chunks = self.metadata_repo.list_chunks(existing_document.doc_id)
-            existing_chunks = self._retrievable_chunks(stored_existing_chunks)
-            self._repair_duplicate_indexes(
-                source=existing_source,
-                document=existing_document,
-                segments=existing_segments,
-                chunks=existing_chunks,
-            )
-            return IngestResult(
-                source=existing_source,
-                document=existing_document,
-                segments=existing_segments,
-                chunks=existing_chunks,
-                is_duplicate=True,
-                content_hash=content_hash,
-                visible_text=parsed.visible_text,
-                visual_semantics=parsed.visual_semantics,
-                processing=None,
-            )
-
-        latest_source = self.metadata_repo.get_latest_source_for_location(location)
-        ingest_version = 1 if latest_source is None else latest_source.ingest_version + 1
-        source_id = self._deterministic_id(location, content_hash, "source")
-        object_key = self.object_store.put_bytes(raw_bytes, suffix=self._suffix_for(parsed.source_type))
-        source = Source(
-            source_id=source_id,
-            source_type=parsed.source_type,
+        result = self.ingest_pipeline.ingest_parsed_document(
             location=location,
+            raw_bytes=raw_bytes,
+            parsed=parsed,
             owner=owner,
-            content_hash=content_hash,
-            effective_access_policy=normalized_policy,
-            ingest_version=ingest_version,
-            metadata={"object_key": object_key, "source_type": parsed.source_type.value},
+            access_policy=access_policy,
         )
-        self.metadata_repo.save_source(source)
-        self.metadata_repo.deactivate_documents_for_location(location)
+        return self._from_pipeline_result(result)
 
-        document = Document(
-            doc_id=self._deterministic_id(source_id, parsed.title, "document"),
-            source_id=source.source_id,
-            doc_type=parsed.doc_type,
-            title=parsed.title,
-            authors=list(parsed.authors or [owner]),
-            created_at=datetime.now(UTC),
-            language=parsed.language,
-            effective_access_policy=normalized_policy,
-            metadata={**parsed.metadata, "location": location, "content_hash": content_hash},
-        )
-        self.metadata_repo.save_document(
-            document,
-            location=location,
-            content_hash=content_hash,
-        )
-
-        if parsed.source_type in {SourceType.PDF, SourceType.MARKDOWN, SourceType.DOCX, SourceType.IMAGE}:
-            prepared = self.document_processing_service.build(
-                location=location,
-                source=source,
-                document=document,
-                parsed=parsed,
-                access_policy=normalized_policy,
-            )
-            segments = prepared.segments
-            stored_chunks = prepared.stored_chunks
-            chunks = prepared.indexed_chunks
-            processing = prepared.package
-            for segment in segments:
-                self.metadata_repo.save_segment(segment)
-            for chunk in stored_chunks:
-                self.metadata_repo.save_chunk(chunk)
-            for chunk in chunks:
-                matching_segment = next((item for item in segments if item.segment_id == chunk.segment_id), None)
-                toc_path = [] if matching_segment is None else list(matching_segment.toc_path)
-                self.fts_repo.index_chunk(
-                    chunk_id=chunk.chunk_id,
-                    doc_id=chunk.doc_id,
-                    source_id=source.source_id,
-                    title=document.title,
-                    toc_path=toc_path,
-                    text=chunk.text,
-                )
-            for segment in segments:
-                segment_chunks = [chunk for chunk in chunks if chunk.segment_id == segment.segment_id]
-                self._index_chunk_vectors(document=document, segment=segment, chunks=segment_chunks)
-                self._save_graph_candidates(document, segment, segment_chunks)
-        else:
-            segments = []
-            chunks = []
-            processing = None
-            path_to_segment_id: dict[tuple[str, ...], str] = {}
-
-            for section in parsed.sections:
-                normalized_path = self.toc_service.normalize_path(section.toc_path)
-                parent_path = tuple(normalized_path[:-1])
-                parent_segment_id = path_to_segment_id.get(parent_path)
-                anchor = self.toc_service.stable_anchor(
-                    location,
-                    normalized_path,
-                    section.order_index,
-                    page_range=section.page_range,
-                    anchor_hint=section.anchor_hint,
-                )
-                segment = Segment(
-                    segment_id=self._deterministic_id(source_id, anchor, "segment"),
-                    doc_id=document.doc_id,
-                    parent_segment_id=parent_segment_id,
-                    toc_path=list(normalized_path),
-                    heading_level=section.heading_level,
-                    page_range=section.page_range,
-                    order_index=section.order_index,
-                    anchor=anchor,
-                    visible_text=section.text or None,
-                    visual_semantics=section.metadata.get("visual_semantics"),
-                    metadata=section.metadata | {"location": location},
-                )
-                self.metadata_repo.save_segment(segment)
-                segments.append(segment)
-                path_to_segment_id[tuple(normalized_path)] = segment.segment_id
-
-                chunk_list = self.chunking_service.chunk_section(
-                    location=location,
-                    doc_id=document.doc_id,
-                    segment=segment,
-                    text=section.text,
-                    access_policy=self.policy_resolution_service.resolve_effective_access_policy(
-                        source_policy=normalized_policy,
-                        chunk_policy=normalized_policy,
-                    ),
-                )
-                for chunk in chunk_list:
-                    self.metadata_repo.save_chunk(chunk)
-                    chunks.append(chunk)
-                    self.fts_repo.index_chunk(
-                        chunk_id=chunk.chunk_id,
-                        doc_id=chunk.doc_id,
-                        source_id=source.source_id,
-                        title=document.title,
-                        toc_path=list(segment.toc_path),
-                        text=chunk.text,
-                    )
-                self._index_chunk_vectors(document=document, segment=segment, chunks=chunk_list)
-                self._save_graph_candidates(document, segment, chunk_list)
-
+    @staticmethod
+    def _from_pipeline_result(result: IngestPipelineResult) -> IngestResult:
         return IngestResult(
-            source=source,
-            document=document,
-            segments=segments,
-            chunks=chunks,
-            is_duplicate=False,
-            content_hash=content_hash,
-            visible_text=parsed.visible_text,
-            visual_semantics=parsed.visual_semantics,
-            processing=processing,
+            source=result.source,
+            document=result.document,
+            segments=result.segments,
+            chunks=result.chunks,
+            is_duplicate=result.is_duplicate,
+            content_hash=result.content_hash,
+            visible_text=result.visible_text,
+            visual_semantics=result.visual_semantics,
+            processing=result.processing,
+            entity_count=result.entity_count,
+            relation_count=result.relation_count,
+            status=result.status,
         )
 
     def _repair_duplicate_indexes(

@@ -27,6 +27,9 @@ class GraphStore:
     def save_candidate_edge(self, edge: GraphEdge) -> None:
         self.graph_repo.save_candidate_edge(edge)
 
+    def save_edge(self, edge: GraphEdge) -> None:
+        self.graph_repo.save_edge(edge)
+
     def promote_candidate_edge(self, edge_id: str) -> None:
         self.graph_repo.promote_candidate_edge(edge_id)
 
