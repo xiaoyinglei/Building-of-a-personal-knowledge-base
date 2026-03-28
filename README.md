@@ -2,9 +2,11 @@
 
 一个以可靠性为优先的个人知识平台，用来完成资料接入、索引构建、检索问答、深度研究和知识沉淀。
 
+当前项目已经切到 `library-first` 入口，核心使用方式是直接构建 `RAGCore`。FastAPI 和 CLI 仍然保留，但它们是可选包装层，不再定义项目骨架。
+
 项目采用严格分层架构：
 
-`Types -> Config -> Repo -> Service -> Runtime -> UI`
+`Types -> Config -> Repo -> Service/Algorithms -> Core -> Runtime/UI`
 
 ## 架构
 
@@ -12,8 +14,9 @@
 - `Config`：配置加载、默认策略、运行参数
 - `Repo`：解析、存储、检索、图谱、模型适配
 - `Service`：ingest、chunking、retrieval、evidence、artifact 等领域逻辑
-- `Runtime`：Fast Path、Deep Path、artifact promotion、session orchestration
-- `UI`：FastAPI 和 CLI 对外入口
+- `Core`：`RAGCore` 主入口，以及 ingest/query/delete/rebuild 主流程
+- `Runtime`：Fast Path、Deep Path、artifact promotion、session orchestration，可作为包装层保留
+- `UI`：FastAPI 和 CLI 对外入口，可选
 
 ## 核心模块
 
@@ -34,6 +37,23 @@ cp .env.example .env
 ```
 
 项目会自动读取根目录 `.env`。
+
+库调用示例：
+
+```python
+from pkp.bootstrap import build_rag_core, load_settings
+
+core = build_rag_core(load_settings())
+result = core.insert(
+    source_type="plain_text",
+    location="memory://note",
+    owner="user",
+    content_text="Alpha Engine processes ingestion requests.",
+)
+answer = core.query("What does Alpha Engine do?")
+core.delete(location="memory://note")
+core.rebuild(location="memory://note")
+```
 
 ## Ollama 接入
 

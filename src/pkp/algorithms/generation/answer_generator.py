@@ -372,7 +372,7 @@ class AnswerGenerator:
     def _extract_layer_signature(text: str) -> str | None:
         normalized = text.replace("`", " ")
         match = re.search(
-            r"([A-Za-z][A-Za-z0-9 ]+(?:\s*->\s*[A-Za-z][A-Za-z0-9 ]+){2,})",
+            r"([A-Za-z][A-Za-z0-9/ ]+(?:\s*->\s*[A-Za-z][A-Za-z0-9/ ]+){2,})",
             normalized,
         )
         if match is None:
