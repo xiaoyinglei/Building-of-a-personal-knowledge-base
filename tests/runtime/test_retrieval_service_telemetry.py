@@ -79,7 +79,9 @@ def test_retrieval_service_records_branch_usage_and_graph_expansion() -> None:
     )
 
     assert result.graph_expanded is True
-    assert [event.name for event in telemetry.list_events()] == [
+    events = telemetry.list_events()
+    assert [event.name for event in events] == [
+        "retrieval.branch_used",
         "retrieval.branch_used",
         "retrieval.branch_used",
         "retrieval.branch_used",
@@ -88,10 +90,12 @@ def test_retrieval_service_records_branch_usage_and_graph_expansion() -> None:
         "retrieval.graph_expanded",
         "artifact.preservation_suggested",
     ]
-    assert telemetry.list_events()[3].payload["candidate_count"] == 2
-    assert telemetry.list_events()[4].payload["reordered"] is False
-    assert telemetry.list_events()[5].payload["added_count"] == 1
-    assert telemetry.list_events()[6].payload["artifact_type"] == "topic_page"
+    assert [event.payload["branch"] for event in events[:4]] == ["local", "global", "vector", "full_text"]
+    assert [event.payload["count"] for event in events[:4]] == [0, 0, 1, 1]
+    assert events[4].payload["candidate_count"] == 2
+    assert events[5].payload["reordered"] is False
+    assert events[6].payload["added_count"] == 1
+    assert events[7].payload["artifact_type"] == "topic_page"
 
 
 def test_retrieval_service_records_rrf_rerank_and_preservation_telemetry() -> None:
@@ -147,7 +151,9 @@ def test_retrieval_service_records_rrf_rerank_and_preservation_telemetry() -> No
     )
 
     assert result.preservation_suggestion.suggested is True
-    assert [event.name for event in telemetry.list_events()] == [
+    events = telemetry.list_events()
+    assert [event.name for event in events] == [
+        "retrieval.branch_used",
         "retrieval.branch_used",
         "retrieval.branch_used",
         "retrieval.branch_used",
@@ -155,6 +161,8 @@ def test_retrieval_service_records_rrf_rerank_and_preservation_telemetry() -> No
         "retrieval.rerank_effectiveness",
         "artifact.preservation_suggested",
     ]
-    assert telemetry.list_events()[3].payload["duplicate_count"] == 2
-    assert telemetry.list_events()[4].payload["reordered"] is True
-    assert telemetry.list_events()[5].payload["artifact_type"] == "comparison_page"
+    assert [event.payload["branch"] for event in events[:4]] == ["local", "global", "vector", "full_text"]
+    assert [event.payload["count"] for event in events[:4]] == [0, 0, 2, 2]
+    assert events[4].payload["duplicate_count"] == 2
+    assert events[5].payload["reordered"] is True
+    assert events[6].payload["artifact_type"] == "comparison_page"

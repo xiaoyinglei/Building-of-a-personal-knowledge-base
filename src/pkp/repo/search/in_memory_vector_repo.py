@@ -18,6 +18,7 @@ class VectorChunkRecord(Protocol):
 @dataclass(frozen=True)
 class _VectorRecord:
     item_id: str
+    item_kind: str
     embedding_space: str
     vector: tuple[float, ...]
     metadata: dict[str, str]
@@ -35,9 +36,11 @@ class InMemoryVectorRepo:
         *,
         metadata: dict[str, str] | None = None,
         embedding_space: str = "default",
+        item_kind: str = "chunk",
     ) -> None:
-        self._records[(embedding_space, item_id)] = _VectorRecord(
+        self._records[(embedding_space, item_kind, item_id)] = _VectorRecord(
             item_id=item_id,
+            item_kind=item_kind,
             embedding_space=embedding_space,
             vector=tuple(float(value) for value in vector),
             metadata=dict(metadata or {}),
@@ -50,8 +53,9 @@ class InMemoryVectorRepo:
             text = chunk.text
             vector = self._text_to_vector(text, vocabulary)
             metadata = {"doc_id": chunk.doc_id, "segment_id": chunk.segment_id}
-            self._records[("default", chunk.chunk_id)] = _VectorRecord(
+            self._records[("default", "chunk", chunk.chunk_id)] = _VectorRecord(
                 item_id=chunk.chunk_id,
+                item_kind="chunk",
                 embedding_space="default",
                 vector=vector,
                 metadata=metadata,
@@ -65,11 +69,12 @@ class InMemoryVectorRepo:
         limit: int = 10,
         doc_ids: list[str] | None = None,
         embedding_space: str = "default",
+        item_kind: str = "chunk",
     ) -> list[VectorSearchResult]:
         records = [
             record
             for record in self._records.values()
-            if embedding_space is None or record.embedding_space == embedding_space
+            if (embedding_space is None or record.embedding_space == embedding_space) and record.item_kind == item_kind
         ]
         if not records:
             return []
@@ -116,21 +121,31 @@ class InMemoryVectorRepo:
         item_ids: tuple[str, ...] | list[str],
         *,
         embedding_space: str | None = None,
+        item_kind: str | None = "chunk",
     ) -> set[str]:
         return {
             item_id
             for item_id in item_ids
             if any(
-                record.item_id == item_id and (embedding_space is None or record.embedding_space == embedding_space)
+                record.item_id == item_id
+                and (embedding_space is None or record.embedding_space == embedding_space)
+                and (item_kind is None or record.item_kind == item_kind)
                 for record in self._records.values()
             )
         }
 
-    def count_vectors(self, *, embedding_space: str | None = None, distinct_chunks: bool = False) -> int:
+    def count_vectors(
+        self,
+        *,
+        embedding_space: str | None = None,
+        item_kind: str | None = None,
+        distinct_chunks: bool = False,
+    ) -> int:
         records = [
             record
             for record in self._records.values()
-            if embedding_space is None or record.embedding_space == embedding_space
+            if (embedding_space is None or record.embedding_space == embedding_space)
+            and (item_kind is None or record.item_kind == item_kind)
         ]
         if not distinct_chunks:
             return len(records)

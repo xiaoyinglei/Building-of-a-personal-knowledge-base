@@ -225,6 +225,20 @@ def _build_runtime_container(
             embedding_bindings,
         ),
     )
+    local_retriever = cast(
+        Callable[[str, list[str]], Sequence[CandidateLike]],
+        retrieval_factory.local_retriever_from_repo(
+            vector_repo,
+            embedding_bindings,
+        ),
+    )
+    global_retriever = cast(
+        Callable[[str, list[str]], Sequence[CandidateLike]],
+        retrieval_factory.global_retriever_from_repo(
+            vector_repo,
+            embedding_bindings,
+        ),
+    )
     section_retriever = cast(
         Callable[[str, list[str]], Sequence[CandidateLike]],
         retrieval_factory.section_retriever,
@@ -252,6 +266,8 @@ def _build_runtime_container(
     retrieval_service = RetrievalService(
         full_text_retriever=standard_retriever,
         vector_retriever=vector_retriever,
+        local_retriever=local_retriever,
+        global_retriever=global_retriever,
         section_retriever=section_retriever,
         special_retriever=special_retriever,
         metadata_retriever=metadata_retriever,

@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from pkp.service.retrieval_service import RetrievalService
 from pkp.types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
+from pkp.core.query_modes import QueryMode
 from pkp.types.content import ChunkRole
 
 
@@ -30,6 +31,8 @@ def _build_service(
     *,
     full_text_candidates: list[FakeCandidate] | None = None,
     vector_candidates: list[FakeCandidate] | None = None,
+    local_candidates: list[FakeCandidate] | None = None,
+    global_candidates: list[FakeCandidate] | None = None,
     section_candidates: list[FakeCandidate] | None = None,
     special_candidates: list[FakeCandidate] | None = None,
     metadata_candidates: list[FakeCandidate] | None = None,
@@ -43,17 +46,35 @@ def _build_service(
         "special_calls": 0,
         "structure_calls": 0,
         "metadata_calls": 0,
+        "full_text_calls": 0,
+        "vector_calls": 0,
+        "local_calls": 0,
+        "global_calls": 0,
     }
 
     def full_text_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
         calls["full_text_query"] = query
         calls["full_text_scope"] = list(source_scope)
+        calls["full_text_calls"] = cast(int, calls["full_text_calls"]) + 1
         return list(full_text_candidates or [])
 
     def vector_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
         calls["vector_query"] = query
         calls["vector_scope"] = list(source_scope)
+        calls["vector_calls"] = cast(int, calls["vector_calls"]) + 1
         return list(vector_candidates or [])
+
+    def local_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+        calls["local_query"] = query
+        calls["local_scope"] = list(source_scope)
+        calls["local_calls"] = cast(int, calls["local_calls"]) + 1
+        return list(local_candidates or [])
+
+    def global_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+        calls["global_query"] = query
+        calls["global_scope"] = list(source_scope)
+        calls["global_calls"] = cast(int, calls["global_calls"]) + 1
+        return list(global_candidates or [])
 
     def section_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
         calls["section_query"] = query
@@ -93,6 +114,8 @@ def _build_service(
     service = RetrievalService(
         full_text_retriever=cast(Any, full_text_retriever),
         vector_retriever=cast(Any, vector_retriever),
+        local_retriever=cast(Any, local_retriever),
+        global_retriever=cast(Any, global_retriever),
         section_retriever=cast(Any, section_retriever),
         special_retriever=cast(Any, special_retriever),
         metadata_retriever=cast(Any, metadata_retriever),
@@ -440,3 +463,88 @@ def test_retrieval_service_collapses_duplicate_child_hits_from_same_parent() -> 
 
     assert [item.chunk_id for item in result.evidence.internal] == ["chunk-a1", "chunk-b1"]
     assert result.diagnostics.collapsed_candidate_count == 1
+
+
+def test_retrieval_service_naive_mode_uses_only_vector_branch() -> None:
+    service, calls = _build_service(
+        vector_candidates=[FakeCandidate("chunk-vector", "doc-a", "vector hit", "#v", 0.92, 1)],
+        local_candidates=[FakeCandidate("chunk-local", "doc-a", "local hit", "#l", 0.95, 1)],
+        global_candidates=[FakeCandidate("chunk-global", "doc-a", "global hit", "#g", 0.91, 1)],
+        full_text_candidates=[FakeCandidate("chunk-sparse", "doc-a", "sparse hit", "#s", 0.89, 1)],
+    )
+
+    result = service.retrieve(
+        "What is Alpha?",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+        query_mode=QueryMode.NAIVE,
+    )
+
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-vector"]
+    assert calls["vector_calls"] == 1
+    assert calls["local_calls"] == 0
+    assert calls["global_calls"] == 0
+    assert calls["full_text_calls"] == 0
+
+
+def test_retrieval_service_local_mode_uses_only_entity_local_branch() -> None:
+    service, calls = _build_service(
+        local_candidates=[FakeCandidate("chunk-local", "doc-a", "local hit", "#l", 0.95, 1)],
+        vector_candidates=[FakeCandidate("chunk-vector", "doc-a", "vector hit", "#v", 0.92, 1)],
+        global_candidates=[FakeCandidate("chunk-global", "doc-a", "global hit", "#g", 0.91, 1)],
+    )
+
+    result = service.retrieve(
+        "Alpha engine details",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+        query_mode="local",
+    )
+
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-local"]
+    assert calls["local_calls"] == 1
+    assert calls["global_calls"] == 0
+    assert calls["vector_calls"] == 0
+    assert calls["full_text_calls"] == 0
+
+
+def test_retrieval_service_global_mode_uses_only_relation_global_branch() -> None:
+    service, calls = _build_service(
+        global_candidates=[FakeCandidate("chunk-global", "doc-a", "global hit", "#g", 0.97, 1)],
+        local_candidates=[FakeCandidate("chunk-local", "doc-a", "local hit", "#l", 0.95, 1)],
+        vector_candidates=[FakeCandidate("chunk-vector", "doc-a", "vector hit", "#v", 0.92, 1)],
+    )
+
+    result = service.retrieve(
+        "How does Alpha depend on Beta?",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+        query_mode=QueryMode.GLOBAL,
+    )
+
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-global"]
+    assert calls["global_calls"] == 1
+    assert calls["local_calls"] == 0
+    assert calls["vector_calls"] == 0
+    assert calls["full_text_calls"] == 0
+
+
+def test_retrieval_service_hybrid_mode_combines_local_and_global_without_vector() -> None:
+    service, calls = _build_service(
+        local_candidates=[FakeCandidate("chunk-local", "doc-a", "local hit", "#l", 0.95, 1)],
+        global_candidates=[FakeCandidate("chunk-global", "doc-a", "global hit", "#g", 0.94, 1)],
+        vector_candidates=[FakeCandidate("chunk-vector", "doc-a", "vector hit", "#v", 0.99, 1)],
+    )
+
+    result = service.retrieve(
+        "How are Alpha and Beta related?",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+        query_mode=QueryMode.HYBRID,
+    )
+
+    assert {item.chunk_id for item in result.evidence.internal} == {"chunk-local", "chunk-global"}
+    assert calls["local_calls"] == 1
+    assert calls["global_calls"] == 1
+    assert calls["vector_calls"] == 0
+    assert calls["full_text_calls"] == 0

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -17,7 +18,7 @@ from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService
 from pkp.service.ingest_service import IngestService
 from pkp.service.query_understanding_service import QueryUnderstandingService
-from pkp.service.retrieval_service import RetrievalResult, RetrievalService
+from pkp.service.retrieval_service import RetrievalService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.types import (
     AccessPolicy,
@@ -37,6 +38,7 @@ from pkp.types import (
 )
 from pkp.types.content import ChunkRole
 from pkp.types.generation import GroundedAnswer
+from pkp.types.retrieval import RetrievalResult
 from pkp.types.text import (
     focus_terms,
     keyword_overlap,
@@ -84,9 +86,16 @@ class VectorSearchRepoProtocol(Protocol):
         limit: int = 10,
         doc_ids: list[str] | None = None,
         embedding_space: str = "default",
+        item_kind: str = "chunk",
     ) -> Sequence[VectorSearchResult]: ...
 
-    def count_vectors(self, *, embedding_space: str | None = None, distinct_chunks: bool = False) -> int: ...
+    def count_vectors(
+        self,
+        *,
+        embedding_space: str | None = None,
+        item_kind: str | None = None,
+        distinct_chunks: bool = False,
+    ) -> int: ...
 
 
 class MultiProviderBackedVectorRetriever:
@@ -96,11 +105,15 @@ class MultiProviderBackedVectorRetriever:
         factory: SearchBackedRetrievalFactory,
         vector_repo: VectorSearchRepoProtocol,
         bindings: Sequence[EmbeddingProviderBinding],
+        item_kind: str = "chunk",
+        candidate_builder: Callable[[list[VectorSearchResult], list[str]], list[RetrievedCandidate]] | None = None,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> None:
         self._factory = factory
         self._vector_repo = vector_repo
         self._bindings = tuple(bindings)
+        self._item_kind = item_kind
+        self._candidate_builder = candidate_builder or factory.build_chunk_candidates_from_vector_results
         self._default_preference = default_preference
         self._prepared_locations: tuple[str, ...] = ("local", "cloud")
         self.last_provider: str | None = None
@@ -193,9 +206,14 @@ class MultiProviderBackedVectorRetriever:
                 attempt.model_copy(update={"status": "failed", "error": "provider returned no vectors"})
             )
             return []
-        if self._vector_repo.count_vectors(embedding_space=target_space) == 0:
+        if self._vector_repo.count_vectors(embedding_space=target_space, item_kind=self._item_kind) == 0:
             self.last_attempts.append(
-                attempt.model_copy(update={"status": "failed", "error": f"no indexed vectors for {target_space}"})
+                attempt.model_copy(
+                    update={
+                        "status": "failed",
+                        "error": f"no indexed {self._item_kind} vectors for {target_space}",
+                    }
+                )
             )
             return []
 
@@ -204,48 +222,21 @@ class MultiProviderBackedVectorRetriever:
             limit=12,
             doc_ids=source_scope or None,
             embedding_space=target_space,
+            item_kind=self._item_kind,
         )
         if not results:
             self.last_attempts.append(
-                attempt.model_copy(update={"status": "failed", "error": f"no vector hits in {target_space}"})
+                attempt.model_copy(
+                    update={
+                        "status": "failed",
+                        "error": f"no {self._item_kind} vector hits in {target_space}",
+                    }
+                )
             )
             return []
 
         self.last_attempts.append(attempt)
-        ordered_chunk_ids = [result.chunk_id for result in results]
-        score_map = {result.chunk_id: float(result.score) for result in results}
-        candidates = self._factory._build_candidates_from_chunk_ids(
-            ordered_chunk_ids,
-            source_kind="internal",
-            scope=source_scope,
-        )
-        return [
-            candidate
-            if candidate.chunk_id not in score_map
-            else RetrievedCandidate(
-                chunk_id=candidate.chunk_id,
-                doc_id=candidate.doc_id,
-                source_id=candidate.source_id,
-                text=candidate.text,
-                citation_anchor=candidate.citation_anchor,
-                score=score_map[candidate.chunk_id],
-                rank=index,
-                source_kind=candidate.source_kind,
-                section_path=candidate.section_path,
-                effective_access_policy=candidate.effective_access_policy,
-                chunk_role=candidate.chunk_role,
-                special_chunk_type=candidate.special_chunk_type,
-                parent_chunk_id=candidate.parent_chunk_id,
-                parent_text=candidate.parent_text,
-                metadata=candidate.metadata,
-                file_name=candidate.file_name,
-                page_start=candidate.page_start,
-                page_end=candidate.page_end,
-                chunk_type=candidate.chunk_type,
-                source_type=candidate.source_type,
-            )
-            for index, candidate in enumerate(candidates, start=1)
-        ]
+        return self._candidate_builder(list(results), source_scope)
 
 
 class InstrumentedReranker:
@@ -522,6 +513,38 @@ class SearchBackedRetrievalFactory:
             default_preference=default_preference,
         )
 
+    def local_retriever_from_repo(
+        self,
+        vector_repo: VectorSearchRepoProtocol,
+        bindings: Sequence[EmbeddingProviderBinding],
+        *,
+        default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
+    ) -> MultiProviderBackedVectorRetriever:
+        return MultiProviderBackedVectorRetriever(
+            factory=self,
+            vector_repo=vector_repo,
+            bindings=bindings,
+            item_kind="entity",
+            candidate_builder=self.build_local_candidates_from_vector_results,
+            default_preference=default_preference,
+        )
+
+    def global_retriever_from_repo(
+        self,
+        vector_repo: VectorSearchRepoProtocol,
+        bindings: Sequence[EmbeddingProviderBinding],
+        *,
+        default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
+    ) -> MultiProviderBackedVectorRetriever:
+        return MultiProviderBackedVectorRetriever(
+            factory=self,
+            vector_repo=vector_repo,
+            bindings=bindings,
+            item_kind="relation",
+            candidate_builder=self.build_global_candidates_from_vector_results,
+            default_preference=default_preference,
+        )
+
     def _iter_documents(self, source_scope: list[str]) -> list[Document]:
         documents = self._metadata_repo.list_documents(active_only=True)
         if not source_scope:
@@ -546,6 +569,157 @@ class SearchBackedRetrievalFactory:
         if "://" in location:
             return location
         return Path(location).name or location
+
+    def build_chunk_candidates_from_vector_results(
+        self,
+        results: list[VectorSearchResult],
+        source_scope: list[str],
+    ) -> list[RetrievedCandidate]:
+        score_map = {result.item_id: float(result.score) for result in results}
+        candidates = self._build_candidates_from_chunk_ids(
+            [result.item_id for result in results],
+            source_kind="internal",
+            scope=source_scope,
+        )
+        return self._override_candidate_scores(candidates, score_map)
+
+    def build_local_candidates_from_vector_results(
+        self,
+        results: list[VectorSearchResult],
+        source_scope: list[str],
+    ) -> list[RetrievedCandidate]:
+        chunk_scores: dict[str, float] = defaultdict(float)
+        support_counts: dict[str, int] = defaultdict(int)
+        for result in results:
+            node_id = result.item_id
+            base_score = max(float(result.score), 0.0)
+            if base_score <= 0.0:
+                continue
+            self._add_scored_chunk_ids(
+                chunk_scores,
+                support_counts,
+                self._graph_repo.list_node_evidence_chunk_ids(node_id),
+                score=base_score + 0.6,
+            )
+            for edge in self._graph_repo.list_edges_for_node(node_id):
+                self._add_scored_chunk_ids(
+                    chunk_scores,
+                    support_counts,
+                    edge.evidence_chunk_ids,
+                    score=base_score * 0.55,
+                )
+                adjacent_node_id = edge.to_node_id if edge.from_node_id == node_id else edge.from_node_id
+                self._add_scored_chunk_ids(
+                    chunk_scores,
+                    support_counts,
+                    self._graph_repo.list_node_evidence_chunk_ids(adjacent_node_id),
+                    score=base_score * 0.35,
+                )
+        return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
+
+    def build_global_candidates_from_vector_results(
+        self,
+        results: list[VectorSearchResult],
+        source_scope: list[str],
+    ) -> list[RetrievedCandidate]:
+        chunk_scores: dict[str, float] = defaultdict(float)
+        support_counts: dict[str, int] = defaultdict(int)
+        for result in results:
+            edge = self._graph_repo.get_edge(result.item_id, include_candidates=True)
+            if edge is None:
+                continue
+            base_score = max(float(result.score), 0.0)
+            if base_score <= 0.0:
+                continue
+            self._add_scored_chunk_ids(
+                chunk_scores,
+                support_counts,
+                edge.evidence_chunk_ids,
+                score=base_score + 0.25,
+            )
+            self._add_scored_chunk_ids(
+                chunk_scores,
+                support_counts,
+                self._graph_repo.list_node_evidence_chunk_ids(edge.from_node_id),
+                score=base_score * 0.8,
+            )
+            self._add_scored_chunk_ids(
+                chunk_scores,
+                support_counts,
+                self._graph_repo.list_node_evidence_chunk_ids(edge.to_node_id),
+                score=base_score * 0.8,
+            )
+        return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
+
+    @staticmethod
+    def _add_scored_chunk_ids(
+        chunk_scores: dict[str, float],
+        support_counts: dict[str, int],
+        chunk_ids: Sequence[str],
+        *,
+        score: float,
+    ) -> None:
+        if score <= 0.0:
+            return
+        for rank, chunk_id in enumerate(chunk_ids, start=1):
+            adjusted = score / (1.0 + (rank - 1) * 0.15)
+            chunk_scores[chunk_id] += adjusted
+            support_counts[chunk_id] += 1
+
+    def _build_scored_candidates(
+        self,
+        chunk_scores: dict[str, float],
+        support_counts: dict[str, int],
+        *,
+        source_scope: list[str],
+        limit: int = 12,
+    ) -> list[RetrievedCandidate]:
+        ordered = sorted(
+            chunk_scores.items(),
+            key=lambda item: (-item[1], -support_counts.get(item[0], 0), item[0]),
+        )[:limit]
+        if not ordered:
+            return []
+        candidates = self._build_candidates_from_chunk_ids(
+            [chunk_id for chunk_id, _score in ordered],
+            source_kind="internal",
+            scope=source_scope,
+        )
+        score_map = {chunk_id: score for chunk_id, score in ordered}
+        return self._override_candidate_scores(candidates, score_map)
+
+    @staticmethod
+    def _override_candidate_scores(
+        candidates: list[RetrievedCandidate],
+        score_map: dict[str, float],
+    ) -> list[RetrievedCandidate]:
+        return [
+            candidate
+            if candidate.chunk_id not in score_map
+            else RetrievedCandidate(
+                chunk_id=candidate.chunk_id,
+                doc_id=candidate.doc_id,
+                source_id=candidate.source_id,
+                text=candidate.text,
+                citation_anchor=candidate.citation_anchor,
+                score=score_map[candidate.chunk_id],
+                rank=index,
+                source_kind=candidate.source_kind,
+                section_path=candidate.section_path,
+                effective_access_policy=candidate.effective_access_policy,
+                chunk_role=candidate.chunk_role,
+                special_chunk_type=candidate.special_chunk_type,
+                parent_chunk_id=candidate.parent_chunk_id,
+                parent_text=candidate.parent_text,
+                metadata=candidate.metadata,
+                file_name=candidate.file_name,
+                page_start=candidate.page_start,
+                page_end=candidate.page_end,
+                chunk_type=candidate.chunk_type,
+                source_type=candidate.source_type,
+            )
+            for index, candidate in enumerate(candidates, start=1)
+        ]
 
     def _build_candidates_from_chunk_ids(
         self,
