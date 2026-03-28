@@ -16,6 +16,9 @@ class DocumentStore:
     def get_source(self, source_id: str) -> Source | None:
         return self.metadata_repo.get_source(source_id)
 
+    def get_source_by_location_and_hash(self, location: str, content_hash: str) -> Source | None:
+        return self.metadata_repo.get_source_by_location_and_hash(location, content_hash)
+
     def list_sources(self, *, location: str | None = None) -> list[Source]:
         return self.metadata_repo.list_sources(location)
 

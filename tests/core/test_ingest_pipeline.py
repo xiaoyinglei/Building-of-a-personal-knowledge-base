@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pkp.core.rag_core import RAGCore
 from pkp.core.storage_config import StorageConfig
 from pkp.algorithms.chunking.multimodal_chunk_router import special_type_for_element
 from pkp.algorithms.chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
@@ -73,3 +74,44 @@ def test_storage_groups_include_document_chunk_status_graph_cache() -> None:
         assert storage.cache.get("doc-1::entities", namespace="extract") == saved_cache
     finally:
         storage.close()
+
+
+def test_ragcore_insert_persists_document_chunks_entities_relations_and_status() -> None:
+    core = RAGCore(storage=StorageConfig.in_memory())
+    try:
+        result = core.insert(
+            location="memory://reliability.md",
+            source_type="markdown",
+            owner="user",
+            title="Reliability Graph",
+            content_text=(
+                "# Reliability Graph\n\n"
+                "Evidence Quality supports Reliable Retrieval.\n\n"
+                "Context Fusion uses Evidence Quality."
+            ),
+        )
+
+        status = core.stores.status.get(result.document_id)
+        entity_nodes = [
+            node
+            for node in core.stores.graph.list_nodes(node_type="entity")
+            if node.metadata.get("doc_id") == result.document_id
+        ]
+        relation_edges = [
+            edge
+            for edge in core.stores.graph.list_edges()
+            if edge.metadata.get("doc_id") == result.document_id
+        ]
+
+        assert result.document_id
+        assert result.chunk_count > 0
+        assert result.entity_count >= 2
+        assert result.relation_count >= 1
+        assert result.status == "ready"
+        assert status is not None
+        assert status.status is DocumentProcessingStatus.READY
+        assert entity_nodes
+        assert relation_edges
+        assert core.stores.cache.list(namespace="extract")
+    finally:
+        core.stores.close()

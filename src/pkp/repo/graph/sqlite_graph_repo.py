@@ -243,9 +243,17 @@ class SQLiteGraphRepo:
         return [str(row["chunk_id"]) for row in rows]
 
     def save_candidate_edge(self, edge: GraphEdge) -> None:
+        self._save_edge_record("candidate_edges", edge)
+        self._conn.commit()
+
+    def save_edge(self, edge: GraphEdge) -> None:
+        self._save_edge_record("edges", edge)
+        self._conn.commit()
+
+    def _save_edge_record(self, table_name: str, edge: GraphEdge) -> None:
         self._conn.execute(
-            """
-            INSERT INTO candidate_edges (
+            f"""
+            INSERT INTO {table_name} (
                 edge_id,
                 from_node_id,
                 to_node_id,
@@ -271,7 +279,6 @@ class SQLiteGraphRepo:
             ),
         )
         self._replace_edge_evidence(edge.edge_id, edge.evidence_chunk_ids)
-        self._conn.commit()
 
     def promote_candidate_edge(self, edge_id: str) -> None:
         row = self._conn.execute(
@@ -282,33 +289,7 @@ class SQLiteGraphRepo:
             return
         self._conn.execute("DELETE FROM candidate_edges WHERE edge_id = ?", (edge_id,))
         edge = self._load_edge(row["payload"])
-        self._conn.execute(
-            """
-            INSERT INTO edges (
-                edge_id,
-                from_node_id,
-                to_node_id,
-                relation_type,
-                saved_at,
-                payload
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(edge_id) DO UPDATE SET
-                from_node_id=excluded.from_node_id,
-                to_node_id=excluded.to_node_id,
-                relation_type=excluded.relation_type,
-                saved_at=excluded.saved_at,
-                payload=excluded.payload
-            """,
-            (
-                edge_id,
-                edge.from_node_id,
-                edge.to_node_id,
-                edge.relation_type,
-                datetime.now(UTC).isoformat(),
-                row["payload"],
-            ),
-        )
+        self._save_edge_record("edges", edge)
         self._conn.commit()
 
     def list_candidate_edges(self) -> list[GraphEdge]:
