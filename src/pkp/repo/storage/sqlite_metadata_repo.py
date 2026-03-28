@@ -8,8 +8,18 @@ from typing import TypeVar
 
 from pkp.types.artifact import KnowledgeArtifact
 from pkp.types.content import Chunk, Document, Segment, Source
+from pkp.types.storage import CacheEntry, DocumentStatusRecord
 
-TModel = TypeVar("TModel", Source, Document, Segment, Chunk, KnowledgeArtifact)
+TModel = TypeVar(
+    "TModel",
+    Source,
+    Document,
+    Segment,
+    Chunk,
+    KnowledgeArtifact,
+    DocumentStatusRecord,
+    CacheEntry,
+)
 
 
 class SQLiteMetadataRepo:
@@ -82,6 +92,38 @@ class SQLiteMetadataRepo:
                 saved_at TEXT NOT NULL,
                 payload TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS document_status (
+                doc_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                location TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                error_message TEXT,
+                updated_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_document_status_source
+            ON document_status(source_id, status, updated_at);
+
+            CREATE INDEX IF NOT EXISTS idx_document_status_location
+            ON document_status(location, content_hash, updated_at);
+
+            CREATE TABLE IF NOT EXISTS cache_entries (
+                namespace TEXT NOT NULL,
+                cache_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                expires_at TEXT,
+                payload TEXT NOT NULL,
+                PRIMARY KEY(namespace, cache_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cache_entries_updated
+            ON cache_entries(namespace, updated_at);
             """
         )
         self._conn.commit()
@@ -379,6 +421,19 @@ class SQLiteMetadataRepo:
         ).fetchall()
         return [self._load(Chunk, row["payload"]) for row in rows]
 
+    def list_chunks_by_ids(self, chunk_ids: list[str] | tuple[str, ...]) -> list[Chunk]:
+        normalized_ids = tuple(dict.fromkeys(chunk_ids))
+        if not normalized_ids:
+            return []
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        rows = self._conn.execute(
+            f"SELECT payload FROM chunks WHERE chunk_id IN ({placeholders})",
+            normalized_ids,
+        ).fetchall()
+        loaded = [self._load(Chunk, row["payload"]) for row in rows]
+        chunk_by_id = {chunk.chunk_id: chunk for chunk in loaded}
+        return [chunk_by_id[chunk_id] for chunk_id in normalized_ids if chunk_id in chunk_by_id]
+
     def save_artifact(self, artifact: KnowledgeArtifact) -> None:
         self._conn.execute(
             """
@@ -410,3 +465,166 @@ class SQLiteMetadataRepo:
             "SELECT payload FROM artifacts ORDER BY saved_at, artifact_id",
         ).fetchall()
         return [self._load(KnowledgeArtifact, row["payload"]) for row in rows]
+
+    def save_document_status(self, status: DocumentStatusRecord) -> DocumentStatusRecord:
+        normalized = status.model_copy(update={"updated_at": datetime.now(UTC)})
+        self._conn.execute(
+            """
+            INSERT INTO document_status (
+                doc_id,
+                source_id,
+                location,
+                content_hash,
+                status,
+                stage,
+                attempts,
+                error_message,
+                updated_at,
+                payload
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(doc_id) DO UPDATE SET
+                source_id=excluded.source_id,
+                location=excluded.location,
+                content_hash=excluded.content_hash,
+                status=excluded.status,
+                stage=excluded.stage,
+                attempts=excluded.attempts,
+                error_message=excluded.error_message,
+                updated_at=excluded.updated_at,
+                payload=excluded.payload
+            """,
+            (
+                normalized.doc_id,
+                normalized.source_id,
+                normalized.location,
+                normalized.content_hash,
+                normalized.status.value,
+                str(normalized.stage),
+                normalized.attempts,
+                normalized.error_message,
+                normalized.updated_at.isoformat(),
+                self._dump(normalized),
+            ),
+        )
+        self._conn.commit()
+        return normalized
+
+    def get_document_status(self, doc_id: str) -> DocumentStatusRecord | None:
+        row = self._conn.execute(
+            "SELECT payload FROM document_status WHERE doc_id = ?",
+            (doc_id,),
+        ).fetchone()
+        return None if row is None else self._load(DocumentStatusRecord, row["payload"])
+
+    def list_document_statuses(
+        self,
+        *,
+        source_id: str | None = None,
+        status: str | None = None,
+    ) -> list[DocumentStatusRecord]:
+        clauses = []
+        params: list[object] = []
+        if source_id is not None:
+            clauses.append("source_id = ?")
+            params.append(source_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where_sql = "" if not clauses else f"WHERE {' AND '.join(clauses)}"
+        rows = self._conn.execute(
+            f"SELECT payload FROM document_status {where_sql} ORDER BY updated_at DESC, doc_id",
+            tuple(params),
+        ).fetchall()
+        return [self._load(DocumentStatusRecord, row["payload"]) for row in rows]
+
+    def delete_document_status(self, doc_id: str) -> None:
+        self._conn.execute("DELETE FROM document_status WHERE doc_id = ?", (doc_id,))
+        self._conn.commit()
+
+    def save_cache_entry(self, entry: CacheEntry) -> CacheEntry:
+        now = datetime.now(UTC)
+        existing = self.get_cache_entry(entry.cache_key, namespace=entry.namespace)
+        normalized = entry.model_copy(
+            update={
+                "created_at": existing.created_at if existing is not None else entry.created_at,
+                "updated_at": now,
+            }
+        )
+        self._conn.execute(
+            """
+            INSERT INTO cache_entries (
+                namespace,
+                cache_key,
+                created_at,
+                updated_at,
+                expires_at,
+                payload
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(namespace, cache_key) DO UPDATE SET
+                updated_at=excluded.updated_at,
+                expires_at=excluded.expires_at,
+                payload=excluded.payload
+            """,
+            (
+                normalized.namespace,
+                normalized.cache_key,
+                normalized.created_at.isoformat(),
+                normalized.updated_at.isoformat(),
+                normalized.expires_at.isoformat() if normalized.expires_at is not None else None,
+                self._dump(normalized),
+            ),
+        )
+        self._conn.commit()
+        return normalized
+
+    def get_cache_entry(self, cache_key: str, *, namespace: str = "default") -> CacheEntry | None:
+        row = self._conn.execute(
+            """
+            SELECT payload
+            FROM cache_entries
+            WHERE namespace = ? AND cache_key = ?
+            """,
+            (namespace, cache_key),
+        ).fetchone()
+        return None if row is None else self._load(CacheEntry, row["payload"])
+
+    def list_cache_entries(self, *, namespace: str | None = None) -> list[CacheEntry]:
+        if namespace is None:
+            rows = self._conn.execute(
+                "SELECT payload FROM cache_entries ORDER BY updated_at DESC, namespace, cache_key",
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT payload
+                FROM cache_entries
+                WHERE namespace = ?
+                ORDER BY updated_at DESC, cache_key
+                """,
+                (namespace,),
+            ).fetchall()
+        return [self._load(CacheEntry, row["payload"]) for row in rows]
+
+    def delete_cache_entry(self, cache_key: str, *, namespace: str = "default") -> None:
+        self._conn.execute(
+            "DELETE FROM cache_entries WHERE namespace = ? AND cache_key = ?",
+            (namespace, cache_key),
+        )
+        self._conn.commit()
+
+    def purge_expired_cache_entries(self, *, now: datetime | None = None) -> int:
+        effective_now = (now or datetime.now(UTC)).isoformat()
+        cursor = self._conn.execute(
+            """
+            DELETE FROM cache_entries
+            WHERE expires_at IS NOT NULL AND expires_at <= ?
+            """,
+            (effective_now,),
+        )
+        self._conn.commit()
+        return int(cursor.rowcount)
+
+    def close(self) -> None:
+        self._conn.close()
