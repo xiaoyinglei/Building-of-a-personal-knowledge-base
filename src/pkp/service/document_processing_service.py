@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, cast
 
+from pkp.algorithms.chunking.multimodal_chunk_router import build_special_chunks
+from pkp.algorithms.chunking.structured_chunker import build_cached_hybrid_chunker, merge_adjacent_seeds
 from docling_core.transforms.chunker.hierarchical_chunker import HierarchicalChunker
 from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from docling_core.types.doc.document import PictureItem, TableItem
 
-from pkp.repo.interfaces import ParsedDocument, ParsedElement
+from pkp.repo.interfaces import ParsedDocument
 from pkp.repo.parse._util import normalize_whitespace, slugify
 from pkp.service.chunk_postprocessing_service import ChunkPostprocessingService
 from pkp.service.chunk_routing_service import ChunkRoutingService
@@ -59,14 +61,11 @@ class DocumentProcessingService:
         self._routing_service = routing_service or ChunkRoutingService()
         self._postprocessing_service = postprocessing_service or ChunkPostprocessingService()
         self._hierarchical_chunker = HierarchicalChunker()
-        self._hybrid_chunker = HybridChunker(tokenizer=self._build_cached_tokenizer())
-
-    @classmethod
-    def _build_cached_tokenizer(cls) -> Any:
-        return HuggingFaceTokenizer.from_pretrained(
-            model_name=cls._DEFAULT_TOKENIZER_MODEL,
-            max_tokens=cls._DEFAULT_TOKENIZER_MAX_TOKENS,
-            local_files_only=True,
+        self._hybrid_chunker = build_cached_hybrid_chunker(
+            tokenizer_cls=HuggingFaceTokenizer,
+            hybrid_chunker_cls=HybridChunker,
+            model_name=self._DEFAULT_TOKENIZER_MODEL,
+            max_tokens=self._DEFAULT_TOKENIZER_MAX_TOKENS,
         )
 
     def build(
@@ -184,7 +183,7 @@ class DocumentProcessingService:
                 access_policy=access_policy,
                 local_refine=local_refine,
             )
-        seeds = self._merge_adjacent_seeds(
+        seeds = merge_adjacent_seeds(
             [
                 ChunkSeed(
                     text=chunk.text,
@@ -372,76 +371,14 @@ class DocumentProcessingService:
         access_policy: AccessPolicy,
         segments: list[Segment],
     ) -> list[Chunk]:
-        segment_by_path = {tuple(segment.toc_path): segment for segment in segments}
-        fallback_segment = segments[0] if segments else None
-        special_chunks: list[Chunk] = []
-        for index, element in enumerate(parsed.elements):
-            special_type = self._special_type_for_element(element)
-            if special_type is None:
-                continue
-            target_segment = segment_by_path.get(tuple(element.toc_path), fallback_segment)
-            if target_segment is None:
-                continue
-            special_chunks.append(
-                self._make_chunk(
-                    location=location,
-                    document=document,
-                    segment=target_segment,
-                    text=element.text,
-                    access_policy=access_policy,
-                    chunk_role=ChunkRole.SPECIAL,
-                    order_index=index,
-                    parent_chunk_id=None,
-                    special_chunk_type=special_type,
-                    metadata={
-                        "bbox": "" if element.bbox is None else ",".join(f"{value:.2f}" for value in element.bbox),
-                        "page_no": "" if element.page_no is None else str(element.page_no),
-                        **element.metadata,
-                    },
-                )
-            )
-
-        if parsed.source_type.value == "image":
-            target_segment = fallback_segment
-            if target_segment is not None:
-                summary_text = normalize_whitespace(parsed.visual_semantics or parsed.visible_text or parsed.title)
-                if summary_text:
-                    special_chunks.append(
-                        self._make_chunk(
-                            location=location,
-                            document=document,
-                            segment=target_segment,
-                            text=summary_text,
-                            access_policy=access_policy,
-                            chunk_role=ChunkRole.SPECIAL,
-                            order_index=len(special_chunks),
-                            parent_chunk_id=None,
-                            special_chunk_type="image_summary",
-                        )
-                    )
-        return special_chunks
-
-    @staticmethod
-    def _merge_adjacent_seeds(seeds: list[ChunkSeed], *, source_type: str) -> list[ChunkSeed]:
-        if not seeds:
-            return []
-        merged: list[ChunkSeed] = [seeds[0]]
-        for seed in seeds[1:]:
-            previous = merged[-1]
-            should_merge = previous.toc_path == seed.toc_path and (
-                source_type in {"markdown", "docx"}
-                or text_unit_count(previous.text) < 12
-                or text_unit_count(seed.text) < 12
-            )
-            if not should_merge:
-                merged.append(seed)
-                continue
-            merged[-1] = ChunkSeed(
-                text=normalize_whitespace(f"{previous.text} {seed.text}"),
-                toc_path=previous.toc_path,
-                page_numbers=[*previous.page_numbers, *seed.page_numbers],
-            )
-        return merged
+        return build_special_chunks(
+            location=location,
+            document=document,
+            parsed=parsed,
+            access_policy=access_policy,
+            segments=segments,
+            make_chunk=self._make_chunk,
+        )
 
     def _refine_parent_chunk(
         self,
@@ -566,18 +503,6 @@ class DocumentProcessingService:
                 **(metadata or {}),
             },
         )
-
-    @staticmethod
-    def _special_type_for_element(element: ParsedElement) -> str | None:
-        if element.kind == "table":
-            return "table"
-        if element.kind == "figure":
-            return "figure"
-        if element.kind == "caption":
-            return "caption"
-        if element.kind == "ocr_region":
-            return "ocr_region"
-        return None
 
     @staticmethod
     def _page_numbers(chunk: Any) -> list[int]:
