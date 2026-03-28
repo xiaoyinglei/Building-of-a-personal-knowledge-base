@@ -6,6 +6,7 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict
 
 from pkp.config.model_paths import resolve_local_model_reference
+from pkp.integrations.huggingface import suppress_backend_fast_tokenizer_padding_warning
 from pkp.rerank.models import RerankCandidate
 from pkp.types.text import (
     keyword_overlap,
@@ -122,7 +123,8 @@ class ProviderBackedCrossEncoder:
             return None
         try:
             model_ref = resolve_local_model_reference(self._config.model_name, self._config.model_path)
-            return cast(object, reranker_cls(model_ref, use_fp16=False))
+            backend = cast(object, reranker_cls(model_ref, use_fp16=False))
+            return suppress_backend_fast_tokenizer_padding_warning(backend)
         except Exception:
             return None
 
