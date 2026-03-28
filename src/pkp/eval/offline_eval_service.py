@@ -173,6 +173,22 @@ class OfflineEvalService:
             Callable[[str, list[str]], Sequence[CandidateLike]],
             vector_retriever,
         )
+        local_retriever = cast(
+            Callable[[str, list[str]], Sequence[CandidateLike]],
+            factory.local_retriever_from_repo(
+                cast(SQLiteVectorRepo, ingest_service.vector_repo),
+                ingest_service.embedding_bindings,
+                default_preference=ExecutionLocationPreference.LOCAL_ONLY,
+            ),
+        )
+        global_retriever = cast(
+            Callable[[str, list[str]], Sequence[CandidateLike]],
+            factory.global_retriever_from_repo(
+                cast(SQLiteVectorRepo, ingest_service.vector_repo),
+                ingest_service.embedding_bindings,
+                default_preference=ExecutionLocationPreference.LOCAL_ONLY,
+            ),
+        )
         section_retriever = cast(
             Callable[[str, list[str]], Sequence[CandidateLike]],
             factory.section_retriever,
@@ -193,6 +209,8 @@ class OfflineEvalService:
         return RetrievalService(
             full_text_retriever=standard_retriever,
             vector_retriever=instrumented_vector_retriever,
+            local_retriever=local_retriever,
+            global_retriever=global_retriever,
             section_retriever=section_retriever,
             special_retriever=special_retriever,
             metadata_retriever=metadata_retriever,

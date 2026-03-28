@@ -135,6 +135,7 @@ class VectorRepo(Protocol):
         *,
         metadata: dict[str, str] | None = None,
         embedding_space: str = "default",
+        item_kind: str = "chunk",
     ) -> None: ...
 
     def search(
@@ -144,6 +145,7 @@ class VectorRepo(Protocol):
         limit: int = 10,
         doc_ids: list[str] | None = None,
         embedding_space: str = "default",
+        item_kind: str = "chunk",
     ) -> list[VectorSearchResult]: ...
 
     def existing_item_ids(
@@ -151,4 +153,5 @@ class VectorRepo(Protocol):
         item_ids: Sequence[str],
         *,
         embedding_space: str | None = None,
+        item_kind: str | None = "chunk",
     ) -> set[str]: ...
