@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, cast
 
+from pkp.query.context import QueryUnderstandingService
 from pkp.rerank.cross_encoder import ProviderBackedCrossEncoder
 from pkp.rerank.pipeline import FormalRerankService, RerankPipelineConfig
-from pkp.service.query_understanding_service import QueryUnderstandingService
 
 
 class CandidateLike(Protocol):

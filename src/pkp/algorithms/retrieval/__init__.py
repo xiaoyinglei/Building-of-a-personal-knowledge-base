@@ -3,7 +3,7 @@ from pkp.algorithms.retrieval.contracts import GraphExpander, Reranker, Retrieve
 from pkp.algorithms.retrieval.fusion import ReciprocalRankFusion
 from pkp.algorithms.retrieval.mode_planner import RetrievalPlan, RetrievalPlanBuilder
 from pkp.algorithms.retrieval.rerank import UnifiedReranker
-from pkp.algorithms.retrieval.search_backed_factory import RetrievedCandidate, SearchBackedRetrievalFactory
+from pkp.query.graph import RetrievedCandidate, SearchBackedRetrievalFactory
 
 __all__ = [
     "BranchRetrieverRegistry",

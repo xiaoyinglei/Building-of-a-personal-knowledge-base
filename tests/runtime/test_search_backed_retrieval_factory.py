@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pkp.algorithms.retrieval.search_backed_factory import RetrievedCandidate, SearchBackedRetrievalFactory
+from pkp.query.graph import RetrievedCandidate, SearchBackedRetrievalFactory
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import EmbeddingProviderBinding
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo

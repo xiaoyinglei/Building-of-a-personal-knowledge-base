@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from pkp.query.context import QueryUnderstandingService
 from pkp.rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
 from pkp.rerank.features import RerankFeatureExtractor
 from pkp.rerank.fusion import FeatureBasedScoreCombiner
@@ -23,7 +24,6 @@ from pkp.rerank.models import (
     RerankResultItem,
 )
 from pkp.rerank.postprocess import CandidateDiversityController, PostprocessConfig
-from pkp.service.query_understanding_service import QueryUnderstandingService
 from pkp.types.query import QueryUnderstanding
 
 

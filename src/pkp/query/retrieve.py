@@ -11,13 +11,19 @@ from pkp.algorithms.retrieval.fusion import FusedCandidateView, ReciprocalRankFu
 from pkp.algorithms.retrieval.mode_planner import RetrievalPlan, RetrievalPlanBuilder
 from pkp.algorithms.retrieval.rerank import UnifiedReranker
 from pkp.config.policies import RoutingThresholds
-from pkp.query.context import ContextEvidenceMerger, ContextPromptBuilder, EvidenceTruncator
+from pkp.query.context import (
+    CandidateLike,
+    ContextEvidenceMerger,
+    ContextPromptBuilder,
+    EvidenceBundle,
+    EvidenceService,
+    EvidenceTruncator,
+    QueryUnderstandingService,
+    RoutingService,
+)
 from pkp.query.graph import GraphExpansionService
 from pkp.query.query import BuiltContext, QueryMode, QueryOptions, RAGQueryResult
 from pkp.service.artifact_service import ArtifactService
-from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService
-from pkp.service.query_understanding_service import QueryUnderstandingService
-from pkp.service.routing_service import RoutingService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.types.diagnostics import RetrievalDiagnostics
 from pkp.types.envelope import PreservationSuggestion

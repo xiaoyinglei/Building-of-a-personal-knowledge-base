@@ -1,4 +1,4 @@
-from pkp.service.routing_service import RoutingService
+from pkp.query.context import RoutingService
 from pkp.types.access import RuntimeMode
 from pkp.types.query import ComplexityLevel, TaskType
 

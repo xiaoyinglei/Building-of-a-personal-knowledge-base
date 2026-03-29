@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from pkp.algorithms.retrieval.contracts import RetrieverFn
 from pkp.algorithms.retrieval.mode_planner import RetrievalPlan
-from pkp.service.evidence_service import CandidateLike
+from pkp.query.context import CandidateLike
 
 
 @dataclass(slots=True)

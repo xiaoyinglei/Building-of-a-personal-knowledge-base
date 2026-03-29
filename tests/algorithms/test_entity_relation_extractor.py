@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pkp.algorithms.extract.entity_relation_extractor import HeuristicEntityRelationExtractor
+from pkp.ingest.extract import HeuristicEntityRelationExtractor
 from pkp.types import AccessPolicy, Chunk, Document, DocumentType
 
 

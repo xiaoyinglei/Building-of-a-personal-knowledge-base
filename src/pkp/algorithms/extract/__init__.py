@@ -1,15 +1,13 @@
-from pkp.algorithms.extract.entity_relation_extractor import (
+from pkp.ingest.extract import (
     EntityRelationExtractionResult,
+    EntityRelationMerger,
     ExtractedEntity,
     ExtractedRelation,
     HeuristicEntityRelationExtractor,
-    PromptedEntityRelationExtractor,
-)
-from pkp.algorithms.extract.entity_relation_merger import (
-    EntityRelationMerger,
     MergedEntity,
     MergedGraph,
     MergedRelation,
+    PromptedEntityRelationExtractor,
 )
 
 __all__ = [

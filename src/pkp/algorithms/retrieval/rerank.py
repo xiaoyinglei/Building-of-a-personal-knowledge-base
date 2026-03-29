@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pkp.algorithms.retrieval.contracts import Reranker
-from pkp.service.evidence_service import CandidateLike
+from pkp.query.context import CandidateLike
 
 
 @dataclass(slots=True)

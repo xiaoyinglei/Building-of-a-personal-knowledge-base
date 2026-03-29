@@ -7,14 +7,17 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import cast
 
-from pkp.algorithms.extract.entity_relation_extractor import (
+from pkp.ingest.extract import (
     EntityRelationExtractionResult,
     EntityRelationExtractor,
+    EntityRelationMerger,
+    MergedEntity,
+    MergedGraph,
+    MergedRelation,
     PromptedEntityRelationExtractor,
     choose_preferred_label,
     normalize_entity_key,
 )
-from pkp.algorithms.extract.entity_relation_merger import EntityRelationMerger, MergedEntity, MergedGraph, MergedRelation
 from pkp.document.loader import WebFetchRepo
 from pkp.document.parser import (
     DoclingParserRepo,
