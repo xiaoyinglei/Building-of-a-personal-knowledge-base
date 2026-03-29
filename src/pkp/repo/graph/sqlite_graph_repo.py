@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -67,6 +68,16 @@ class SQLiteGraphRepo:
             CREATE INDEX IF NOT EXISTS idx_node_evidence_chunk
             ON node_evidence(chunk_id, node_id);
 
+            CREATE TABLE IF NOT EXISTS node_aliases (
+                node_id TEXT NOT NULL,
+                alias TEXT NOT NULL,
+                normalized_alias TEXT NOT NULL,
+                PRIMARY KEY(node_id, normalized_alias)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_node_aliases_normalized
+            ON node_aliases(normalized_alias, node_id);
+
             CREATE TABLE IF NOT EXISTS edge_evidence (
                 edge_id TEXT NOT NULL,
                 chunk_id TEXT NOT NULL,
@@ -80,6 +91,7 @@ class SQLiteGraphRepo:
         )
         self._backfill_edge_evidence("candidate_edges")
         self._backfill_edge_evidence("edges")
+        self._backfill_node_aliases()
         self._conn.commit()
 
     def _migrate_legacy_nodes(self) -> None:
@@ -197,6 +209,7 @@ class SQLiteGraphRepo:
                 self._dump(merged),
             ),
         )
+        self._replace_node_aliases(merged)
         self._conn.commit()
 
     def get_node(self, node_id: str) -> GraphNode | None:
@@ -216,6 +229,25 @@ class SQLiteGraphRepo:
                 "SELECT payload FROM nodes WHERE node_type = ? ORDER BY saved_at, node_id",
                 (node_type,),
             ).fetchall()
+        return [self._load_node(row["payload"]) for row in rows]
+
+    def list_nodes_by_alias(self, alias: str, *, node_type: str | None = None) -> list[GraphNode]:
+        normalized_alias = self._normalize_alias(alias)
+        if not normalized_alias:
+            return []
+        sql = """
+            SELECT nodes.payload
+            FROM nodes
+            INNER JOIN node_aliases
+              ON node_aliases.node_id = nodes.node_id
+            WHERE node_aliases.normalized_alias = ?
+        """
+        params: list[object] = [normalized_alias]
+        if node_type is not None:
+            sql += " AND nodes.node_type = ?"
+            params.append(node_type)
+        sql += " ORDER BY nodes.saved_at, nodes.node_id"
+        rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [self._load_node(row["payload"]) for row in rows]
 
     def bind_node_evidence(self, node_id: str, chunk_ids: list[str] | tuple[str, ...]) -> None:
@@ -417,6 +449,36 @@ class SQLiteGraphRepo:
         ).fetchone()
         return None if row is None else self._load_edge(row["payload"])
 
+    def _replace_node_aliases(self, node: GraphNode) -> None:
+        aliases = self._node_alias_values(node)
+        self._conn.execute("DELETE FROM node_aliases WHERE node_id = ?", (node.node_id,))
+        for alias in aliases:
+            normalized_alias = self._normalize_alias(alias)
+            if not normalized_alias:
+                continue
+            self._conn.execute(
+                """
+                INSERT INTO node_aliases (node_id, alias, normalized_alias)
+                VALUES (?, ?, ?)
+                ON CONFLICT(node_id, normalized_alias) DO UPDATE SET
+                    alias=excluded.alias
+                """,
+                (node.node_id, alias, normalized_alias),
+            )
+
+    def _backfill_node_aliases(self) -> None:
+        rows = self._conn.execute(
+            "SELECT node_id, payload FROM nodes ORDER BY node_id",
+        ).fetchall()
+        for row in rows:
+            existing = self._conn.execute(
+                "SELECT 1 FROM node_aliases WHERE node_id = ? LIMIT 1",
+                (row["node_id"],),
+            ).fetchone()
+            if existing is not None:
+                continue
+            self._replace_node_aliases(self._load_node(row["payload"]))
+
     @staticmethod
     def _merge_metadata(existing: dict[str, str], incoming: dict[str, str]) -> dict[str, str]:
         merged = dict(existing)
@@ -432,6 +494,14 @@ class SQLiteGraphRepo:
                     values.extend(item.strip() for item in candidate.split(",") if item.strip())
             if values:
                 merged[plural_key] = ",".join(sorted(dict.fromkeys(values)))
+
+        aliases: list[str] = []
+        for container in (existing, incoming):
+            alias_blob = container.get("aliases")
+            if alias_blob:
+                aliases.extend(alias for alias in alias_blob.split("||") if alias)
+        if aliases:
+            merged["aliases"] = "||".join(sorted(dict.fromkeys(aliases)))
 
         return merged
 
@@ -491,6 +561,7 @@ class SQLiteGraphRepo:
         if node_ids:
             placeholders = ", ".join("?" for _ in node_ids)
             self._conn.execute("DELETE FROM node_evidence WHERE node_id IN (" + placeholders + ")", tuple(node_ids))
+            self._conn.execute("DELETE FROM node_aliases WHERE node_id IN (" + placeholders + ")", tuple(node_ids))
             self._conn.execute("DELETE FROM nodes WHERE node_id IN (" + placeholders + ")", tuple(node_ids))
         return node_ids
 
@@ -521,6 +592,18 @@ class SQLiteGraphRepo:
                 f"UPDATE {table_name} SET payload = ?, saved_at = ? WHERE edge_id = ?",
                 (self._dump(refreshed), datetime.now(UTC).isoformat(), edge.edge_id),
             )
+
+    @staticmethod
+    def _node_alias_values(node: GraphNode) -> list[str]:
+        aliases = [node.label]
+        alias_blob = node.metadata.get("aliases", "")
+        if alias_blob:
+            aliases.extend(alias for alias in alias_blob.split("||") if alias)
+        return list(dict.fromkeys(alias.strip() for alias in aliases if alias and alias.strip()))
+
+    @staticmethod
+    def _normalize_alias(alias: str) -> str:
+        return re.sub(r"\s+", " ", alias.strip()).lower()
 
     def close(self) -> None:
         self._conn.close()

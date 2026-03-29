@@ -22,6 +22,13 @@ _GRAPH_RELATION_WEIGHTS = {
     "supports": 1.12,
     "requires": 1.1,
     "uses": 1.02,
+    "tabulated_in": 1.08,
+    "illustrated_by": 1.06,
+    "captioned_by": 0.98,
+    "summarized_by": 0.96,
+    "observed_in": 0.94,
+    "expressed_by_formula": 1.04,
+    "contains_special": 0.92,
     "enables": 1.0,
     "contains": 0.96,
     "part_of": 0.94,
@@ -34,10 +41,19 @@ _GRAPH_QUERY_HINTS = {
     "depends_on": ("depend", "dependency", "依赖", "upstream"),
     "supports": ("support", "supports", "支撑", "supporting"),
     "uses": ("use", "uses", "used", "使用"),
+    "tabulated_in": ("table", "表", "表格", "metric", "metrics", "数值", "指标"),
+    "illustrated_by": ("figure", "diagram", "image", "图片", "图", "图像"),
+    "captioned_by": ("caption", "图注", "标题"),
+    "summarized_by": ("summary", "visual", "image summary", "摘要", "画面"),
+    "observed_in": ("ocr", "region", "识别", "截图文字"),
+    "expressed_by_formula": ("formula", "equation", "latex", "公式", "表达式"),
+    "contains_special": ("table", "figure", "image", "caption", "ocr", "表格", "图片"),
     "contains": ("contain", "contains", "include", "includes", "包含"),
     "part_of": ("part", "belongs", "归属"),
     "integrates_with": ("integrate", "connection", "connect", "link", "连接"),
 }
+
+_MULTIMODAL_NODE_TYPES = {"table", "figure", "caption", "ocr_region", "image_summary", "formula"}
 
 
 @dataclass(frozen=True)
@@ -189,6 +205,61 @@ class MultiProviderBackedVectorRetriever:
         return normalized.replace("_", "-").lower() or "unknown"
 
 
+class HybridSpecialRetriever:
+    def __init__(
+        self,
+        *,
+        lexical_retriever: Callable[[str, list[str]], list[RetrievedCandidate]],
+        vector_retriever: MultiProviderBackedVectorRetriever,
+    ) -> None:
+        self._lexical_retriever = lexical_retriever
+        self._vector_retriever = vector_retriever
+        self.last_provider: str | None = None
+        self.last_attempts: list[object] = []
+
+    def prepare_for_policy(
+        self,
+        *,
+        access_policy: AccessPolicy,
+        execution_location_preference: ExecutionLocationPreference | None,
+    ) -> None:
+        self._vector_retriever.prepare_for_policy(
+            access_policy=access_policy,
+            execution_location_preference=execution_location_preference,
+        )
+
+    def __call__(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
+        lexical_candidates = self._lexical_retriever(query, source_scope)
+        vector_candidates = self._vector_retriever(query, source_scope)
+        self.last_provider = self._vector_retriever.last_provider
+        self.last_attempts = list(self._vector_retriever.last_attempts)
+        if not vector_candidates:
+            return lexical_candidates
+        merged: dict[str, RetrievedCandidate] = {}
+        for candidate in [*lexical_candidates, *vector_candidates]:
+            existing = merged.get(candidate.chunk_id)
+            if existing is None:
+                merged[candidate.chunk_id] = candidate
+                continue
+            merged_score = max(float(existing.score), float(candidate.score))
+            if existing.source_kind != candidate.source_kind:
+                merged_score += 0.04
+            merged[candidate.chunk_id] = existing.__class__(
+                **{
+                    **existing.__dict__,
+                    "score": merged_score,
+                    "rank": min(existing.rank, candidate.rank),
+                    "special_chunk_type": existing.special_chunk_type or candidate.special_chunk_type,
+                    "metadata": dict((existing.metadata or {}) | (candidate.metadata or {})),
+                }
+            )
+        ordered = sorted(merged.values(), key=lambda item: (-item.score, item.chunk_id))
+        return [
+            candidate.__class__(**{**candidate.__dict__, "rank": index})
+            for index, candidate in enumerate(ordered, start=1)
+        ]
+
+
 class SearchBackedRetrievalFactory:
     def __init__(
         self,
@@ -263,6 +334,8 @@ class SearchBackedRetrievalFactory:
                     score += 2
                 if special_type == "image_summary" and any(term in lowered for term in ("图片", "图像", "画面")):
                     score += 1
+                if special_type == "formula" and any(term in lowered for term in ("公式", "equation", "formula", "latex")):
+                    score += 2
                 if score <= 0:
                     continue
                 candidates.extend(self._build_candidates_from_chunk_ids([chunk.chunk_id], source_kind="internal", scope=source_scope))
@@ -400,6 +473,25 @@ class SearchBackedRetrievalFactory:
             default_preference=default_preference,
         )
 
+    def special_retriever_from_repo(
+        self,
+        vector_repo: VectorSearchRepoProtocol,
+        bindings: Sequence[EmbeddingProviderBinding],
+        *,
+        default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
+    ) -> HybridSpecialRetriever:
+        return HybridSpecialRetriever(
+            lexical_retriever=self.special_retriever,
+            vector_retriever=MultiProviderBackedVectorRetriever(
+                factory=self,
+                vector_repo=vector_repo,
+                bindings=bindings,
+                item_kind="multimodal",
+                candidate_builder=self.build_multimodal_candidates_from_vector_results,
+                default_preference=default_preference,
+            ),
+        )
+
     def build_chunk_candidates_from_vector_results(self, query: str, results: list[VectorSearchResult], source_scope: list[str]) -> list[RetrievedCandidate]:
         del query
         chunk_scores = {result.item_id: float(result.score) for result in results if float(result.score) > 0.0}
@@ -448,6 +540,35 @@ class SearchBackedRetrievalFactory:
             chunk_scores[chunk_id] += score
             support_counts[chunk_id] += walked_support.get(chunk_id, 0)
         self._boost_related_special_chunks(chunk_scores, support_counts)
+        return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
+
+    def build_multimodal_candidates_from_vector_results(
+        self,
+        query: str,
+        results: list[VectorSearchResult],
+        source_scope: list[str],
+    ) -> list[RetrievedCandidate]:
+        query_terms = set(search_terms(query))
+        chunk_scores: dict[str, float] = defaultdict(float)
+        support_counts: dict[str, int] = defaultdict(int)
+        for result in results:
+            base_score = max(float(result.score), 0.0)
+            if base_score <= 0.0:
+                continue
+            node = self._graph_repo.get_node(result.item_id)
+            if node is None or node.node_type not in _MULTIMODAL_NODE_TYPES:
+                continue
+            type_bonus = 1.0
+            for hint in _GRAPH_QUERY_HINTS.get(self._multimodal_relation_for_node_type(node.node_type), ()):
+                if hint in query_terms or any(hint in term for term in query_terms):
+                    type_bonus = 1.18
+                    break
+            self._add_scored_chunk_ids(
+                chunk_scores,
+                support_counts,
+                self._graph_repo.list_node_evidence_chunk_ids(node.node_id),
+                score=base_score * 1.24 * type_bonus,
+            )
         return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
 
     def _iter_documents(self, source_scope: list[str]) -> list[Document]:
@@ -505,7 +626,7 @@ class SearchBackedRetrievalFactory:
                 if not self._is_related_special_chunk(seed_chunk_id=seed_chunk.chunk_id, seed_chunk=seed_chunk, candidate_chunk=candidate):
                     continue
                 boost = base_score * 0.28
-                if candidate.special_chunk_type in {"table", "figure", "caption", "image_summary", "ocr_region"}:
+                if candidate.special_chunk_type in {"table", "figure", "caption", "image_summary", "ocr_region", "formula"}:
                     boost *= 1.10
                 chunk_scores[candidate.chunk_id] = max(chunk_scores.get(candidate.chunk_id, 0.0), boost)
                 support_counts[candidate.chunk_id] = max(support_counts.get(candidate.chunk_id, 0), 1)
@@ -533,6 +654,8 @@ class SearchBackedRetrievalFactory:
             node_id, node_score, depth = frontier.pop(0)
             if node_score <= 0.0:
                 continue
+            current_node = self._graph_repo.get_node(node_id)
+            current_node_type = None if current_node is None else current_node.node_type
 
             node_evidence_score = node_score * (1.92 if depth == 0 else 0.82 / (depth + 0.3))
             self._add_scored_chunk_ids(
@@ -545,6 +668,8 @@ class SearchBackedRetrievalFactory:
                 continue
 
             for edge in self._graph_repo.list_edges_for_node(node_id, include_candidates=True):
+                if current_node_type in {"table", "figure", "caption", "ocr_region", "image_summary", "formula"} and edge.relation_type == "contains_special":
+                    continue
                 traversal_weight = self._edge_traversal_weight(
                     edge.relation_type,
                     query_terms=query_terms,
@@ -584,6 +709,18 @@ class SearchBackedRetrievalFactory:
         depth_decay = 1.0 / (1.0 + depth * 0.55)
         confidence_factor = max(confidence, 0.45)
         return relation_weight * confidence_factor * depth_decay
+
+    @staticmethod
+    def _multimodal_relation_for_node_type(node_type: str) -> str:
+        mapping = {
+            "table": "tabulated_in",
+            "figure": "illustrated_by",
+            "caption": "captioned_by",
+            "image_summary": "summarized_by",
+            "ocr_region": "observed_in",
+            "formula": "expressed_by_formula",
+        }
+        return mapping.get(node_type, "contains_special")
 
     @staticmethod
     def _is_related_special_chunk(*, seed_chunk_id: str, seed_chunk: object, candidate_chunk: object) -> bool:

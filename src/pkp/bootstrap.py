@@ -9,6 +9,7 @@ import httpx
 
 from pkp.config import AppSettings
 from pkp.config.policies import RoutingThresholds
+from pkp.algorithms.retrieval.search_backed_factory import SearchBackedRetrievalFactory
 from pkp.core.rag_core import RAGCore
 from pkp.core.storage_config import StorageConfig
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
@@ -39,7 +40,6 @@ from pkp.runtime.adapters import (
     ResearchPlannerAdapter,
     RetrievalRuntimeAdapter,
     RuntimeEvidenceAdapter,
-    SearchBackedRetrievalFactory,
 )
 from pkp.runtime.artifact_promotion_runtime import ArtifactPromotionRuntime
 from pkp.runtime.container import RuntimeContainer
@@ -318,7 +318,10 @@ def _build_runtime_container(
     )
     special_retriever = cast(
         Callable[[str, list[str]], Sequence[CandidateLike]],
-        retrieval_factory.special_retriever,
+        retrieval_factory.special_retriever_from_repo(
+            vector_repo,
+            embedding_bindings,
+        ),
     )
     metadata_retriever = cast(
         Callable[[str, list[str]], Sequence[CandidateLike]],

@@ -21,6 +21,9 @@ class GraphStore:
     def list_nodes(self, *, node_type: str | None = None) -> list[GraphNode]:
         return self.graph_repo.list_nodes(node_type=node_type)
 
+    def list_nodes_by_alias(self, alias: str, *, node_type: str | None = None) -> list[GraphNode]:
+        return self.graph_repo.list_nodes_by_alias(alias, node_type=node_type)
+
     def list_node_evidence_chunk_ids(self, node_id: str) -> list[str]:
         return self.graph_repo.list_node_evidence_chunk_ids(node_id)
 

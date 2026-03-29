@@ -5,7 +5,8 @@ from pkp.core.storage_config import StorageConfig
 from pkp.algorithms.chunking.multimodal_chunk_router import special_type_for_element
 from pkp.algorithms.chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
 from pkp.algorithms.chunking.token_chunker import chunk_by_tokens
-from pkp.repo.interfaces import ParsedElement
+from pkp.repo.interfaces import ParsedDocument, ParsedElement, ParsedSection
+from pkp.types import DocumentType, SourceType
 from pkp.types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
 
 
@@ -35,9 +36,11 @@ def test_structured_chunker_merges_adjacent_markdown_seeds_with_same_path() -> N
 
 def test_multimodal_router_classifies_special_elements() -> None:
     table = ParsedElement(element_id="table-1", kind="table", text="q1,q2")
+    formula = ParsedElement(element_id="eq-1", kind="equation", text="E = mc^2")
     paragraph = ParsedElement(element_id="para-1", kind="paragraph", text="plain text")
 
     assert special_type_for_element(table) == "table"
+    assert special_type_for_element(formula) == "formula"
     assert special_type_for_element(paragraph) is None
 
 
@@ -197,5 +200,113 @@ def test_ragcore_insert_canonicalizes_alias_entities_and_relation_direction() ->
         assert len(depends_edges) == 1
         assert depends_edges[0].from_node_id == alpha_node.node_id
         assert depends_edges[0].to_node_id == gamma_node.node_id
+    finally:
+        core.stores.close()
+
+
+def test_ragcore_merges_alias_entities_across_documents_when_alias_is_known() -> None:
+    core = RAGCore(storage=StorageConfig.in_memory())
+    try:
+        first = core.insert(
+            location="memory://alpha-alias.txt",
+            source_type="plain_text",
+            owner="user",
+            content_text="Alpha Engine (AE) supports Beta Service.",
+        )
+        second = core.insert(
+            location="memory://alpha-followup.txt",
+            source_type="plain_text",
+            owner="user",
+            content_text="AE depends on Gamma Index.",
+        )
+
+        entity_nodes = sorted(core.stores.graph.list_nodes(node_type="entity"), key=lambda node: node.label)
+        alpha_node = next(node for node in entity_nodes if node.label == "Alpha Engine")
+        gamma_node = next(node for node in entity_nodes if node.label == "Gamma Index")
+        depends_edge = next(edge for edge in core.stores.graph.list_edges() if edge.relation_type == "depends_on")
+        alpha_vector = core.stores.vector_repo.get_entry(alpha_node.node_id, item_kind="entity")
+
+        assert [node.label for node in entity_nodes] == ["Alpha Engine", "Beta Service", "Gamma Index"]
+        assert set(core.stores.graph.list_node_evidence_chunk_ids(alpha_node.node_id)) == {
+            first.chunks[0].chunk_id,
+            second.chunks[0].chunk_id,
+        }
+        assert depends_edge.from_node_id == alpha_node.node_id
+        assert depends_edge.to_node_id == gamma_node.node_id
+        assert alpha_vector is not None
+        assert set(alpha_vector.metadata.get("doc_ids", "").split(",")) == {
+            first.document_id,
+            second.document_id,
+        }
+        assert "AE" in alpha_node.metadata.get("aliases", "").split("||")
+    finally:
+        core.stores.close()
+
+
+def test_ragcore_insert_links_multimodal_nodes_into_graph_across_sections() -> None:
+    core = RAGCore(storage=StorageConfig.in_memory())
+    try:
+        parsed = ParsedDocument(
+            title="Alpha Metrics",
+            source_type=SourceType.MARKDOWN,
+            doc_type=DocumentType.ARTICLE,
+            authors=["tester"],
+            language="en",
+            visible_text=(
+                "Alpha Engine coordinates ingestion. "
+                "Metrics section contains a table about Alpha Engine throughput."
+            ),
+            sections=[
+                ParsedSection(
+                    toc_path=("Alpha Metrics", "Overview"),
+                    heading_level=1,
+                    page_range=(1, 1),
+                    order_index=0,
+                    text="Alpha Engine coordinates ingestion.",
+                ),
+                ParsedSection(
+                    toc_path=("Alpha Metrics", "Metrics"),
+                    heading_level=1,
+                    page_range=(2, 2),
+                    order_index=1,
+                    text="Metrics section contains a table about Alpha Engine throughput.",
+                ),
+            ],
+            elements=[
+                ParsedElement(
+                    element_id="table-1",
+                    kind="table",
+                    text="Alpha Engine throughput is 99 and latency is 12ms.",
+                    toc_path=("Alpha Metrics", "Metrics"),
+                    page_no=2,
+                )
+            ],
+        )
+
+        result = core.insert(
+            location="memory://alpha-metrics.md",
+            source_type="markdown",
+            owner="user",
+            content_text=parsed.visible_text,
+            parsed_document=parsed,
+        )
+
+        table_node = next(node for node in core.stores.graph.list_nodes(node_type="table"))
+        alpha_node = next(
+            node for node in core.stores.graph.list_nodes(node_type="entity") if node.label == "Alpha Engine"
+        )
+        table_vector = core.stores.vector_repo.get_entry(table_node.node_id, item_kind="multimodal")
+        table_chunk = next(chunk for chunk in result.chunks if chunk.special_chunk_type == "table")
+        linking_edges = [
+            edge
+            for edge in core.stores.graph.list_edges_for_node(alpha_node.node_id)
+            if edge.to_node_id == table_node.node_id or edge.from_node_id == table_node.node_id
+        ]
+
+        assert table_node.metadata.get("special_chunk_type") == "table"
+        assert core.stores.graph.list_node_evidence_chunk_ids(table_node.node_id) == [table_chunk.chunk_id]
+        assert any(edge.relation_type == "tabulated_in" for edge in linking_edges)
+        assert table_vector is not None
+        assert table_vector.metadata.get("chunk_id") == table_chunk.chunk_id
     finally:
         core.stores.close()

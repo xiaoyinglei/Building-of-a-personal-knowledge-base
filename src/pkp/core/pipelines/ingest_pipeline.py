@@ -11,8 +11,11 @@ from pkp.algorithms.extract.entity_relation_extractor import (
     EntityRelationExtractionResult,
     EntityRelationExtractor,
     PromptedEntityRelationExtractor,
+    choose_preferred_label,
+    normalize_entity_key,
 )
-from pkp.algorithms.extract.entity_relation_merger import EntityRelationMerger
+from pkp.algorithms.extract.entity_relation_merger import EntityRelationMerger, MergedEntity, MergedGraph, MergedRelation
+from pkp.repo.parse._util import normalize_whitespace
 from pkp.repo.interfaces import EmbeddingProviderBinding, ParsedDocument, WebFetchRepo
 from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
 from pkp.repo.parse.docling_parser_repo import DoclingParserRepo
@@ -437,7 +440,10 @@ class IngestPipeline:
         if not chunks or self.extractor is None or self.merger is None:
             return 0, 0
         extraction = self._extract_entities_and_relations(document=document, chunks=chunks)
-        merged = self.merger.merge(document=document, extraction=extraction)
+        merged = self._resolve_entities_against_existing_graph(
+            document=document,
+            merged=self.merger.merge(document=document, extraction=extraction),
+        )
 
         for entity in merged.entities:
             node = GraphNode(
@@ -459,9 +465,244 @@ class IngestPipeline:
             )
             self.graph.save_edge(edge)
 
+        self._persist_multimodal_graph_overlay(
+            source=source,
+            document=document,
+            chunks=chunks,
+            entities=merged.entities,
+        )
+        self._index_multimodal_vectors(source=source, document=document, chunks=chunks)
         self._index_entity_vectors(source=source, document=document, entities=merged.entities)
         self._index_relation_vectors(source=source, document=document, relations=merged.relations)
         return len(merged.entities), len(merged.relations)
+
+    def _persist_multimodal_graph_overlay(
+        self,
+        *,
+        source: Source,
+        document: Document,
+        chunks: list[Chunk],
+        entities: list[object],
+    ) -> None:
+        special_chunks = [chunk for chunk in chunks if chunk.chunk_role is ChunkRole.SPECIAL and chunk.special_chunk_type]
+        if not special_chunks:
+            return
+
+        chunk_by_id = {chunk.chunk_id: chunk for chunk in chunks}
+        entity_segments: dict[str, set[str]] = {}
+        entity_aliases: dict[str, set[str]] = {}
+        for entity in entities:
+            entity_segments[entity.node_id] = {
+                chunk_by_id[chunk_id].segment_id
+                for chunk_id in entity.evidence_chunk_ids
+                if chunk_id in chunk_by_id
+            }
+            aliases = {
+                normalize_whitespace(alias).lower()
+                for alias in entity.metadata.get("aliases", "").split("||")
+                if normalize_whitespace(alias)
+            }
+            aliases.add(normalize_whitespace(entity.label).lower())
+            entity_aliases[entity.node_id] = aliases
+
+        for chunk in special_chunks:
+            node_id = self._deterministic_id(chunk.chunk_id, "multimodal")
+            label = normalize_whitespace(
+                f"{(chunk.special_chunk_type or 'special').replace('_', ' ').title()}: {chunk.text}"
+            )[:240]
+            node = GraphNode(
+                node_id=node_id,
+                node_type=chunk.special_chunk_type or "multimodal",
+                label=label,
+                metadata={
+                    "doc_id": document.doc_id,
+                    "source_id": source.source_id,
+                    "segment_id": chunk.segment_id,
+                    "chunk_id": chunk.chunk_id,
+                    "special_chunk_type": chunk.special_chunk_type or "special",
+                    **{key: value for key, value in chunk.metadata.items() if value},
+                },
+            )
+            self.graph.save_node(node, evidence_chunk_ids=[chunk.chunk_id])
+            self.graph.save_edge(
+                GraphEdge(
+                    edge_id=self._deterministic_id(chunk.segment_id, node_id, "contains_special", "edge"),
+                    from_node_id=chunk.segment_id,
+                    to_node_id=node_id,
+                    relation_type="contains_special",
+                    confidence=1.0,
+                    evidence_chunk_ids=[chunk.chunk_id],
+                    metadata={"doc_id": document.doc_id, "source_id": source.source_id},
+                )
+            )
+
+            normalized_special_text = normalize_whitespace(chunk.text).lower()
+            for entity in entities:
+                same_segment = chunk.segment_id in entity_segments.get(entity.node_id, set())
+                mentioned = any(alias and alias in normalized_special_text for alias in entity_aliases.get(entity.node_id, set()))
+                if not same_segment and not mentioned:
+                    continue
+                relation_type = self._multimodal_relation_type(chunk.special_chunk_type)
+                confidence = 0.9 if mentioned else 0.76
+                self.graph.save_edge(
+                    GraphEdge(
+                        edge_id=self._deterministic_id(entity.node_id, node_id, relation_type, "edge"),
+                        from_node_id=entity.node_id,
+                        to_node_id=node_id,
+                        relation_type=relation_type,
+                        confidence=confidence,
+                        evidence_chunk_ids=[chunk.chunk_id],
+                        metadata={
+                            "doc_id": document.doc_id,
+                            "source_id": source.source_id,
+                            "from_label": entity.label,
+                            "to_label": label,
+                        },
+                        )
+                )
+
+    def _resolve_entities_against_existing_graph(
+        self,
+        *,
+        document: Document,
+        merged: MergedGraph,
+    ) -> MergedGraph:
+        if not merged.entities:
+            return merged
+
+        resolved_entities: dict[str, MergedEntity] = {}
+        rewritten_node_ids: dict[str, str] = {}
+        for entity in merged.entities:
+            matched = self._find_existing_entity_match(entity)
+            resolved_node_id = entity.node_id if matched is None else matched.node_id
+            resolved_key = entity.key
+            if matched is not None:
+                resolved_key = matched.metadata.get("entity_key") or normalize_entity_key(matched.label) or entity.key
+
+            current = resolved_entities.get(resolved_node_id)
+            alias_values = self._merge_alias_values(
+                [] if matched is None else self._entity_alias_values(matched.label, matched.metadata.get("aliases", "")),
+                [] if current is None else self._entity_alias_values(current.label, current.metadata.get("aliases", "")),
+                self._entity_alias_values(entity.label, entity.metadata.get("aliases", "")),
+            )
+            preferred_label = choose_preferred_label(
+                [
+                    *([] if matched is None else [matched.label]),
+                    *([] if current is None else [current.label]),
+                    entity.label,
+                    *alias_values,
+                ]
+            ) or entity.label
+            evidence_chunk_ids = self._merge_chunk_ids(
+                [] if current is None else current.evidence_chunk_ids,
+                entity.evidence_chunk_ids,
+            )
+            entity_type = (
+                current.entity_type
+                if current is not None and current.entity_type != "concept"
+                else entity.entity_type
+            )
+            metadata = self._merge_entity_metadata(
+                existing=None if matched is None else matched.metadata,
+                current=None if current is None else current.metadata,
+                incoming=entity.metadata,
+                aliases=alias_values,
+                entity_key=resolved_key,
+                entity_type=entity_type,
+                doc_id=document.doc_id,
+            )
+            resolved_entities[resolved_node_id] = MergedEntity(
+                node_id=resolved_node_id,
+                key=resolved_key,
+                label=preferred_label,
+                entity_type=metadata.get("entity_type", entity_type),
+                description=self._choose_description("" if current is None else current.description, entity.description),
+                evidence_chunk_ids=evidence_chunk_ids,
+                metadata=metadata | {"evidence_count": str(len(evidence_chunk_ids))},
+            )
+            rewritten_node_ids[entity.node_id] = resolved_node_id
+
+        resolved_relations: dict[tuple[str, str, str], MergedRelation] = {}
+        for relation in merged.relations:
+            from_node_id = rewritten_node_ids.get(relation.from_node_id, relation.from_node_id)
+            to_node_id = rewritten_node_ids.get(relation.to_node_id, relation.to_node_id)
+            if from_node_id == to_node_id:
+                continue
+            relation_key = (from_node_id, to_node_id, relation.relation_type)
+            current = resolved_relations.get(relation_key)
+            from_entity = resolved_entities.get(from_node_id)
+            to_entity = resolved_entities.get(to_node_id)
+            evidence_chunk_ids = self._merge_chunk_ids(
+                [] if current is None else current.evidence_chunk_ids,
+                relation.evidence_chunk_ids,
+            )
+            metadata = self._merge_relation_metadata(
+                current=None if current is None else current.metadata,
+                incoming=relation.metadata,
+                from_label=relation.metadata.get("from_label") if from_entity is None else from_entity.label,
+                to_label=relation.metadata.get("to_label") if to_entity is None else to_entity.label,
+                doc_id=document.doc_id,
+            )
+            resolved_relations[relation_key] = MergedRelation(
+                edge_id=self._canonical_relation_edge_id(from_node_id, to_node_id, relation.relation_type),
+                from_node_id=from_node_id,
+                to_node_id=to_node_id,
+                relation_type=relation.relation_type,
+                description=self._choose_description("" if current is None else current.description, relation.description),
+                confidence=max(relation.confidence, 0.0 if current is None else current.confidence),
+                evidence_chunk_ids=evidence_chunk_ids,
+                metadata=metadata | {"evidence_count": str(len(evidence_chunk_ids))},
+            )
+
+        return MergedGraph(
+            entities=list(resolved_entities.values()),
+            relations=list(resolved_relations.values()),
+        )
+
+    def _find_existing_entity_match(self, entity: MergedEntity) -> GraphNode | None:
+        incoming_aliases = self._entity_alias_values(entity.label, entity.metadata.get("aliases", ""))
+        if not incoming_aliases:
+            return None
+
+        candidates: dict[str, GraphNode] = {}
+        scores: dict[str, int] = {}
+        incoming_normalized = {
+            normalized
+            for alias in incoming_aliases
+            if (normalized := self._normalize_alias(alias))
+        }
+        incoming_acronyms = {
+            acronym
+            for alias in incoming_aliases
+            if (acronym := self._label_acronym(alias))
+        }
+
+        for alias in incoming_aliases:
+            for node in self.graph.list_nodes_by_alias(alias, node_type="entity"):
+                candidates[node.node_id] = node
+                score = scores.get(node.node_id, 0)
+                existing_key = node.metadata.get("entity_key") or normalize_entity_key(node.label)
+                if existing_key and existing_key == entity.key:
+                    score += 6
+                existing_aliases = self._entity_alias_values(node.label, node.metadata.get("aliases", ""))
+                existing_normalized = {
+                    normalized
+                    for item in existing_aliases
+                    if (normalized := self._normalize_alias(item))
+                }
+                existing_acronyms = {
+                    acronym
+                    for item in existing_aliases
+                    if (acronym := self._label_acronym(item))
+                }
+                score += 8 * len(incoming_normalized & existing_normalized)
+                score += 3 * len(incoming_acronyms & existing_acronyms)
+                scores[node.node_id] = score
+
+        if not scores:
+            return None
+        best_node_id = max(scores, key=lambda node_id: (scores[node_id], node_id))
+        return None if scores[best_node_id] < 8 else candidates[best_node_id]
 
     def _extract_entities_and_relations(
         self,
@@ -493,15 +734,44 @@ class IngestPipeline:
             relations.extend(result.relations)
         return EntityRelationExtractionResult(entities=entities, relations=relations)
 
+    def _index_multimodal_vectors(self, *, source: Source, document: Document, chunks: list[Chunk]) -> None:
+        special_chunks = [
+            chunk for chunk in chunks if chunk.chunk_role is ChunkRole.SPECIAL and chunk.special_chunk_type
+        ]
+        if not special_chunks:
+            return
+        texts = [self._multimodal_embedding_text(chunk) for chunk in special_chunks]
+        for binding in self.embedding_bindings:
+            vectors = self._embed_texts(binding.provider, texts)
+            if vectors is None:
+                continue
+            for chunk, vector, text in zip(special_chunks, vectors, texts, strict=True):
+                self._upsert_graph_vector(
+                    item_id=self._deterministic_id(chunk.chunk_id, "multimodal"),
+                    item_kind="multimodal",
+                    vector=vector,
+                    metadata={
+                        "doc_id": document.doc_id,
+                        "doc_ids": document.doc_id,
+                        "source_id": source.source_id,
+                        "source_ids": source.source_id,
+                        "segment_id": chunk.segment_id,
+                        "chunk_id": chunk.chunk_id,
+                        "text": text,
+                        "special_chunk_type": chunk.special_chunk_type or "special",
+                    },
+                    embedding_space=binding.space,
+                )
+
     def _index_entity_vectors(self, *, source: Source, document: Document, entities: list[object]) -> None:
-        texts = [f"{entity.label}: {entity.description}" for entity in entities]
+        texts = [self._entity_embedding_text(entity) for entity in entities]
         if not texts:
             return
         for binding in self.embedding_bindings:
             vectors = self._embed_texts(binding.provider, texts)
             if vectors is None:
                 continue
-            for entity, vector in zip(entities, vectors, strict=True):
+            for entity, vector, text in zip(entities, vectors, texts, strict=True):
                 self._upsert_graph_vector(
                     item_id=entity.node_id,
                     item_kind="entity",
@@ -512,8 +782,10 @@ class IngestPipeline:
                         "source_id": source.source_id,
                         "source_ids": source.source_id,
                         "segment_id": "",
-                        "text": f"{entity.label}: {entity.description}",
+                        "text": text,
                         "entity_type": entity.entity_type,
+                        "entity_key": entity.key,
+                        "aliases": entity.metadata.get("aliases", ""),
                     },
                     embedding_space=binding.space,
                 )
@@ -550,6 +822,18 @@ class IngestPipeline:
                     },
                     embedding_space=binding.space,
                 )
+
+    @staticmethod
+    def _multimodal_relation_type(special_chunk_type: str | None) -> str:
+        mapping = {
+            "table": "tabulated_in",
+            "figure": "illustrated_by",
+            "caption": "captioned_by",
+            "ocr_region": "observed_in",
+            "image_summary": "summarized_by",
+            "formula": "expressed_by_formula",
+        }
+        return mapping.get(special_chunk_type or "", "supported_by_multimodal")
 
     def _repair_duplicate_indexes(
         self,
@@ -861,6 +1145,138 @@ class IngestPipeline:
         if previous_text and len(previous_text) > len(current_text):
             merged["text"] = previous_text
         return merged
+
+    @staticmethod
+    def _merge_alias_values(*groups: list[str]) -> list[str]:
+        aliases: list[str] = []
+        for group in groups:
+            for alias in group:
+                normalized = alias.strip()
+                if normalized and normalized not in aliases:
+                    aliases.append(normalized)
+        return aliases
+
+    @staticmethod
+    def _entity_alias_values(label: str, aliases_blob: str) -> list[str]:
+        aliases = [label]
+        if aliases_blob:
+            aliases.extend(alias for alias in aliases_blob.split("||") if alias)
+        return list(dict.fromkeys(alias.strip() for alias in aliases if alias and alias.strip()))
+
+    @staticmethod
+    def _merge_chunk_ids(left: list[str], right: list[str]) -> list[str]:
+        return list(dict.fromkeys([*left, *right]))
+
+    @staticmethod
+    def _merge_entity_metadata(
+        *,
+        existing: dict[str, str] | None,
+        current: dict[str, str] | None,
+        incoming: dict[str, str],
+        aliases: list[str],
+        entity_key: str,
+        entity_type: str,
+        doc_id: str,
+    ) -> dict[str, str]:
+        merged = dict(existing or {})
+        merged.update(current or {})
+        merged.update(incoming)
+        doc_ids = IngestPipeline._merge_csv_values(
+            doc_id,
+            *(container.get("doc_id", "") for container in (existing or {}, current or {}, incoming)),
+            *(container.get("doc_ids", "") for container in (existing or {}, current or {}, incoming)),
+        )
+        if doc_ids:
+            merged["doc_ids"] = doc_ids
+        merged["doc_id"] = doc_id
+        merged["aliases"] = "||".join(aliases)
+        merged["entity_key"] = entity_key
+        merged["entity_type"] = entity_type
+        return merged
+
+    @staticmethod
+    def _merge_relation_metadata(
+        *,
+        current: dict[str, str] | None,
+        incoming: dict[str, str],
+        from_label: str | None,
+        to_label: str | None,
+        doc_id: str,
+    ) -> dict[str, str]:
+        merged = dict(current or {})
+        merged.update(incoming)
+        doc_ids = IngestPipeline._merge_csv_values(
+            doc_id,
+            *(container.get("doc_id", "") for container in (current or {}, incoming)),
+            *(container.get("doc_ids", "") for container in (current or {}, incoming)),
+        )
+        if doc_ids:
+            merged["doc_ids"] = doc_ids
+        merged["doc_id"] = doc_id
+        if from_label:
+            merged["from_label"] = from_label
+        if to_label:
+            merged["to_label"] = to_label
+        return merged
+
+    @staticmethod
+    def _merge_csv_values(*values: str) -> str:
+        items: list[str] = []
+        for value in values:
+            if not value:
+                continue
+            items.extend(item.strip() for item in value.split(",") if item.strip())
+        return ",".join(sorted(dict.fromkeys(items)))
+
+    @staticmethod
+    def _choose_description(left: str, right: str) -> str:
+        if not left:
+            return right
+        if not right:
+            return left
+        return left if len(left) >= len(right) else right
+
+    @staticmethod
+    def _normalize_alias(alias: str) -> str:
+        return normalize_whitespace(alias).lower()
+
+    @staticmethod
+    def _label_acronym(label: str) -> str | None:
+        tokens = [token for token in normalize_whitespace(label).replace("-", " ").split(" ") if token]
+        if len(tokens) < 2:
+            return None
+        acronym = "".join(token[0].upper() for token in tokens if token and token[0].isalnum())
+        return acronym or None
+
+    @staticmethod
+    def _canonical_relation_edge_id(from_node_id: str, to_node_id: str, relation_type: str) -> str:
+        digest = sha256("\0".join((from_node_id, to_node_id, relation_type, "edge")).encode("utf-8")).hexdigest()
+        return f"edge-{digest[:16]}"
+
+    def _entity_embedding_text(self, entity: object) -> str:
+        label = getattr(entity, "label", "")
+        metadata = getattr(entity, "metadata", {})
+        aliases = [
+            alias
+            for alias in self._entity_alias_values(label, metadata.get("aliases", ""))
+            if alias != label
+        ]
+        description = getattr(entity, "description", "")
+        parts = [label]
+        if description:
+            parts.append(description)
+        if aliases:
+            parts.append(f"Aliases: {', '.join(aliases[:6])}")
+        return ". ".join(part for part in parts if part)
+
+    @staticmethod
+    def _multimodal_embedding_text(chunk: Chunk) -> str:
+        special_type = (chunk.special_chunk_type or "special").replace("_", " ")
+        toc_path = chunk.metadata.get("toc_path", "")
+        parts = [f"{special_type.title()}: {chunk.text}"]
+        if toc_path:
+            parts.append(f"Section: {toc_path}")
+        return ". ".join(part for part in parts if part)
 
     @staticmethod
     def _merge_vector_values(

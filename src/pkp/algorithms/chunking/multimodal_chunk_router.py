@@ -17,6 +17,8 @@ def special_type_for_element(element: ParsedElement) -> str | None:
         return "caption"
     if element.kind == "ocr_region":
         return "ocr_region"
+    if element.kind in {"formula", "equation", "latex"}:
+        return "formula"
     return None
 
 

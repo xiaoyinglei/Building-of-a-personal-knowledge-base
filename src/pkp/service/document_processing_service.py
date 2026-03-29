@@ -152,7 +152,13 @@ class DocumentProcessingService:
 
         doc_model = cast(Any, parsed.doc_model)
         if doc_model is None:
-            raise ValueError("Docling document is required for hierarchical or hybrid chunking")
+            return self._build_fallback_section_chunks(
+                location=location,
+                document=document,
+                parsed=parsed,
+                access_policy=access_policy,
+                local_refine=local_refine,
+            )
 
         raw_chunks: list[Any] = list(
             self._hierarchical_chunker.chunk(doc_model)

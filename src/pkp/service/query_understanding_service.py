@@ -9,11 +9,12 @@ from pkp.types.text import focus_terms
 class QueryUnderstandingService:
     _PAGE_PATTERN = re.compile(r"(?:第\s*(\d+)\s*页|page\s*(\d+))", re.IGNORECASE)
     _SPECIAL_SIGNAL_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("table", ("表格", "表", "table", "指标", "数值", "统计表")),
+        ("table", ("表格", "table", "指标", "数值", "统计表")),
         ("figure", ("图片", "图", "figure", "截图", "流程图")),
         ("ocr_region", ("ocr", "识别", "截图文字", "图中文字", "区域文字")),
         ("image_summary", ("图片总结", "图像摘要", "画面内容", "visual summary", "image summary")),
         ("caption", ("图注", "图题", "caption")),
+        ("formula", ("公式", "equation", "formula", "latex", "数学表达式")),
     )
     _STRUCTURE_TERMS: tuple[str, ...] = (
         "架构",

@@ -68,3 +68,23 @@ def test_sqlite_graph_repo_accumulates_node_and_edge_evidence_across_writes(tmp_
     assert repo.list_node_evidence_chunk_ids(node.node_id) == ["chunk-1", "chunk-2"]
     assert merged_edge is not None
     assert merged_edge.evidence_chunk_ids == ["chunk-1", "chunk-2"]
+
+
+def test_sqlite_graph_repo_indexes_entity_aliases_for_lookup_and_cleanup(tmp_path: Path) -> None:
+    repo = SQLiteGraphRepo(tmp_path / "graph.sqlite3")
+    node = GraphNode(
+        node_id="entity-alpha",
+        node_type="entity",
+        label="Alpha Engine",
+        metadata={"aliases": "AE||Alpha Engine"},
+    )
+
+    repo.save_node(node)
+    repo.merge_node_evidence(node.node_id, ["chunk-1"])
+
+    assert [item.node_id for item in repo.list_nodes_by_alias("AE", node_type="entity")] == ["entity-alpha"]
+    assert [item.node_id for item in repo.list_nodes_by_alias("alpha engine", node_type="entity")] == ["entity-alpha"]
+
+    repo.delete_by_chunk_ids(["chunk-1"])
+
+    assert repo.list_nodes_by_alias("AE", node_type="entity") == []
