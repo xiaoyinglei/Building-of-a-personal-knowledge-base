@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 from pkp.algorithms.generation.answer_generator import AnswerGenerator
-from pkp.algorithms.retrieval.search_backed_factory import SearchBackedRetrievalFactory
 from pkp.document.loader import HttpWebFetchRepo
 from pkp.document.parser import (
     DoclingParserRepo,
@@ -29,8 +28,16 @@ from pkp.ingest.ingest import (
 from pkp.llm.embedding import EmbeddingProviderBinding
 from pkp.llm.generation import AnswerGenerationService
 from pkp.llm.rerank import HeuristicRerankService
-from pkp.query.context import ContextEvidenceMerger, ContextPromptBuilder, EvidenceTruncator
-from pkp.query.graph import GraphExpansionService
+from pkp.query.context import (
+    CandidateLike,
+    ContextEvidenceMerger,
+    ContextPromptBuilder,
+    EvidenceService,
+    EvidenceTruncator,
+    QueryUnderstandingService,
+    RoutingService,
+)
+from pkp.query.graph import GraphExpansionService, SearchBackedRetrievalFactory
 from pkp.query.query import QueryOptions, RAGQueryResult
 from pkp.query.retrieve import RAGQueryPipeline, RetrievalService
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
@@ -39,10 +46,7 @@ from pkp.repo.vision.ocr_vision_repo import create_default_ocr_repo
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.chunking_service import ChunkingService
 from pkp.service.document_processing_service import DocumentProcessingService
-from pkp.service.evidence_service import CandidateLike, EvidenceService
 from pkp.service.policy_resolution_service import PolicyResolutionService
-from pkp.service.query_understanding_service import QueryUnderstandingService
-from pkp.service.routing_service import RoutingService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.service.toc_service import TOCService
 from pkp.storage import StorageBundle, StorageConfig

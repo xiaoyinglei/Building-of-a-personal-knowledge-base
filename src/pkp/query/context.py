@@ -1,20 +1,420 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import TYPE_CHECKING, Final, Protocol
 
-from pkp.query.query import ContextEvidence
+from pydantic import BaseModel, ConfigDict, Field
+
 from pkp.service.answer_generation_service import AnswerGenerationService
-from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService, SelfCheckResult
-from pkp.service.query_understanding_service import QueryUnderstandingService
-from pkp.service.routing_service import RoutingDecision, RoutingService
+from pkp.config.policies import RoutingThresholds
+from pkp.types.access import AccessPolicy, RuntimeMode
+from pkp.types.content import ChunkRole
 from pkp.types.envelope import EvidenceItem
-from pkp.types.retrieval import RetrievalResult
-from pkp.types.text import text_unit_count
+from pkp.types.query import ComplexityLevel, QueryUnderstanding, TaskType
+from pkp.types.text import focus_terms, text_unit_count
+
+if TYPE_CHECKING:
+    from pkp.query.query import ContextEvidence
+    from pkp.types.retrieval import RetrievalResult
 
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff]")
+_COMPARISON_TOKENS = ("compare", "versus", " vs ", "difference", "contrast")
+_TIMELINE_TOKENS = ("timeline", "trend", "over time", "chronology")
+_RESEARCH_TOKENS = ("research", "synthesize", "summary", "summarize", "why", "how ")
+_SCOPED_TOKENS = ("this document", "this source", "in this doc")
+
+
+class CandidateLike(Protocol):
+    chunk_id: str
+    doc_id: str
+    text: str
+    citation_anchor: str
+    score: float
+    rank: int
+    source_kind: str
+    source_id: str | None
+    section_path: Sequence[str]
+    chunk_role: ChunkRole | None
+    special_chunk_type: str | None
+    parent_chunk_id: str | None
+
+
+class EvidenceBundle(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    internal: list[EvidenceItem] = Field(default_factory=list)
+    external: list[EvidenceItem] = Field(default_factory=list)
+    graph: list[EvidenceItem] = Field(default_factory=list)
+
+    @property
+    def all(self) -> list[EvidenceItem]:
+        return [*self.internal, *self.external, *self.graph]
+
+
+class SelfCheckResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    retrieve_more: bool
+    evidence_sufficient: bool
+    claim_supported: bool
+
+
+class EvidenceService:
+    def __init__(self, thresholds: RoutingThresholds | None = None) -> None:
+        self._thresholds = thresholds or RoutingThresholds()
+
+    @staticmethod
+    def _candidate_source_scope(candidate: CandidateLike) -> set[str]:
+        scope = {candidate.doc_id}
+        if candidate.source_id:
+            scope.add(candidate.source_id)
+        return scope
+
+    @staticmethod
+    def _candidate_access_policy(candidate: object) -> AccessPolicy | None:
+        policy = getattr(candidate, "effective_access_policy", None)
+        if isinstance(policy, AccessPolicy):
+            return policy
+        return None
+
+    @staticmethod
+    def _is_candidate_external(candidate: object) -> bool:
+        return getattr(candidate, "source_kind", "internal") == "external"
+
+    @staticmethod
+    def _is_candidate_graph(candidate: object) -> bool:
+        return getattr(candidate, "source_kind", "internal") == "graph"
+
+    def filter_candidates(
+        self,
+        candidates: Sequence[CandidateLike],
+        *,
+        source_scope: Sequence[str],
+        access_policy: AccessPolicy,
+        runtime_mode: RuntimeMode,
+    ) -> list[CandidateLike]:
+        allowed_scope = set(source_scope)
+        filtered: list[CandidateLike] = []
+        for candidate in candidates:
+            if allowed_scope and not self._candidate_source_scope(candidate) & allowed_scope:
+                continue
+            if self._is_candidate_external(candidate) and access_policy.external_retrieval.value != "allow":
+                continue
+            candidate_policy = self._candidate_access_policy(candidate)
+            if candidate_policy is not None:
+                if runtime_mode not in candidate_policy.allowed_runtimes:
+                    continue
+                if not (candidate_policy.allowed_locations & access_policy.allowed_locations):
+                    continue
+            filtered.append(candidate)
+        return filtered
+
+    @staticmethod
+    def _to_evidence_item(candidate: CandidateLike) -> EvidenceItem:
+        evidence_kind = getattr(candidate, "source_kind", "internal")
+        if evidence_kind not in {"internal", "external", "graph"}:
+            evidence_kind = "internal"
+        return EvidenceItem(
+            chunk_id=candidate.chunk_id,
+            doc_id=candidate.doc_id,
+            source_id=getattr(candidate, "source_id", None),
+            citation_anchor=candidate.citation_anchor,
+            text=candidate.text,
+            score=float(candidate.score),
+            evidence_kind=evidence_kind,
+            chunk_role=getattr(candidate, "chunk_role", None),
+            special_chunk_type=getattr(candidate, "special_chunk_type", None),
+            parent_chunk_id=getattr(candidate, "parent_chunk_id", None),
+            file_name=getattr(candidate, "file_name", None),
+            section_path=list(getattr(candidate, "section_path", ()) or ()),
+            page_start=getattr(candidate, "page_start", None),
+            page_end=getattr(candidate, "page_end", None),
+            chunk_type=getattr(candidate, "chunk_type", None),
+            source_type=getattr(candidate, "source_type", None),
+        )
+
+    def assemble_bundle(self, candidates: Sequence[CandidateLike]) -> EvidenceBundle:
+        internal: list[EvidenceItem] = []
+        external: list[EvidenceItem] = []
+        graph: list[EvidenceItem] = []
+        for candidate in candidates:
+            item = self._to_evidence_item(candidate)
+            if item.evidence_kind == "external":
+                external.append(item)
+            elif item.evidence_kind == "graph":
+                graph.append(item)
+            else:
+                internal.append(item)
+        return EvidenceBundle(internal=internal, external=external, graph=graph)
+
+    def evaluate_self_check(
+        self,
+        *,
+        bundle: EvidenceBundle,
+        task_type: TaskType,
+        complexity_level: ComplexityLevel,
+    ) -> SelfCheckResult:
+        internal = bundle.internal
+        section_keys = {item.citation_anchor if item.citation_anchor else item.chunk_id for item in internal}
+        doc_ids = {item.doc_id for item in internal}
+
+        if task_type in {TaskType.LOOKUP, TaskType.SINGLE_DOC_QA} or complexity_level in {
+            ComplexityLevel.L1_DIRECT,
+            ComplexityLevel.L2_SCOPED,
+        }:
+            evidence_sufficient = (
+                len(internal) >= self._thresholds.fast_min_evidence_chunks
+                and len(section_keys) >= self._thresholds.fast_min_sections
+            )
+        else:
+            evidence_sufficient = len(internal) >= self._thresholds.deep_min_evidence_chunks and (
+                len(doc_ids) >= self._thresholds.deep_min_supporting_units
+                or len(section_keys) >= self._thresholds.deep_min_supporting_units
+            )
+
+        claim_supported = evidence_sufficient and bool(internal)
+        retrieve_more = not evidence_sufficient
+        return SelfCheckResult(
+            retrieve_more=retrieve_more,
+            evidence_sufficient=evidence_sufficient,
+            claim_supported=claim_supported,
+        )
+
+    @staticmethod
+    def evidence_counts(bundle: EvidenceBundle) -> Counter[str]:
+        return Counter(item.evidence_kind for item in bundle.all)
+
+
+class QueryUnderstandingService:
+    _PAGE_PATTERN = re.compile(r"(?:第\s*(\d+)\s*页|page\s*(\d+))", re.IGNORECASE)
+    _SPECIAL_SIGNAL_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("table", ("表格", "table", "指标", "数值", "统计表")),
+        ("figure", ("图片", "图", "figure", "截图", "流程图")),
+        ("ocr_region", ("ocr", "识别", "截图文字", "图中文字", "区域文字")),
+        ("image_summary", ("图片总结", "图像摘要", "画面内容", "visual summary", "image summary")),
+        ("caption", ("图注", "图题", "caption")),
+        ("formula", ("公式", "equation", "formula", "latex", "数学表达式")),
+    )
+    _STRUCTURE_TERMS: tuple[str, ...] = (
+        "架构",
+        "结构",
+        "模块",
+        "章节",
+        "标题",
+        "目录",
+        "分层",
+        "第几层",
+        "哪几层",
+        "section",
+        "heading",
+        "module",
+        "architecture",
+    )
+    _SOURCE_TYPE_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("pdf", ("pdf", "pdf文档", "扫描件")),
+        ("markdown", ("markdown", "md", "markdown文档")),
+        ("docx", ("docx", "word", "word文档", "文档")),
+        ("image", ("图片", "图像", "image", "截图")),
+    )
+
+    def analyze(self, query: str) -> QueryUnderstanding:
+        normalized = query.strip()
+        lowered = normalized.lower()
+        special_targets = [
+            target
+            for target, keywords in self._SPECIAL_SIGNAL_MAP
+            if any(keyword in lowered for keyword in keywords)
+        ]
+        structure_hit = any(term in normalized or term in lowered for term in self._STRUCTURE_TERMS)
+        preferred_sections = self._preferred_section_terms(normalized)
+        page_numbers = self._page_numbers(normalized)
+        source_types = [
+            source_type
+            for source_type, keywords in self._SOURCE_TYPE_TERMS
+            if any(keyword in lowered for keyword in keywords)
+        ]
+        metadata_filters: dict[str, list[str] | str | bool] = {}
+        if page_numbers:
+            metadata_filters["page_numbers"] = page_numbers
+        if source_types:
+            metadata_filters["source_types"] = source_types
+        if special_targets:
+            metadata_filters["special_targets"] = special_targets
+        if preferred_sections:
+            metadata_filters["preferred_section_terms"] = preferred_sections
+        needs_metadata = bool(page_numbers or source_types)
+
+        confidence = 0.35
+        if special_targets:
+            confidence += 0.25
+        if structure_hit or preferred_sections:
+            confidence += 0.2
+        if needs_metadata:
+            confidence += 0.15
+        if len(normalized) >= 8:
+            confidence += 0.1
+        confidence = min(confidence, 0.95)
+
+        if needs_metadata:
+            intent = "localized_lookup"
+            query_type = "page_lookup" if page_numbers else "metadata_lookup"
+        elif special_targets:
+            intent = "special_lookup"
+            query_type = special_targets[0]
+        elif structure_hit or preferred_sections:
+            intent = "structure_lookup"
+            query_type = "structure"
+        else:
+            intent = "semantic_lookup"
+            query_type = "general"
+
+        return QueryUnderstanding(
+            intent=intent,
+            query_type=query_type,
+            needs_dense=True,
+            needs_sparse=True,
+            needs_special=bool(special_targets),
+            needs_structure=structure_hit or bool(preferred_sections),
+            needs_metadata=needs_metadata,
+            structure_constraints={
+                "preferred_section_terms": preferred_sections,
+                "prefer_heading_match": structure_hit or bool(preferred_sections),
+            },
+            metadata_filters=metadata_filters,
+            special_targets=special_targets,
+            confidence=confidence,
+        )
+
+    @staticmethod
+    def _preferred_section_terms(query: str) -> list[str]:
+        exact_phrases = [
+            phrase
+            for phrase in ("系统架构", "技术架构", "组织架构", "系统设计", "工作总结", "项目计划")
+            if phrase in query
+        ]
+        candidates = [
+            term
+            for term in focus_terms(query)
+            if len(term) >= 2 and term not in {"什么", "哪些", "多少", "如何", "为什么"}
+        ]
+        section_terms: list[str] = list(exact_phrases)
+        for candidate in candidates:
+            if any(candidate != phrase and candidate in phrase for phrase in exact_phrases):
+                continue
+            if candidate.endswith(("架构", "结构", "模块", "章节", "流程", "总结", "工作")):
+                section_terms.append(candidate)
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for term in section_terms:
+            if term in seen:
+                continue
+            seen.add(term)
+            ordered.append(term)
+        return ordered[:3]
+
+    @classmethod
+    def _page_numbers(cls, query: str) -> list[str]:
+        numbers: list[str] = []
+        for direct, english in cls._PAGE_PATTERN.findall(query):
+            value = direct or english
+            if value and value not in numbers:
+                numbers.append(value)
+        return numbers
+
+
+class RoutingDecision(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    task_type: TaskType
+    complexity_level: ComplexityLevel
+    runtime_mode: RuntimeMode
+    source_scope: list[str] = Field(default_factory=list)
+    web_search_allowed: bool = False
+    graph_expansion_allowed: bool = False
+    rerank_required: bool = True
+
+
+_DEEP_TASK_TYPES = {
+    TaskType.COMPARISON,
+    TaskType.SYNTHESIS,
+    TaskType.TIMELINE,
+    TaskType.RESEARCH,
+}
+
+
+class RoutingService:
+    def __init__(self, thresholds: RoutingThresholds | None = None) -> None:
+        self._thresholds = thresholds or RoutingThresholds()
+
+    @staticmethod
+    def _normalized_query(query: str) -> str:
+        return re.sub(r"\s+", " ", query.strip().lower())
+
+    def _classify_task_type(self, query: str, source_scope: Sequence[str]) -> TaskType:
+        normalized = self._normalized_query(query)
+        if any(token in normalized for token in _COMPARISON_TOKENS):
+            return TaskType.COMPARISON
+        if any(token in normalized for token in _TIMELINE_TOKENS):
+            return TaskType.TIMELINE
+        if any(token in normalized for token in _RESEARCH_TOKENS) or len(source_scope) > 1:
+            return TaskType.RESEARCH if len(source_scope) > 1 or "research" in normalized else TaskType.SYNTHESIS
+        if len(source_scope) == 1 or any(token in normalized for token in _SCOPED_TOKENS):
+            return TaskType.SINGLE_DOC_QA
+        return TaskType.LOOKUP
+
+    def _classify_complexity(
+        self,
+        task_type: TaskType,
+        source_scope: Sequence[str],
+    ) -> ComplexityLevel:
+        if task_type is TaskType.COMPARISON:
+            return ComplexityLevel.L3_COMPARATIVE
+        if task_type in {TaskType.TIMELINE, TaskType.RESEARCH, TaskType.SYNTHESIS}:
+            return ComplexityLevel.L4_RESEARCH
+        if len(source_scope) == 1:
+            return ComplexityLevel.L2_SCOPED
+        return ComplexityLevel.L1_DIRECT
+
+    @staticmethod
+    def _choose_runtime(task_type: TaskType, complexity_level: ComplexityLevel) -> RuntimeMode:
+        if task_type in _DEEP_TASK_TYPES:
+            return RuntimeMode.DEEP
+        if complexity_level in {
+            ComplexityLevel.L3_COMPARATIVE,
+            ComplexityLevel.L4_RESEARCH,
+        }:
+            return RuntimeMode.DEEP
+        return RuntimeMode.FAST
+
+    def route(
+        self,
+        query: str,
+        *,
+        source_scope: Sequence[str] = (),
+        access_policy: AccessPolicy | None = None,
+    ) -> RoutingDecision:
+        del access_policy
+        task_type = self._classify_task_type(query, source_scope)
+        complexity_level = self._classify_complexity(task_type, source_scope)
+        runtime_mode = self._choose_runtime(task_type, complexity_level)
+        web_search_allowed = task_type in {
+            TaskType.COMPARISON,
+            TaskType.SYNTHESIS,
+            TaskType.TIMELINE,
+            TaskType.RESEARCH,
+        }
+        graph_expansion_allowed = runtime_mode is RuntimeMode.DEEP
+        return RoutingDecision(
+            task_type=task_type,
+            complexity_level=complexity_level,
+            runtime_mode=runtime_mode,
+            source_scope=list(source_scope),
+            web_search_allowed=web_search_allowed,
+            graph_expansion_allowed=graph_expansion_allowed,
+        )
 
 
 @dataclass(slots=True)
@@ -130,6 +530,8 @@ class EvidenceTruncator:
         token_budget: int,
         max_evidence_chunks: int,
     ) -> ContextTruncationResult:
+        from pkp.query.query import ContextEvidence
+
         normalized_budget = max(token_budget, 1)
         normalized_max_chunks = min(max(max_evidence_chunks, 1), normalized_budget)
         prioritized_items = self._prioritize_evidence(evidence, normalized_max_chunks)

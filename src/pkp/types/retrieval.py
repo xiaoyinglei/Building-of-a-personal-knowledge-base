@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from pkp.service.evidence_service import EvidenceBundle, SelfCheckResult
-from pkp.service.routing_service import RoutingDecision
+from pkp.query.context import EvidenceBundle, RoutingDecision, SelfCheckResult
 from pkp.types.diagnostics import RetrievalDiagnostics
 from pkp.types.envelope import PreservationSuggestion
 

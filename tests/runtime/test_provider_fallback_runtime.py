@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from pkp.runtime.adapters import RuntimeEvidenceAdapter
 from pkp.runtime.deep_research_runtime import DeepResearchRuntime
 from pkp.runtime.session_runtime import SessionRuntime
+from pkp.query.context import EvidenceService
 from pkp.service.artifact_service import ArtifactService
-from pkp.service.evidence_service import EvidenceService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.types import (
     AccessPolicy,

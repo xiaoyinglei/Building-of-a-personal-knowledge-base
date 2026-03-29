@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-from pkp.service.evidence_service import CandidateLike
+from pkp.query.context import CandidateLike
 
 
 RetrieverFn = Callable[[str, list[str]], Sequence[CandidateLike]]

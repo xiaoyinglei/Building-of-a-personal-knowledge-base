@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from pkp.query.context import ContextEvidenceMerger, EvidenceTruncator
-from pkp.service.evidence_service import EvidenceBundle, SelfCheckResult
-from pkp.service.routing_service import RoutingDecision
+from pkp.query.context import ContextEvidenceMerger, EvidenceBundle, EvidenceTruncator, RoutingDecision, SelfCheckResult
 from pkp.types.access import RuntimeMode
 from pkp.types.content import ChunkRole
 from pkp.types.envelope import EvidenceItem, PreservationSuggestion

@@ -9,7 +9,6 @@ import httpx
 
 from pkp.config import AppSettings
 from pkp.config.policies import RoutingThresholds
-from pkp.algorithms.retrieval.search_backed_factory import SearchBackedRetrievalFactory
 from pkp.document.loader import HttpWebFetchRepo
 from pkp.document.parser import (
     DoclingParserRepo,
@@ -22,7 +21,8 @@ from pkp.document.parser import (
 from pkp.engine import RAGCore
 from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo, LocalBgeProviderRepo, OllamaProviderRepo, OpenAIProviderRepo
 from pkp.llm.rerank import CrossEncoderConfig, HeuristicRerankService, RerankPipelineConfig
-from pkp.query.graph import GraphExpansionService
+from pkp.query.context import CandidateLike, EvidenceService, RoutingService
+from pkp.query.graph import GraphExpansionService, SearchBackedRetrievalFactory
 from pkp.storage import StorageConfig
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import OcrResult, OcrVisionRepo, VectorRepo
@@ -51,12 +51,10 @@ from pkp.runtime.session_runtime import SessionRuntime
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.chunking_service import ChunkingService
 from pkp.service.document_processing_service import DocumentProcessingService
-from pkp.service.evidence_service import CandidateLike, EvidenceService
 from pkp.service.ingest_service import IngestService
 from pkp.service.memory_service import MemoryService
 from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.retrieval_service import Reranker, RetrievalService
-from pkp.service.routing_service import RoutingService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.service.toc_service import TOCService
 

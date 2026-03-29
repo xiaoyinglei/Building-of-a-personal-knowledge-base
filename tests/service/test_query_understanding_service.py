@@ -1,4 +1,4 @@
-from pkp.service.query_understanding_service import QueryUnderstandingService
+from pkp.query.context import QueryUnderstandingService
 
 
 def test_query_understanding_service_detects_formula_special_queries() -> None:

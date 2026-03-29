@@ -12,12 +12,11 @@ from pkp.repo.interfaces import EmbeddingProviderBinding, VectorSearchResult
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.search.web_search_repo import DeterministicWebSearchRepo
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
+from pkp.query.context import CandidateLike, EvidenceBundle, EvidenceService, QueryUnderstandingService
 from pkp.runtime.provider_metadata import provider_model, provider_name
 from pkp.service.answer_generation_service import AnswerGenerationService
 from pkp.service.artifact_service import ArtifactService
-from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService
 from pkp.service.ingest_service import IngestService
-from pkp.service.query_understanding_service import QueryUnderstandingService
 from pkp.service.retrieval_service import RetrievalService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.types import (

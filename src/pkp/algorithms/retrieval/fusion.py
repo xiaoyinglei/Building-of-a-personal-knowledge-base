@@ -4,9 +4,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pkp.query.query import QueryMode
+from pkp.query.context import CandidateLike
 from pkp.schema.chunk import ChunkRole
 from pkp.schema.document import AccessPolicy
-from pkp.service.evidence_service import CandidateLike
 from pkp.types.text import (
     looks_command_like,
     looks_definition_query,
