@@ -250,6 +250,20 @@ class SQLiteGraphRepo:
         ).fetchall()
         return [str(row["chunk_id"]) for row in rows]
 
+    def list_nodes_for_chunk(self, chunk_id: str) -> list[GraphNode]:
+        rows = self._conn.execute(
+            """
+            SELECT nodes.payload
+            FROM nodes
+            INNER JOIN node_evidence
+              ON node_evidence.node_id = nodes.node_id
+            WHERE node_evidence.chunk_id = ?
+            ORDER BY nodes.saved_at, nodes.node_id
+            """,
+            (chunk_id,),
+        ).fetchall()
+        return [self._load_node(row["payload"]) for row in rows]
+
     def save_candidate_edge(self, edge: GraphEdge) -> None:
         self._save_edge_record("candidate_edges", edge)
         self._conn.commit()

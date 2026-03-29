@@ -472,7 +472,7 @@ class IngestPipeline:
         entities = []
         relations = []
         for chunk in chunks:
-            cache_key = f"{chunk.content_hash or chunk.chunk_id}::entity_relation::v1"
+            cache_key = f"{chunk.content_hash or chunk.chunk_id}::entity_relation::v2"
             cached = self.cache.get(cache_key, namespace="extract")
             if cached is not None and isinstance(cached.payload, dict):
                 try:

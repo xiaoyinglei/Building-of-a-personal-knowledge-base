@@ -17,6 +17,28 @@ from pkp.types import AccessPolicy, Document, ExecutionLocationPreference
 from pkp.types.content import ChunkRole
 from pkp.types.text import keyword_overlap, search_terms
 
+_GRAPH_RELATION_WEIGHTS = {
+    "depends_on": 1.18,
+    "supports": 1.12,
+    "requires": 1.1,
+    "uses": 1.02,
+    "enables": 1.0,
+    "contains": 0.96,
+    "part_of": 0.94,
+    "integrates_with": 0.92,
+    "compares": 0.78,
+    "related_to": 0.68,
+}
+
+_GRAPH_QUERY_HINTS = {
+    "depends_on": ("depend", "dependency", "依赖", "upstream"),
+    "supports": ("support", "supports", "支撑", "supporting"),
+    "uses": ("use", "uses", "used", "使用"),
+    "contains": ("contain", "contains", "include", "includes", "包含"),
+    "part_of": ("part", "belongs", "归属"),
+    "integrates_with": ("integrate", "connection", "connect", "link", "连接"),
+}
+
 
 @dataclass(frozen=True)
 class RetrievedCandidate:
@@ -70,7 +92,7 @@ class MultiProviderBackedVectorRetriever:
         vector_repo: VectorSearchRepoProtocol,
         bindings: Sequence[EmbeddingProviderBinding],
         item_kind: str = "chunk",
-        candidate_builder: Callable[[list[VectorSearchResult], list[str]], list[RetrievedCandidate]] | None = None,
+        candidate_builder: Callable[[str, list[VectorSearchResult], list[str]], list[RetrievedCandidate]] | None = None,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> None:
         self._factory = factory
@@ -153,7 +175,7 @@ class MultiProviderBackedVectorRetriever:
         )
         if not results:
             return []
-        return self._candidate_builder(list(results), source_scope)
+        return self._candidate_builder(query, list(results), source_scope)
 
     @staticmethod
     def _provider_name(provider: object) -> str:
@@ -291,10 +313,32 @@ class SearchBackedRetrievalFactory:
         return candidates[:12]
 
     def graph_expander(self, query: str, source_scope: list[str], non_graph_evidence: list[CandidateLike]) -> list[RetrievedCandidate]:
-        del query
-        chunk_ids = {chunk_id for edge in self._graph_repo.list_candidate_edges() for chunk_id in edge.evidence_chunk_ids}
-        chunk_ids.update(candidate.chunk_id for candidate in non_graph_evidence)
-        return self._build_candidates_from_chunk_ids(list(chunk_ids), source_kind="graph", scope=source_scope)
+        query_terms = set(search_terms(query))
+        seed_chunk_ids = [candidate.chunk_id for candidate in non_graph_evidence if candidate.source_kind == "internal"]
+        seed_node_scores: dict[str, float] = {}
+        for candidate in non_graph_evidence:
+            candidate_score = max(float(candidate.score), 0.1)
+            for node in self._graph_repo.list_nodes_for_chunk(candidate.chunk_id):
+                seed_node_scores[node.node_id] = max(seed_node_scores.get(node.node_id, 0.0), candidate_score)
+            for edge in self._graph_repo.list_edges_for_chunk(candidate.chunk_id, include_candidates=True):
+                for node_id in (edge.from_node_id, edge.to_node_id):
+                    edge_score = candidate_score * max(edge.confidence, 0.45)
+                    seed_node_scores[node_id] = max(seed_node_scores.get(node_id, 0.0), edge_score)
+        chunk_scores, support_counts = self._score_graph_walk(
+            seed_node_scores=seed_node_scores,
+            query_terms=query_terms,
+            max_depth=2,
+        )
+        for chunk_id in seed_chunk_ids:
+            chunk_scores.pop(chunk_id, None)
+            support_counts.pop(chunk_id, None)
+        self._boost_related_special_chunks(chunk_scores, support_counts)
+        return self._build_scored_candidates(
+            chunk_scores,
+            support_counts,
+            source_scope=source_scope,
+            source_kind="graph",
+        )
 
     def web_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
         del source_scope
@@ -356,30 +400,34 @@ class SearchBackedRetrievalFactory:
             default_preference=default_preference,
         )
 
-    def build_chunk_candidates_from_vector_results(self, results: list[VectorSearchResult], source_scope: list[str]) -> list[RetrievedCandidate]:
+    def build_chunk_candidates_from_vector_results(self, query: str, results: list[VectorSearchResult], source_scope: list[str]) -> list[RetrievedCandidate]:
+        del query
         chunk_scores = {result.item_id: float(result.score) for result in results if float(result.score) > 0.0}
         support_counts = {result.item_id: 1 for result in results if float(result.score) > 0.0}
         self._boost_related_special_chunks(chunk_scores, support_counts)
         return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
 
-    def build_local_candidates_from_vector_results(self, results: list[VectorSearchResult], source_scope: list[str]) -> list[RetrievedCandidate]:
-        chunk_scores: dict[str, float] = defaultdict(float)
-        support_counts: dict[str, int] = defaultdict(int)
+    def build_local_candidates_from_vector_results(self, query: str, results: list[VectorSearchResult], source_scope: list[str]) -> list[RetrievedCandidate]:
+        query_terms = set(search_terms(query))
+        seed_node_scores: dict[str, float] = {}
         for result in results:
             base_score = max(float(result.score), 0.0)
             if base_score <= 0.0:
                 continue
-            self._add_scored_chunk_ids(chunk_scores, support_counts, self._graph_repo.list_node_evidence_chunk_ids(result.item_id), score=base_score + 0.6)
-            for edge in self._graph_repo.list_edges_for_node(result.item_id):
-                self._add_scored_chunk_ids(chunk_scores, support_counts, edge.evidence_chunk_ids, score=base_score * 0.55)
-                adjacent = edge.to_node_id if edge.from_node_id == result.item_id else edge.from_node_id
-                self._add_scored_chunk_ids(chunk_scores, support_counts, self._graph_repo.list_node_evidence_chunk_ids(adjacent), score=base_score * 0.35)
+            seed_node_scores[result.item_id] = max(seed_node_scores.get(result.item_id, 0.0), base_score)
+        chunk_scores, support_counts = self._score_graph_walk(
+            seed_node_scores=seed_node_scores,
+            query_terms=query_terms,
+            max_depth=2,
+        )
         self._boost_related_special_chunks(chunk_scores, support_counts)
         return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
 
-    def build_global_candidates_from_vector_results(self, results: list[VectorSearchResult], source_scope: list[str]) -> list[RetrievedCandidate]:
+    def build_global_candidates_from_vector_results(self, query: str, results: list[VectorSearchResult], source_scope: list[str]) -> list[RetrievedCandidate]:
+        query_terms = set(search_terms(query))
         chunk_scores: dict[str, float] = defaultdict(float)
         support_counts: dict[str, int] = defaultdict(int)
+        seed_node_scores: dict[str, float] = {}
         for result in results:
             edge = self._graph_repo.get_edge(result.item_id, include_candidates=True)
             if edge is None:
@@ -387,9 +435,18 @@ class SearchBackedRetrievalFactory:
             base_score = max(float(result.score), 0.0)
             if base_score <= 0.0:
                 continue
-            self._add_scored_chunk_ids(chunk_scores, support_counts, edge.evidence_chunk_ids, score=base_score + 0.25)
-            self._add_scored_chunk_ids(chunk_scores, support_counts, self._graph_repo.list_node_evidence_chunk_ids(edge.from_node_id), score=base_score * 0.8)
-            self._add_scored_chunk_ids(chunk_scores, support_counts, self._graph_repo.list_node_evidence_chunk_ids(edge.to_node_id), score=base_score * 0.8)
+            edge_weight = self._edge_traversal_weight(edge.relation_type, query_terms=query_terms, confidence=edge.confidence, depth=0)
+            self._add_scored_chunk_ids(chunk_scores, support_counts, edge.evidence_chunk_ids, score=base_score + edge_weight * 0.45)
+            for node_id in (edge.from_node_id, edge.to_node_id):
+                seed_node_scores[node_id] = max(seed_node_scores.get(node_id, 0.0), base_score * edge_weight * 0.92)
+        walked_scores, walked_support = self._score_graph_walk(
+            seed_node_scores=seed_node_scores,
+            query_terms=query_terms,
+            max_depth=1,
+        )
+        for chunk_id, score in walked_scores.items():
+            chunk_scores[chunk_id] += score
+            support_counts[chunk_id] += walked_support.get(chunk_id, 0)
         self._boost_related_special_chunks(chunk_scores, support_counts)
         return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
 
@@ -453,6 +510,81 @@ class SearchBackedRetrievalFactory:
                 chunk_scores[candidate.chunk_id] = max(chunk_scores.get(candidate.chunk_id, 0.0), boost)
                 support_counts[candidate.chunk_id] = max(support_counts.get(candidate.chunk_id, 0), 1)
 
+    def _score_graph_walk(
+        self,
+        *,
+        seed_node_scores: dict[str, float],
+        query_terms: set[str],
+        max_depth: int,
+    ) -> tuple[dict[str, float], dict[str, int]]:
+        chunk_scores: dict[str, float] = defaultdict(float)
+        support_counts: dict[str, int] = defaultdict(int)
+        if not seed_node_scores:
+            return chunk_scores, support_counts
+
+        frontier: list[tuple[str, float, int]] = [
+            (node_id, score, 0)
+            for node_id, score in seed_node_scores.items()
+            if score > 0.0
+        ]
+        best_node_scores = dict(seed_node_scores)
+
+        while frontier:
+            node_id, node_score, depth = frontier.pop(0)
+            if node_score <= 0.0:
+                continue
+
+            node_evidence_score = node_score * (1.92 if depth == 0 else 0.82 / (depth + 0.3))
+            self._add_scored_chunk_ids(
+                chunk_scores,
+                support_counts,
+                self._graph_repo.list_node_evidence_chunk_ids(node_id),
+                score=node_evidence_score,
+            )
+            if depth >= max_depth:
+                continue
+
+            for edge in self._graph_repo.list_edges_for_node(node_id, include_candidates=True):
+                traversal_weight = self._edge_traversal_weight(
+                    edge.relation_type,
+                    query_terms=query_terms,
+                    confidence=edge.confidence,
+                    depth=depth,
+                )
+                if traversal_weight <= 0.0:
+                    continue
+                edge_score = node_score * traversal_weight
+                self._add_scored_chunk_ids(
+                    chunk_scores,
+                    support_counts,
+                    edge.evidence_chunk_ids,
+                    score=edge_score * 0.72,
+                )
+                adjacent = edge.to_node_id if edge.from_node_id == node_id else edge.from_node_id
+                next_score = edge_score * 0.76
+                if next_score <= best_node_scores.get(adjacent, 0.0):
+                    continue
+                best_node_scores[adjacent] = next_score
+                frontier.append((adjacent, next_score, depth + 1))
+        return chunk_scores, support_counts
+
+    @staticmethod
+    def _edge_traversal_weight(
+        relation_type: str,
+        *,
+        query_terms: set[str],
+        confidence: float,
+        depth: int,
+    ) -> float:
+        normalized_relation = relation_type.lower()
+        relation_weight = _GRAPH_RELATION_WEIGHTS.get(normalized_relation, 0.9)
+        hints = _GRAPH_QUERY_HINTS.get(normalized_relation, ())
+        if hints and any(hint in query_terms or any(hint in term for term in query_terms) for hint in hints):
+            relation_weight += 0.12
+        depth_decay = 1.0 / (1.0 + depth * 0.55)
+        confidence_factor = max(confidence, 0.45)
+        return relation_weight * confidence_factor * depth_decay
+
     @staticmethod
     def _is_related_special_chunk(*, seed_chunk_id: str, seed_chunk: object, candidate_chunk: object) -> bool:
         same_segment = getattr(seed_chunk, "segment_id", None) == getattr(candidate_chunk, "segment_id", None)
@@ -469,11 +601,23 @@ class SearchBackedRetrievalFactory:
         )
         return same_segment or same_parent or linked_by_parent or linked_by_chain
 
-    def _build_scored_candidates(self, chunk_scores: dict[str, float], support_counts: dict[str, int], *, source_scope: list[str], limit: int = 12) -> list[RetrievedCandidate]:
+    def _build_scored_candidates(
+        self,
+        chunk_scores: dict[str, float],
+        support_counts: dict[str, int],
+        *,
+        source_scope: list[str],
+        source_kind: str = "internal",
+        limit: int = 12,
+    ) -> list[RetrievedCandidate]:
         ordered = sorted(chunk_scores.items(), key=lambda item: (-item[1], -support_counts.get(item[0], 0), item[0]))[:limit]
         if not ordered:
             return []
-        candidates = self._build_candidates_from_chunk_ids([chunk_id for chunk_id, _score in ordered], source_kind="internal", scope=source_scope)
+        candidates = self._build_candidates_from_chunk_ids(
+            [chunk_id for chunk_id, _score in ordered],
+            source_kind=source_kind,
+            scope=source_scope,
+        )
         return self._override_candidate_scores(candidates, {chunk_id: score for chunk_id, score in ordered})
 
     @staticmethod
