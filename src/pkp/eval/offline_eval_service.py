@@ -19,6 +19,7 @@ from pkp.eval.models import (
     RetrievalHit,
 )
 from pkp.eval.sample_pack import prepare_builtin_eval_pack
+from pkp.query.graph import GraphExpansionService
 from pkp.repo.interfaces import (
     EmbeddingProviderBinding,
     ModelProviderRepo,
@@ -29,7 +30,6 @@ from pkp.runtime.adapters import InstrumentedReranker
 from pkp.runtime.provider_metadata import embedding_space, provider_model, provider_name
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import CandidateLike, EvidenceService
-from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.ingest_service import IngestResult, IngestService
 from pkp.service.rerank_service import HeuristicRerankService
 from pkp.service.retrieval_service import Reranker, RetrievalService
