@@ -4,6 +4,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,7 +15,7 @@ from pkp.types.content import Chunk, Document
 _SENTENCE_RE = re.compile(r"(?<=[.!?。！？])\s+")
 _TITLE_CASE_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b")
 _UPPER_CASE_RE = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,})*\b")
-_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{3,}")
+_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 _STOPWORDS = {
@@ -53,14 +54,96 @@ _STOPWORDS = {
     "with",
 }
 
-_RELATION_PATTERNS: tuple[tuple[re.Pattern[str], str, float], ...] = (
-    (re.compile(r"\b(supports?|supported by)\b", re.IGNORECASE), "supports", 0.88),
-    (re.compile(r"\b(includes?|contains?)\b", re.IGNORECASE), "contains", 0.84),
-    (re.compile(r"\b(enables?|enabled by)\b", re.IGNORECASE), "enables", 0.83),
-    (re.compile(r"\b(requires?|required by)\b", re.IGNORECASE), "requires", 0.82),
-    (re.compile(r"\b(improves?|improved by)\b", re.IGNORECASE), "improves", 0.8),
-    (re.compile(r"\b(compare[sd]?|contrasts?)\b", re.IGNORECASE), "compares", 0.75),
-    (re.compile(r"\b(uses?|used by)\b", re.IGNORECASE), "uses", 0.78),
+_GENERIC_SECTION_TERMS = {
+    "overview",
+    "summary",
+    "introduction",
+    "conclusion",
+    "appendix",
+    "background",
+}
+
+_CANONICAL_RELATION_MAP = {
+    "support": "supports",
+    "supports": "supports",
+    "supported_by": "supports",
+    "contains": "contains",
+    "contain": "contains",
+    "includes": "contains",
+    "included_in": "contains",
+    "enables": "enables",
+    "enabled_by": "enables",
+    "requires": "requires",
+    "required_by": "requires",
+    "uses": "uses",
+    "used_by": "uses",
+    "depends_on": "depends_on",
+    "dependency_on": "depends_on",
+    "dependent_on": "depends_on",
+    "part_of": "part_of",
+    "belongs_to": "part_of",
+    "composed_of": "contains",
+    "integrates_with": "integrates_with",
+    "connects_to": "integrates_with",
+    "linked_to": "integrates_with",
+    "compares": "compares",
+    "contrasts": "compares",
+    "related_to": "related_to",
+}
+
+_UNDIRECTED_RELATIONS = {"related_to", "compares", "integrates_with"}
+
+_ENTITY_TYPE_SUFFIXES = {
+    "service": "service",
+    "engine": "system",
+    "index": "index",
+    "graph": "graph",
+    "pipeline": "pipeline",
+    "model": "model",
+    "table": "table",
+    "database": "database",
+    "vector": "vector_store",
+    "document": "document",
+}
+
+
+@dataclass(frozen=True)
+class RelationRule:
+    pattern: re.Pattern[str]
+    relation_type: str
+    confidence: float
+    direction: str = "forward"
+
+
+@dataclass(frozen=True)
+class EntityMention:
+    start: int
+    end: int
+    entity: ExtractedEntity
+
+
+_RELATION_RULES: tuple[RelationRule, ...] = (
+    RelationRule(re.compile(r"\bsupports?\b", re.IGNORECASE), "supports", 0.88, "forward"),
+    RelationRule(re.compile(r"\bsupported by\b", re.IGNORECASE), "supports", 0.88, "reverse"),
+    RelationRule(re.compile(r"\bdepends on\b", re.IGNORECASE), "depends_on", 0.9, "forward"),
+    RelationRule(re.compile(r"\bdependency on\b", re.IGNORECASE), "depends_on", 0.86, "forward"),
+    RelationRule(re.compile(r"\bdependent on\b", re.IGNORECASE), "depends_on", 0.84, "forward"),
+    RelationRule(re.compile(r"\buses?\b", re.IGNORECASE), "uses", 0.78, "forward"),
+    RelationRule(re.compile(r"\bused by\b", re.IGNORECASE), "uses", 0.78, "reverse"),
+    RelationRule(re.compile(r"\bcontains?\b", re.IGNORECASE), "contains", 0.84, "forward"),
+    RelationRule(re.compile(r"\bincludes?\b", re.IGNORECASE), "contains", 0.84, "forward"),
+    RelationRule(re.compile(r"\bincluded in\b", re.IGNORECASE), "contains", 0.82, "reverse"),
+    RelationRule(re.compile(r"\benables?\b", re.IGNORECASE), "enables", 0.83, "forward"),
+    RelationRule(re.compile(r"\benabled by\b", re.IGNORECASE), "enables", 0.83, "reverse"),
+    RelationRule(re.compile(r"\brequires?\b", re.IGNORECASE), "requires", 0.82, "forward"),
+    RelationRule(re.compile(r"\brequired by\b", re.IGNORECASE), "requires", 0.82, "reverse"),
+    RelationRule(re.compile(r"\bpart of\b", re.IGNORECASE), "part_of", 0.82, "forward"),
+    RelationRule(re.compile(r"\bbelongs to\b", re.IGNORECASE), "part_of", 0.82, "forward"),
+    RelationRule(re.compile(r"\bintegrates with\b", re.IGNORECASE), "integrates_with", 0.78, "undirected"),
+    RelationRule(re.compile(r"\bconnects? to\b", re.IGNORECASE), "integrates_with", 0.76, "undirected"),
+    RelationRule(re.compile(r"\blinked to\b", re.IGNORECASE), "integrates_with", 0.74, "undirected"),
+    RelationRule(re.compile(r"\bcompare[sd]?\b", re.IGNORECASE), "compares", 0.75, "undirected"),
+    RelationRule(re.compile(r"\bcontrasts?\b", re.IGNORECASE), "compares", 0.75, "undirected"),
 )
 
 
@@ -94,6 +177,36 @@ class EntityRelationExtractionResult(BaseModel):
     relations: list[ExtractedRelation] = Field(default_factory=list)
 
 
+def normalize_entity_key(label: str) -> str:
+    normalized = label.strip().lower().replace("&", " and ")
+    normalized = re.sub(r"[`'’]", "", normalized)
+    normalized = re.sub(r"^\s*(?:a|an|the)\s+", "", normalized)
+    tokens = [token for token in re.split(r"[^a-z0-9]+", normalized) if token]
+    singularized = [_singularize_token(token) for token in tokens if token not in _STOPWORDS]
+    return "_".join(singularized)
+
+
+def canonicalize_relation_type(relation_type: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", relation_type.strip().lower()).strip("_")
+    return _CANONICAL_RELATION_MAP.get(normalized, normalized or "related_to")
+
+
+def canonicalize_relation_pair(left_key: str, right_key: str, relation_type: str) -> tuple[str, str]:
+    normalized_relation = canonicalize_relation_type(relation_type)
+    if normalized_relation in _UNDIRECTED_RELATIONS:
+        return tuple(sorted((left_key, right_key), key=str))  # type: ignore[return-value]
+    return left_key, right_key
+
+
+def choose_preferred_label(labels: Sequence[str]) -> str:
+    normalized = [label.strip() for label in labels if label and label.strip()]
+    if not normalized:
+        return ""
+    non_acronyms = [label for label in normalized if not _is_acronym(label)]
+    pool = non_acronyms or list(normalized)
+    return max(pool, key=lambda label: (len(label.split()), len(label), label))
+
+
 class EntityRelationExtractor(Protocol):
     def extract(
         self,
@@ -123,22 +236,23 @@ class HeuristicEntityRelationExtractor:
         labels = self._candidate_labels(chunk)
         if not labels:
             return []
+
+        label_groups = self._group_labels(labels)
         description = self._description_for(chunk.text)
         entities: list[ExtractedEntity] = []
-        seen_keys: set[str] = set()
-        for label in labels:
-            key = self._normalize_key(label)
-            if not key or key in seen_keys:
+        for key, aliases in label_groups.items():
+            preferred_label = choose_preferred_label(aliases)
+            if not key or not preferred_label:
                 continue
-            seen_keys.add(key)
             entities.append(
                 ExtractedEntity(
                     key=key,
-                    label=label,
-                    entity_type="concept",
+                    label=preferred_label,
+                    entity_type=self._infer_entity_type(preferred_label),
                     description=description,
                     source_chunk_ids=[chunk.chunk_id],
                     metadata={
+                        "aliases": "||".join(sorted(dict.fromkeys(aliases))),
                         "chunk_role": chunk.chunk_role.value,
                         "source_chunk_id": chunk.chunk_id,
                     },
@@ -153,57 +267,26 @@ class HeuristicEntityRelationExtractor:
     ) -> list[ExtractedRelation]:
         if len(entities) < 2:
             return []
+
         relations: list[ExtractedRelation] = []
         seen_keys: set[tuple[str, str, str]] = set()
         sentences = [sentence.strip() for sentence in _SENTENCE_RE.split(chunk.text) if sentence.strip()]
         for sentence in sentences or [chunk.text]:
-            sentence_entities = [entity for entity in entities if entity.label.lower() in sentence.lower()]
-            if len(sentence_entities) < 2:
+            mentions = self._entity_mentions(sentence, entities)
+            if len(mentions) < 2:
                 continue
-            relation_type, confidence = self._infer_relation(sentence)
-            pairs = zip(sentence_entities, sentence_entities[1:], strict=False)
-            for left, right in pairs:
-                source_key, target_key = self._canonicalize_pair(
-                    left.key,
-                    right.key,
-                    relation_type,
-                )
-                relation_key = (source_key, target_key, relation_type)
-                if source_key == target_key or relation_key in seen_keys:
+
+            sentence_relations = self._extract_sentence_relations(sentence, mentions, chunk.chunk_id)
+            if not sentence_relations:
+                sentence_relations = self._fallback_relations(sentence, mentions, chunk.chunk_id)
+
+            for relation in sentence_relations:
+                relation_key = (relation.source_key, relation.target_key, relation.relation_type)
+                if relation.source_key == relation.target_key or relation_key in seen_keys:
                     continue
                 seen_keys.add(relation_key)
-                relations.append(
-                    ExtractedRelation(
-                        source_key=source_key,
-                        target_key=target_key,
-                        relation_type=relation_type,
-                        description=self._description_for(sentence),
-                        confidence=confidence,
-                        source_chunk_ids=[chunk.chunk_id],
-                        metadata={"source_chunk_id": chunk.chunk_id},
-                    )
-                )
-        if relations:
-            return relations
-        fallback_relations: list[ExtractedRelation] = []
-        for left, right in zip(entities, entities[1:], strict=False):
-            source_key, target_key = self._canonicalize_pair(left.key, right.key, "related_to")
-            relation_key = (source_key, target_key, "related_to")
-            if relation_key in seen_keys or source_key == target_key:
-                continue
-            seen_keys.add(relation_key)
-            fallback_relations.append(
-                ExtractedRelation(
-                    source_key=source_key,
-                    target_key=target_key,
-                    relation_type="related_to",
-                    description=self._description_for(chunk.text),
-                    confidence=0.45,
-                    source_chunk_ids=[chunk.chunk_id],
-                    metadata={"source_chunk_id": chunk.chunk_id},
-                )
-            )
-        return fallback_relations
+                relations.append(relation)
+        return relations
 
     def _candidate_labels(self, chunk: Chunk) -> list[str]:
         labels: list[str] = []
@@ -212,11 +295,14 @@ class HeuristicEntityRelationExtractor:
                 normalized = match.strip(".,:;()[]{} ")
                 if normalized and normalized not in labels:
                     labels.append(normalized)
-        toc_tail = chunk.metadata.get("toc_path", "").split(" > ")[-1].strip()
-        if toc_tail and len(toc_tail) > 3 and toc_tail.lower() not in _STOPWORDS and toc_tail not in labels:
-            labels.append(toc_tail)
+
         if labels:
-            return labels[:6]
+            return labels[:8]
+
+        toc_tail = chunk.metadata.get("toc_path", "").split(" > ")[-1].strip()
+        if toc_tail and len(toc_tail) > 3 and toc_tail.lower() not in _GENERIC_SECTION_TERMS:
+            labels.append(toc_tail)
+            return labels
 
         tokens = [
             token.lower()
@@ -230,28 +316,166 @@ class HeuristicEntityRelationExtractor:
                 labels.append(label)
         return labels[:4]
 
+    def _group_labels(self, labels: Sequence[str]) -> dict[str, list[str]]:
+        long_labels = [label for label in labels if len(label.split()) >= 2 and not _is_acronym(label)]
+        canonical_by_acronym = {
+            acronym: label
+            for label in sorted(long_labels, key=len, reverse=True)
+            if (acronym := _label_acronym(label)) is not None
+        }
+
+        grouped: dict[str, list[str]] = {}
+        for label in labels:
+            normalized_label = label.strip(".,:;()[]{} ")
+            if not normalized_label:
+                continue
+            canonical_label = canonical_by_acronym.get(normalized_label.upper(), normalized_label)
+            key = normalize_entity_key(canonical_label)
+            if not key:
+                continue
+            grouped.setdefault(key, []).extend([canonical_label, normalized_label])
+        return {key: list(dict.fromkeys(values)) for key, values in grouped.items()}
+
+    def _entity_mentions(
+        self,
+        sentence: str,
+        entities: Sequence[ExtractedEntity],
+    ) -> list[EntityMention]:
+        mentions: list[EntityMention] = []
+        seen: set[tuple[str, int, int]] = set()
+        for entity in entities:
+            aliases = self._entity_aliases(entity)
+            for alias in aliases:
+                if len(alias) < 2:
+                    continue
+                pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", re.IGNORECASE)
+                for match in pattern.finditer(sentence):
+                    key = (entity.key, match.start(), match.end())
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    mentions.append(EntityMention(match.start(), match.end(), entity))
+        mentions.sort(key=lambda item: (item.start, -(item.end - item.start), item.entity.key))
+        collapsed: list[EntityMention] = []
+        for mention in mentions:
+            if collapsed and mention.start < collapsed[-1].end and mention.entity.key == collapsed[-1].entity.key:
+                if (mention.end - mention.start) > (collapsed[-1].end - collapsed[-1].start):
+                    collapsed[-1] = mention
+                continue
+            collapsed.append(mention)
+        return collapsed
+
+    def _extract_sentence_relations(
+        self,
+        sentence: str,
+        mentions: Sequence[EntityMention],
+        chunk_id: str,
+    ) -> list[ExtractedRelation]:
+        relations: list[ExtractedRelation] = []
+        for rule in _RELATION_RULES:
+            for match in rule.pattern.finditer(sentence):
+                left = self._nearest_left_mention(mentions, match.start())
+                right = self._nearest_right_mention(mentions, match.end())
+                if left is None or right is None or left.entity.key == right.entity.key:
+                    continue
+                source_key, target_key = self._apply_direction(
+                    left.entity.key,
+                    right.entity.key,
+                    relation_type=rule.relation_type,
+                    direction=rule.direction,
+                )
+                source_key, target_key = canonicalize_relation_pair(source_key, target_key, rule.relation_type)
+                relations.append(
+                    ExtractedRelation(
+                        source_key=source_key,
+                        target_key=target_key,
+                        relation_type=canonicalize_relation_type(rule.relation_type),
+                        description=self._description_for(sentence),
+                        confidence=rule.confidence,
+                        source_chunk_ids=[chunk_id],
+                        metadata={"source_chunk_id": chunk_id},
+                    )
+                )
+        return relations
+
+    def _fallback_relations(
+        self,
+        sentence: str,
+        mentions: Sequence[EntityMention],
+        chunk_id: str,
+    ) -> list[ExtractedRelation]:
+        relations: list[ExtractedRelation] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for left, right in zip(mentions, mentions[1:], strict=False):
+            source_key, target_key = canonicalize_relation_pair(
+                left.entity.key,
+                right.entity.key,
+                "related_to",
+            )
+            if source_key == target_key or (source_key, target_key) in seen_pairs:
+                continue
+            seen_pairs.add((source_key, target_key))
+            relations.append(
+                ExtractedRelation(
+                    source_key=source_key,
+                    target_key=target_key,
+                    relation_type="related_to",
+                    description=self._description_for(sentence),
+                    confidence=0.45,
+                    source_chunk_ids=[chunk_id],
+                    metadata={"source_chunk_id": chunk_id},
+                )
+            )
+        return relations
+
+    @staticmethod
+    def _entity_aliases(entity: ExtractedEntity) -> list[str]:
+        aliases = entity.metadata.get("aliases", "")
+        values = [entity.label]
+        if aliases:
+            values.extend(alias for alias in aliases.split("||") if alias)
+        return list(dict.fromkeys(values))
+
+    @staticmethod
+    def _nearest_left_mention(mentions: Sequence[EntityMention], offset: int) -> EntityMention | None:
+        candidates = [mention for mention in mentions if mention.end <= offset]
+        return None if not candidates else max(candidates, key=lambda mention: mention.end)
+
+    @staticmethod
+    def _nearest_right_mention(mentions: Sequence[EntityMention], offset: int) -> EntityMention | None:
+        candidates = [mention for mention in mentions if mention.start >= offset]
+        return None if not candidates else min(candidates, key=lambda mention: mention.start)
+
+    @staticmethod
+    def _apply_direction(
+        left_key: str,
+        right_key: str,
+        *,
+        relation_type: str,
+        direction: str,
+    ) -> tuple[str, str]:
+        normalized_relation = canonicalize_relation_type(relation_type)
+        if direction == "reverse":
+            pair = (right_key, left_key)
+        elif direction == "undirected":
+            pair = canonicalize_relation_pair(left_key, right_key, normalized_relation)
+            return pair
+        else:
+            pair = (left_key, right_key)
+        return canonicalize_relation_pair(pair[0], pair[1], normalized_relation)
+
     @staticmethod
     def _description_for(text: str) -> str:
         normalized = " ".join(text.split())
         return normalized[:280]
 
     @staticmethod
-    def _infer_relation(text: str) -> tuple[str, float]:
-        for pattern, relation_type, confidence in _RELATION_PATTERNS:
-            if pattern.search(text):
-                return relation_type, confidence
-        return "related_to", 0.55
-
-    @staticmethod
-    def _normalize_key(label: str) -> str:
-        normalized = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
-        return normalized
-
-    @staticmethod
-    def _canonicalize_pair(left_key: str, right_key: str, relation_type: str) -> tuple[str, str]:
-        if relation_type in {"related_to", "compares"}:
-            return tuple(sorted((left_key, right_key), key=str))  # type: ignore[return-value]
-        return left_key, right_key
+    def _infer_entity_type(label: str) -> str:
+        normalized_tokens = [token for token in re.split(r"[^A-Za-z0-9]+", label.lower()) if token]
+        if not normalized_tokens:
+            return "concept"
+        last_token = _singularize_token(normalized_tokens[-1])
+        return _ENTITY_TYPE_SUFFIXES.get(last_token, "concept")
 
 
 class PromptedEntityRelationExtractor:
@@ -322,16 +546,81 @@ class PromptedEntityRelationExtractor:
         llm_result: EntityRelationExtractionResult,
         fallback_result: EntityRelationExtractionResult,
     ) -> EntityRelationExtractionResult:
-        entity_by_key = {entity.key: entity for entity in fallback_result.entities}
-        for entity in llm_result.entities:
-            entity_by_key[entity.key] = entity
-        relation_by_key = {
-            (relation.source_key, relation.target_key, relation.relation_type): relation
-            for relation in fallback_result.relations
-        }
-        for relation in llm_result.relations:
-            relation_by_key[(relation.source_key, relation.target_key, relation.relation_type)] = relation
+        entity_by_key: dict[str, ExtractedEntity] = {}
+        for entity in [*fallback_result.entities, *llm_result.entities]:
+            canonical_key = normalize_entity_key(entity.key or entity.label)
+            if not canonical_key:
+                continue
+            existing = entity_by_key.get(canonical_key)
+            aliases = []
+            if existing is not None:
+                aliases.extend(existing.metadata.get("aliases", "").split("||"))
+            aliases.extend(entity.metadata.get("aliases", "").split("||"))
+            aliases.append(entity.label)
+            preferred_label = choose_preferred_label([alias for alias in aliases if alias])
+            entity_by_key[canonical_key] = ExtractedEntity(
+                key=canonical_key,
+                label=preferred_label or entity.label,
+                entity_type=entity.entity_type if entity.entity_type != "concept" else (existing.entity_type if existing else "concept"),
+                description=_choose_longer(existing.description if existing else "", entity.description),
+                source_chunk_ids=list(dict.fromkeys([*(existing.source_chunk_ids if existing else []), *entity.source_chunk_ids])),
+                metadata={
+                    **({} if existing is None else existing.metadata),
+                    **entity.metadata,
+                    "aliases": "||".join(sorted(dict.fromkeys(alias for alias in aliases if alias))),
+                },
+            )
+
+        relation_by_key: dict[tuple[str, str, str], ExtractedRelation] = {}
+        for relation in [*fallback_result.relations, *llm_result.relations]:
+            source_key = normalize_entity_key(relation.source_key)
+            target_key = normalize_entity_key(relation.target_key)
+            relation_type = canonicalize_relation_type(relation.relation_type)
+            source_key, target_key = canonicalize_relation_pair(source_key, target_key, relation_type)
+            relation_key = (source_key, target_key, relation_type)
+            existing = relation_by_key.get(relation_key)
+            relation_by_key[relation_key] = ExtractedRelation(
+                source_key=source_key,
+                target_key=target_key,
+                relation_type=relation_type,
+                description=_choose_longer(existing.description if existing else "", relation.description),
+                confidence=max(relation.confidence, 0.0 if existing is None else existing.confidence),
+                source_chunk_ids=list(dict.fromkeys([*(existing.source_chunk_ids if existing else []), *relation.source_chunk_ids])),
+                metadata={**({} if existing is None else existing.metadata), **relation.metadata},
+            )
         return EntityRelationExtractionResult(
             entities=list(entity_by_key.values()),
             relations=list(relation_by_key.values()),
         )
+
+
+def _singularize_token(token: str) -> str:
+    if len(token) <= 3:
+        return token
+    if token.endswith("ies") and len(token) > 4:
+        return f"{token[:-3]}y"
+    if token.endswith(("sses", "xes", "zes", "ches", "shes")) and len(token) > 4:
+        return token[:-2]
+    if token.endswith("s") and not token.endswith(("ss", "us", "is")):
+        return token[:-1]
+    return token
+
+
+def _label_acronym(label: str) -> str | None:
+    tokens = [token for token in re.findall(r"[A-Za-z0-9]+", label) if token]
+    if len(tokens) < 2:
+        return None
+    return "".join(token[0].upper() for token in tokens)
+
+
+def _is_acronym(label: str) -> bool:
+    normalized = label.strip()
+    return normalized.isupper() and len(normalized) <= 6 and " " not in normalized
+
+
+def _choose_longer(left: str, right: str) -> str:
+    if not left:
+        return right
+    if not right:
+        return left
+    return left if len(left) >= len(right) else right

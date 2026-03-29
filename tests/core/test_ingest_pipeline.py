@@ -165,3 +165,37 @@ def test_ragcore_merges_graph_and_entity_indexes_across_documents() -> None:
         assert remaining_edge.evidence_chunk_ids == [second.chunks[0].chunk_id]
     finally:
         core.stores.close()
+
+
+def test_ragcore_insert_canonicalizes_alias_entities_and_relation_direction() -> None:
+    core = RAGCore(storage=StorageConfig.in_memory())
+    try:
+        core.insert(
+            location="memory://alias-graph.txt",
+            source_type="plain_text",
+            owner="user",
+            content_text=(
+                "Alpha Engine (AE) supports Beta Service. "
+                "Beta Service is supported by Alpha Engine. "
+                "AE depends on Gamma Index."
+            ),
+        )
+
+        entity_nodes = sorted(core.stores.graph.list_nodes(node_type="entity"), key=lambda node: node.label)
+        edges = sorted(core.stores.graph.list_edges(), key=lambda edge: (edge.relation_type, edge.edge_id))
+
+        alpha_node = next(node for node in entity_nodes if node.label == "Alpha Engine")
+        beta_node = next(node for node in entity_nodes if node.label == "Beta Service")
+        gamma_node = next(node for node in entity_nodes if node.label == "Gamma Index")
+        supports_edges = [edge for edge in edges if edge.relation_type == "supports"]
+        depends_edges = [edge for edge in edges if edge.relation_type == "depends_on"]
+
+        assert [node.label for node in entity_nodes] == ["Alpha Engine", "Beta Service", "Gamma Index"]
+        assert len(supports_edges) == 1
+        assert supports_edges[0].from_node_id == alpha_node.node_id
+        assert supports_edges[0].to_node_id == beta_node.node_id
+        assert len(depends_edges) == 1
+        assert depends_edges[0].from_node_id == alpha_node.node_id
+        assert depends_edges[0].to_node_id == gamma_node.node_id
+    finally:
+        core.stores.close()
