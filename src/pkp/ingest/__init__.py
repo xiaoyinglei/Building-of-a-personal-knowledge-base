@@ -1,15 +1,27 @@
-from pkp.core.pipelines.delete_pipeline import DeletePipeline, DeletePipelineRequest, DeletePipelineResult
-from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult, IngestRequest
-from pkp.core.pipelines.rebuild_pipeline import RebuildPipeline, RebuildPipelineRequest, RebuildPipelineResult
+from pkp.ingest.ingest import (
+    DeletePipeline,
+    DeletePipelineRequest,
+    DeletePipelineResult,
+    DeleteRequest,
+    IngestPipeline,
+    IngestPipelineResult,
+    IngestRequest,
+    RebuildPipeline,
+    RebuildPipelineRequest,
+    RebuildPipelineResult,
+    RebuildRequest,
+)
 
 __all__ = [
     "DeletePipeline",
     "DeletePipelineRequest",
     "DeletePipelineResult",
+    "DeleteRequest",
     "IngestPipeline",
     "IngestPipelineResult",
     "IngestRequest",
     "RebuildPipeline",
     "RebuildPipelineRequest",
     "RebuildPipelineResult",
+    "RebuildRequest",
 ]

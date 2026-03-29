@@ -4,14 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pkp.algorithms.context_build.merge import ContextEvidenceMerger
-from pkp.algorithms.context_build.prompt_builder import ContextPromptBuilder
-from pkp.algorithms.context_build.truncation import EvidenceTruncator
 from pkp.algorithms.generation.answer_generator import AnswerGenerator
 from pkp.algorithms.retrieval.search_backed_factory import SearchBackedRetrievalFactory
-from pkp.core.pipelines.delete_pipeline import DeletePipeline, DeletePipelineResult, DeleteRequest
-from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult, IngestRequest
-from pkp.core.pipelines.rebuild_pipeline import RebuildPipeline, RebuildPipelineResult, RebuildRequest
 from pkp.document.loader import HttpWebFetchRepo
 from pkp.document.parser import (
     DoclingParserRepo,
@@ -21,10 +15,24 @@ from pkp.document.parser import (
     PlainTextParserRepo,
     WebParserRepo,
 )
+from pkp.ingest.ingest import (
+    DeletePipeline,
+    DeletePipelineResult,
+    DeleteRequest,
+    IngestPipeline,
+    IngestPipelineResult,
+    IngestRequest,
+    RebuildPipeline,
+    RebuildPipelineResult,
+    RebuildRequest,
+)
 from pkp.llm.embedding import EmbeddingProviderBinding
 from pkp.llm.generation import AnswerGenerationService
 from pkp.llm.rerank import HeuristicRerankService
+from pkp.query.context import ContextEvidenceMerger, ContextPromptBuilder, EvidenceTruncator
+from pkp.query.graph import GraphExpansionService
 from pkp.query.query import QueryOptions, RAGQueryResult
+from pkp.query.retrieve import RAGQueryPipeline, RetrievalService
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
 from pkp.repo.vision.ocr_vision_repo import create_default_ocr_repo
@@ -32,10 +40,8 @@ from pkp.service.artifact_service import ArtifactService
 from pkp.service.chunking_service import ChunkingService
 from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.evidence_service import CandidateLike, EvidenceService
-from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.query_understanding_service import QueryUnderstandingService
-from pkp.service.retrieval_service import RetrievalService
 from pkp.service.routing_service import RoutingService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.service.toc_service import TOCService
@@ -93,8 +99,6 @@ class RAGCore:
     _object_store: FileObjectStore = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        from pkp.query.query import RAGQueryPipeline
-
         self.stores = self.storage.build()
         ocr_repo = create_default_ocr_repo()
         self._fts_repo = SQLiteFTSRepo(self.stores.root / "fts.sqlite3")

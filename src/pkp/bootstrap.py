@@ -22,6 +22,7 @@ from pkp.document.parser import (
 from pkp.engine import RAGCore
 from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo, LocalBgeProviderRepo, OllamaProviderRepo, OpenAIProviderRepo
 from pkp.llm.rerank import CrossEncoderConfig, HeuristicRerankService, RerankPipelineConfig
+from pkp.query.graph import GraphExpansionService
 from pkp.storage import StorageConfig
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import OcrResult, OcrVisionRepo, VectorRepo
@@ -51,7 +52,6 @@ from pkp.service.artifact_service import ArtifactService
 from pkp.service.chunking_service import ChunkingService
 from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.evidence_service import CandidateLike, EvidenceService
-from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.ingest_service import IngestService
 from pkp.service.memory_service import MemoryService
 from pkp.service.policy_resolution_service import PolicyResolutionService

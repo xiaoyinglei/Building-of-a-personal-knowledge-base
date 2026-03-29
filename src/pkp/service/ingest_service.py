@@ -7,7 +7,6 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import cast
 
-from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult
 from pkp.document.loader import HttpWebFetchRepo, WebFetchRepo
 from pkp.document.parser import (
     DoclingParserRepo,
@@ -18,6 +17,7 @@ from pkp.document.parser import (
     PlainTextParserRepo,
     WebParserRepo,
 )
+from pkp.ingest.ingest import IngestPipeline, IngestPipelineResult
 from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import (

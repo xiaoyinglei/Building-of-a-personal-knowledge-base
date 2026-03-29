@@ -111,7 +111,7 @@ class RAGQueryResult(BaseModel):
 
 def __getattr__(name: str) -> object:
     if name in {"QueryPipeline", "RAGQueryPipeline"}:
-        from pkp.core.pipelines.query_pipeline import QueryPipeline, RAGQueryPipeline
+        from pkp.query.retrieve import QueryPipeline, RAGQueryPipeline
 
         return {
             "QueryPipeline": QueryPipeline,
