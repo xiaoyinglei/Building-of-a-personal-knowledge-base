@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pkp.core.rag_core import RAGCore
-from pkp.core.storage_config import StorageConfig
+from pkp.engine import RAGCore
+from pkp.storage import StorageConfig
 from pkp.algorithms.chunking.multimodal_chunk_router import special_type_for_element
 from pkp.algorithms.chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
 from pkp.algorithms.chunking.token_chunker import chunk_by_tokens

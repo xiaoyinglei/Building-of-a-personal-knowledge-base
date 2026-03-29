@@ -13,8 +13,8 @@ from pkp.repo.search.web_search_repo import DeterministicWebSearchRepo
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
 from pkp.service.evidence_service import CandidateLike
 from pkp.service.query_understanding_service import QueryUnderstandingService
-from pkp.types import AccessPolicy, Document, ExecutionLocationPreference
-from pkp.types.content import ChunkRole
+from pkp.schema.chunk import ChunkRole
+from pkp.schema.document import AccessPolicy, Document, ExecutionLocationPreference
 from pkp.types.text import keyword_overlap, search_terms
 
 _GRAPH_RELATION_WEIGHTS = {

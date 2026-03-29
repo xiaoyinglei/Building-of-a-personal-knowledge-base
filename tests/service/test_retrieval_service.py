@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from pkp.service.retrieval_service import RetrievalService
 from pkp.types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
-from pkp.core.query_modes import QueryMode
+from pkp.query.query import QueryMode
 from pkp.types.content import ChunkRole
 
 

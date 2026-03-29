@@ -4,13 +4,12 @@ from dataclasses import dataclass, field
 
 from pkp.core.pipelines.ingest_pipeline import IngestPipeline
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
-from pkp.stores.chunk_store import ChunkStore
-from pkp.stores.document_store import DocumentStore
-from pkp.stores.graph_store import GraphStore
-from pkp.stores.status_store import StatusStore
-from pkp.stores.vector_store import VectorStore
-from pkp.types.content import Chunk, Document, Source
-from pkp.types.storage import DocumentPipelineStage, DocumentProcessingStatus
+from pkp.storage.doc_status import StatusStore
+from pkp.storage.graph_store import GraphStore
+from pkp.storage.kv_store import ChunkStore, DocumentStore
+from pkp.storage.vector_store import VectorStore
+from pkp.schema.chunk import Chunk
+from pkp.schema.document import Document, DocumentPipelineStage, DocumentProcessingStatus, Source
 
 
 @dataclass(frozen=True, slots=True)

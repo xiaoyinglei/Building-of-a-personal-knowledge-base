@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pkp.core.rag_core import RAGCore
-from pkp.core.storage_config import StorageConfig
+from pkp.engine import RAGCore
+from pkp.storage import StorageConfig
 from pkp.types.storage import DocumentProcessingStatus
 
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Final
 
-from pkp.core.results import ContextEvidence
+from pkp.query.query import ContextEvidence
 from pkp.types.envelope import EvidenceItem
 from pkp.types.text import text_unit_count
 
