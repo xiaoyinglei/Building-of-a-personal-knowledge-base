@@ -11,7 +11,7 @@ from pkp.algorithms.extract.entity_relation_extractor import (
     choose_preferred_label,
     normalize_entity_key,
 )
-from pkp.types.content import Document
+from pkp.schema.document import Document
 
 
 class MergedEntity(BaseModel):

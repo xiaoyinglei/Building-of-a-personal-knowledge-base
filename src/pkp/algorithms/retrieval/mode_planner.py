@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pkp.core.query_modes import QueryMode, normalize_query_mode
-from pkp.types.query import QueryUnderstanding
+from pkp.query.query import QueryMode, normalize_query_mode
+from pkp.schema.query import QueryUnderstanding
 
 
 @dataclass(frozen=True, slots=True)

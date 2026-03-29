@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 
-from pkp.core.options import QueryOptions
-from pkp.core.rag_core import RAGCore
-from pkp.core.storage_config import StorageConfig
+from pkp.engine import RAGCore
+from pkp.query.query import QueryOptions
+from pkp.storage import StorageConfig
 from pkp.repo.interfaces import EmbeddingProviderBinding
 from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
 from pkp.types.access import ExecutionLocationPreference

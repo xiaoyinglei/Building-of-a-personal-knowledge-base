@@ -13,19 +13,17 @@ from pkp.algorithms.retrieval.contracts import GraphExpander
 from pkp.algorithms.retrieval.fusion import FusedCandidateView, ReciprocalRankFusion
 from pkp.algorithms.retrieval.mode_planner import RetrievalPlanBuilder
 from pkp.algorithms.retrieval.rerank import UnifiedReranker
-from pkp.core.options import QueryOptions
-from pkp.core.query_modes import QueryMode
-from pkp.core.results import BuiltContext, RAGQueryResult
+from pkp.query.query import BuiltContext, QueryMode, QueryOptions, RAGQueryResult
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import CandidateLike, EvidenceBundle, EvidenceService
 from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.query_understanding_service import QueryUnderstandingService
 from pkp.service.routing_service import RoutingService
 from pkp.service.telemetry_service import TelemetryService
-from pkp.types.access import AccessPolicy, ExecutionLocationPreference
 from pkp.types.diagnostics import RetrievalDiagnostics
 from pkp.types.envelope import PreservationSuggestion
-from pkp.types.retrieval import RetrievalResult
+from pkp.schema.document import AccessPolicy, ExecutionLocationPreference
+from pkp.schema.query import RetrievalResult
 
 
 class RetrievalExecutor(Protocol):

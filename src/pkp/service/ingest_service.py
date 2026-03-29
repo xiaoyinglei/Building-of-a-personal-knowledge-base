@@ -8,23 +8,23 @@ from tempfile import NamedTemporaryFile
 from typing import cast
 
 from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult
+from pkp.document.loader import HttpWebFetchRepo, WebFetchRepo
+from pkp.document.parser import (
+    DoclingParserRepo,
+    ImageParserRepo,
+    MarkdownParserRepo,
+    PDFParserRepo,
+    ParsedDocument,
+    PlainTextParserRepo,
+    WebParserRepo,
+)
+from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import (
-    EmbeddingProviderBinding,
     ModelProviderRepo,
     OcrVisionRepo,
-    ParsedDocument,
     VectorRepo,
-    WebFetchRepo,
 )
-from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
-from pkp.repo.parse.docling_parser_repo import DoclingParserRepo
-from pkp.repo.parse.image_parser_repo import ImageParserRepo
-from pkp.repo.parse.markdown_parser_repo import MarkdownParserRepo
-from pkp.repo.parse.pdf_parser_repo import PDFParserRepo
-from pkp.repo.parse.plain_text_parser_repo import PlainTextParserRepo
-from pkp.repo.parse.web_fetch_repo import WebFetchRepo as HttpWebFetchRepo
-from pkp.repo.parse.web_parser_repo import WebParserRepo
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
@@ -34,15 +34,13 @@ from pkp.service.chunking_service import ChunkingService
 from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.toc_service import TOCService
-from pkp.stores.cache_store import CacheStore
-from pkp.stores.chunk_store import ChunkStore
-from pkp.stores.document_store import DocumentStore
-from pkp.stores.graph_store import GraphStore
-from pkp.stores.status_store import StatusStore
-from pkp.stores.vector_store import VectorStore
-from pkp.types.access import AccessPolicy
-from pkp.types.content import Chunk, ChunkRole, Document, GraphEdge, GraphNode, Segment, Source, SourceType
-from pkp.types.processing import DocumentProcessingPackage
+from pkp.storage.doc_status import StatusStore
+from pkp.storage.graph_store import GraphStore
+from pkp.storage.kv_store import CacheStore, ChunkStore, DocumentStore
+from pkp.storage.vector_store import VectorStore
+from pkp.schema.chunk import Chunk, ChunkRole, DocumentProcessingPackage
+from pkp.schema.document import AccessPolicy, Document, Segment, Source, SourceType
+from pkp.schema.graph import GraphEdge, GraphNode
 
 
 @dataclass(frozen=True)

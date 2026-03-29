@@ -6,8 +6,7 @@ from pathlib import Path
 from pkp.core.pipelines.delete_pipeline import DeletePipeline, DeleteRequest, ResolvedLifecycleTarget
 from pkp.core.pipelines.ingest_pipeline import IngestPipeline, IngestPipelineResult, IngestRequest
 from pkp.repo.storage.file_object_store import FileObjectStore
-from pkp.types.content import Document, SourceType
-from pkp.types.storage import DocumentPipelineStage, DocumentProcessingStatus
+from pkp.schema.document import Document, DocumentPipelineStage, DocumentProcessingStatus, SourceType
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,29 +10,27 @@ import httpx
 from pkp.config import AppSettings
 from pkp.config.policies import RoutingThresholds
 from pkp.algorithms.retrieval.search_backed_factory import SearchBackedRetrievalFactory
-from pkp.core.rag_core import RAGCore
-from pkp.core.storage_config import StorageConfig
+from pkp.document.loader import HttpWebFetchRepo
+from pkp.document.parser import (
+    DoclingParserRepo,
+    ImageParserRepo,
+    MarkdownParserRepo,
+    PDFParserRepo,
+    PlainTextParserRepo,
+    WebParserRepo,
+)
+from pkp.engine import RAGCore
+from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo, LocalBgeProviderRepo, OllamaProviderRepo, OpenAIProviderRepo
+from pkp.llm.rerank import CrossEncoderConfig, HeuristicRerankService, RerankPipelineConfig
+from pkp.storage import StorageConfig
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import EmbeddingProviderBinding, OcrResult, OcrVisionRepo, VectorRepo
-from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
-from pkp.repo.models.local_bge_provider_repo import LocalBgeProviderRepo
-from pkp.repo.models.ollama_provider_repo import OllamaProviderRepo
-from pkp.repo.models.openai_provider_repo import OpenAIProviderRepo
-from pkp.repo.parse.docling_parser_repo import DoclingParserRepo
-from pkp.repo.parse.image_parser_repo import ImageParserRepo
-from pkp.repo.parse.markdown_parser_repo import MarkdownParserRepo
-from pkp.repo.parse.pdf_parser_repo import PDFParserRepo
-from pkp.repo.parse.plain_text_parser_repo import PlainTextParserRepo
-from pkp.repo.parse.web_fetch_repo import WebFetchRepo as HttpWebFetchRepo
-from pkp.repo.parse.web_parser_repo import WebParserRepo
+from pkp.repo.interfaces import OcrResult, OcrVisionRepo, VectorRepo
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
 from pkp.repo.storage.sqlite_memory_repo import SQLiteMemoryRepo
 from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
 from pkp.repo.vision.ocr_vision_repo import DeterministicOcrVisionRepo, create_default_ocr_repo
-from pkp.rerank.cross_encoder import CrossEncoderConfig
-from pkp.rerank.pipeline import RerankPipelineConfig
 from pkp.runtime.adapters import (
     ArtifactApprovalAdapter,
     ArtifactIndexerAdapter,
@@ -57,7 +55,6 @@ from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.ingest_service import IngestService
 from pkp.service.memory_service import MemoryService
 from pkp.service.policy_resolution_service import PolicyResolutionService
-from pkp.service.rerank_service import HeuristicRerankService
 from pkp.service.retrieval_service import Reranker, RetrievalService
 from pkp.service.routing_service import RoutingService
 from pkp.service.telemetry_service import TelemetryService

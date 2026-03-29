@@ -8,17 +8,16 @@ from pkp.algorithms.retrieval.contracts import GraphExpander, Reranker, Retrieve
 from pkp.algorithms.retrieval.fusion import ReciprocalRankFusion
 from pkp.algorithms.retrieval.mode_planner import RetrievalPlanBuilder
 from pkp.algorithms.retrieval.rerank import UnifiedReranker
-from pkp.core.pipelines.query_pipeline import QueryPipeline
-from pkp.core.query_modes import QueryMode
 from pkp.config.policies import RoutingThresholds
+from pkp.query.query import QueryMode, QueryPipeline
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import EvidenceService
 from pkp.service.graph_expansion_service import GraphExpansionService
 from pkp.service.query_understanding_service import QueryUnderstandingService
 from pkp.service.routing_service import RoutingService
 from pkp.service.telemetry_service import TelemetryService
-from pkp.types.access import AccessPolicy, ExecutionLocationPreference
-from pkp.types.retrieval import RetrievalResult
+from pkp.schema.document import AccessPolicy, ExecutionLocationPreference
+from pkp.schema.query import RetrievalResult
 
 
 class RetrievalService:

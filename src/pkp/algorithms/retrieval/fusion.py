@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pkp.core.query_modes import QueryMode
+from pkp.query.query import QueryMode
+from pkp.schema.chunk import ChunkRole
+from pkp.schema.document import AccessPolicy
 from pkp.service.evidence_service import CandidateLike
-from pkp.types.access import AccessPolicy
-from pkp.types.content import ChunkRole
 from pkp.types.text import (
     looks_command_like,
     looks_definition_query,

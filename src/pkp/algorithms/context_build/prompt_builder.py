@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pkp.core.results import ContextEvidence
+from pkp.query.query import ContextEvidence
 from pkp.service.answer_generation_service import AnswerGenerationService
 from pkp.types.access import RuntimeMode
 

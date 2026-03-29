@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pkp.bootstrap import build_rag_core
 from pkp.config import AppSettings
-from pkp.core.rag_core import RAGCore
+from pkp.engine import RAGCore
 
 
 def _settings(tmp_path: Path) -> AppSettings:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pkp.core.options import QueryOptions
-from pkp.core.rag_core import RAGCore
-from pkp.core.storage_config import StorageConfig
+from pkp.engine import RAGCore
+from pkp.query.query import QueryOptions
+from pkp.storage import StorageConfig
 
 
 def test_ragcore_exposes_insert_query_delete_rebuild() -> None:

@@ -10,7 +10,8 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from pkp.repo.interfaces import ModelProviderRepo
-from pkp.types.content import Chunk, Document
+from pkp.schema.chunk import Chunk
+from pkp.schema.document import Document
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?。！？])\s+")
 _TITLE_CASE_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b")

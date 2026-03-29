@@ -1,5 +1,5 @@
 from pkp.algorithms.retrieval.mode_planner import RetrievalPlanBuilder
-from pkp.core.query_modes import QueryMode
+from pkp.query.query import QueryMode
 from pkp.types.query import QueryUnderstanding
 
 
