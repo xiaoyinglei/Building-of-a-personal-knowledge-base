@@ -310,6 +310,7 @@ class QueryPipeline:
             self.branch_registry.local_retriever,
             self.branch_registry.global_retriever,
             self.branch_registry.vector_retriever,
+            self.branch_registry.special_retriever,
         ):
             provider = getattr(retriever, "last_provider", None)
             if provider:
@@ -322,6 +323,7 @@ class QueryPipeline:
             self.branch_registry.local_retriever,
             self.branch_registry.global_retriever,
             self.branch_registry.vector_retriever,
+            self.branch_registry.special_retriever,
         ):
             attempts.extend(list(getattr(retriever, "last_attempts", [])))
         attempts.extend(list(getattr(self.reranker.reranker, "last_attempts", [])))

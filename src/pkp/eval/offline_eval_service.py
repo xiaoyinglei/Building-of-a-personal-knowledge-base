@@ -5,6 +5,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
+from pkp.algorithms.retrieval.search_backed_factory import SearchBackedRetrievalFactory
 from pkp.eval.embedding_repo import LexicalEmbeddingRepo
 from pkp.eval.models import (
     ChunkInspectionSample,
@@ -24,7 +25,7 @@ from pkp.repo.interfaces import (
     OcrVisionRepo,
 )
 from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
-from pkp.runtime.adapters import InstrumentedReranker, SearchBackedRetrievalFactory
+from pkp.runtime.adapters import InstrumentedReranker
 from pkp.runtime.provider_metadata import embedding_space, provider_model, provider_name
 from pkp.service.artifact_service import ArtifactService
 from pkp.service.evidence_service import CandidateLike, EvidenceService
@@ -195,7 +196,11 @@ class OfflineEvalService:
         )
         special_retriever = cast(
             Callable[[str, list[str]], Sequence[CandidateLike]],
-            factory.special_retriever,
+            factory.special_retriever_from_repo(
+                cast(SQLiteVectorRepo, ingest_service.vector_repo),
+                ingest_service.embedding_bindings,
+                default_preference=ExecutionLocationPreference.LOCAL_ONLY,
+            ),
         )
         metadata_retriever = cast(
             Callable[[str, list[str]], Sequence[CandidateLike]],

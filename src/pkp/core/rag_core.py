@@ -199,7 +199,10 @@ class RAGCore:
                 self.embedding_bindings,
             ),
             section_retriever=retrieval_factory.section_retriever,
-            special_retriever=retrieval_factory.special_retriever,
+            special_retriever=retrieval_factory.special_retriever_from_repo(
+                self.stores.vector_repo,
+                self.embedding_bindings,
+            ),
             metadata_retriever=retrieval_factory.metadata_retriever,
             graph_expander=retrieval_factory.graph_expander,
             web_retriever=retrieval_factory.web_retriever,

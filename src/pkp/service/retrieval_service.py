@@ -118,7 +118,7 @@ class RetrievalService:
         access_policy: AccessPolicy,
         execution_location_preference: ExecutionLocationPreference | None,
     ) -> None:
-        for retriever in (self._vector_retriever, self._local_retriever, self._global_retriever):
+        for retriever in (self._vector_retriever, self._local_retriever, self._global_retriever, self._special_retriever):
             prepare_for_policy = getattr(retriever, "prepare_for_policy", None)
             if callable(prepare_for_policy):
                 prepare_for_policy(
