@@ -19,6 +19,7 @@ from pkp.document.parser import (
     WebParserRepo,
 )
 from pkp.engine import RAGCore
+from pkp.ingest.chunk import ChunkingService, DocumentProcessingService, TOCService
 from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo, LocalBgeProviderRepo, OllamaProviderRepo, OpenAIProviderRepo
 from pkp.llm.rerank import CrossEncoderConfig, HeuristicRerankService, RerankPipelineConfig
 from pkp.query.context import CandidateLike, EvidenceService, RoutingService
@@ -49,14 +50,11 @@ from pkp.runtime.ingest_runtime import IngestRuntime
 from pkp.runtime.provider_metadata import capability_configured, embedding_space
 from pkp.runtime.session_runtime import SessionRuntime
 from pkp.service.artifact_service import ArtifactService
-from pkp.service.chunking_service import ChunkingService
-from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.ingest_service import IngestService
 from pkp.service.memory_service import MemoryService
 from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.retrieval_service import Reranker, RetrievalService
 from pkp.service.telemetry_service import TelemetryService
-from pkp.service.toc_service import TOCService
 
 
 def load_settings() -> AppSettings:

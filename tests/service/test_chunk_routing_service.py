@@ -1,4 +1,4 @@
-from pkp.service.chunk_routing_service import ChunkRoutingService
+from pkp.ingest.chunk import ChunkRoutingService
 from pkp.types.content import SourceType
 from pkp.types.processing import ChunkingStrategy, DocumentFeatures
 
