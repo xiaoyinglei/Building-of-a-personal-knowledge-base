@@ -155,6 +155,24 @@ core.delete(location="memory://note-1")
 core.rebuild(location="memory://note-1")
 ```
 
+仓库里也提供了一份可直接运行的完整脚本：
+
+`examples/ragcore_minimal.py`
+
+运行方式：
+
+```bash
+uv run python examples/ragcore_minimal.py
+```
+
+这个脚本会完成：
+
+- 创建本地 `.ragcore-demo` 索引目录
+- 插入一段最小示例文本
+- 执行一次 `mix` 查询
+- 打印答案和证据
+- 最后删除示例文档
+
 如果你只想跑临时内存实例：
 
 ```python
