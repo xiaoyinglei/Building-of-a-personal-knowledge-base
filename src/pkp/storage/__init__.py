@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from os import PathLike
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -38,7 +39,7 @@ class StorageBundle:
 @dataclass(frozen=True, slots=True)
 class StorageConfig:
     backend: str = "sqlite"
-    root: Path | None = None
+    root: str | PathLike[str] | Path | None = None
 
     @classmethod
     def in_memory(cls) -> "StorageConfig":
@@ -50,7 +51,7 @@ class StorageConfig:
             ephemeral_root = TemporaryDirectory(prefix="pkp-ragcore-")
             root = Path(ephemeral_root.name)
         elif self.backend == "sqlite":
-            root = self.root or Path(".ragcore")
+            root = Path(self.root) if self.root is not None else Path(".ragcore")
         else:
             raise ValueError(f"Unsupported storage backend: {self.backend}")
 
