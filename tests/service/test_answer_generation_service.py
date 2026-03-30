@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pkp.service.answer_generation_service import AnswerGenerationService
+from pkp.llm.generation import AnswerGenerationService
 from pkp.types import ChunkRole, EvidenceItem, RuntimeMode
 
 

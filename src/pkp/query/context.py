@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Final, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from pkp.service.answer_generation_service import AnswerGenerationService
 from pkp.config.policies import RoutingThresholds
+from pkp.llm.generation import AnswerGenerationService
 from pkp.types.access import AccessPolicy, RuntimeMode
 from pkp.types.content import ChunkRole
 from pkp.types.envelope import EvidenceItem

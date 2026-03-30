@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from pkp.service.ingest_service import IngestService
+from pkp.ingest.ingest import IngestService
 from pkp.types.content import SourceType
 
 
