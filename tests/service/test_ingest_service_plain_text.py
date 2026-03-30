@@ -1,14 +1,14 @@
 from pathlib import Path
 
-from pkp.service.ingest_service import IngestService
-from pkp.types.access import (
+from rag.ingest.ingest import IngestService
+from rag.schema._types.access import (
     AccessPolicy,
     ExecutionLocation,
     ExternalRetrievalPolicy,
     Residency,
     RuntimeMode,
 )
-from pkp.types.content import SourceType
+from rag.schema._types.content import SourceType
 
 
 def test_plain_text_ingest_infers_root_toc_and_inherits_policy(tmp_path: Path) -> None:
@@ -16,9 +16,9 @@ def test_plain_text_ingest_infers_root_toc_and_inherits_policy(tmp_path: Path) -
     policy = AccessPolicy(
         residency=Residency.LOCAL_REQUIRED,
         external_retrieval=ExternalRetrievalPolicy.DENY,
-        allowed_runtimes={RuntimeMode.FAST},
-        allowed_locations={ExecutionLocation.LOCAL},
-        sensitivity_tags={"private"},
+        allowed_runtimes=frozenset({RuntimeMode.FAST}),
+        allowed_locations=frozenset({ExecutionLocation.LOCAL}),
+        sensitivity_tags=frozenset({"private"}),
     )
 
     result = service.ingest_plain_text(

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pkp.service.rerank_service import HeuristicRerankService
+from rag.llm.rerank import HeuristicRerankService
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ def test_rerank_service_prefers_explanatory_text_over_command_snippets_for_natur
     candidates = [
         Candidate(
             chunk_id="chunk-cli",
-            text='uv run pkp query --mode fast --query "这个项目做什么？"',
+            text='uv run rag query --mode fast --query "这个项目做什么？"',
             score=1.2,
             section_path=("查询",),
         ),
@@ -42,8 +42,8 @@ def test_rerank_service_penalizes_readme_cli_examples_for_definition_queries() -
     candidates = [
         Candidate(
             chunk_id="chunk-cli",
-            text='uv run python -m pkp.ui.cli query --mode fast --query "这个项目做什么？" '
-            'uv run python -m pkp.ui.cli query --mode deep --query "比较 Fast Path 和 Deep Path"',
+            text='uv run python -m rag.cli query --mode fast --query "这个项目做什么？" '
+            'uv run python -m rag.cli query --mode deep --query "比较 Fast Path 和 Deep Path"',
             score=1.0,
             section_path=("查询",),
         ),

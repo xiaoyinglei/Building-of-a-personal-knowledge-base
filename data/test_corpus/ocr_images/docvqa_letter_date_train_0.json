@@ -1,0 +1,21 @@
+{
+  "dataset": "nielsr/docvqa_1200_examples",
+  "dataset_url": "https://huggingface.co/datasets/nielsr/docvqa_1200_examples",
+  "split": "train",
+  "sample_id": "train_0",
+  "question": "what is the date mentioned in this letter?",
+  "answers": [
+    "1/8/93"
+  ],
+  "image_file": "docvqa_letter_date_train_0.jpg",
+  "image_size": [
+    1695,
+    2025
+  ],
+  "mode": "L",
+  "notes": [
+    "scanned_like",
+    "handwritten_like_date",
+    "ocr_metadata"
+  ]
+}

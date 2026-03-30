@@ -1,6 +1,6 @@
-from pkp.service.chunk_routing_service import ChunkRoutingService
-from pkp.types.content import SourceType
-from pkp.types.processing import ChunkingStrategy, DocumentFeatures
+from rag.ingest.chunk import ChunkRoutingService
+from rag.schema._types.content import SourceType
+from rag.schema._types.processing import ChunkingStrategy, DocumentFeatures
 
 
 def test_pdf_defaults_to_hybrid_chunker() -> None:

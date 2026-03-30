@@ -1,5 +1,5 @@
-from pkp.service.telemetry_service import TelemetryService
-from pkp.types.telemetry import TelemetryEvent
+from rag.schema._types.telemetry import TelemetryEvent
+from rag.utils._telemetry import TelemetryService
 
 
 def test_telemetry_service_records_typed_events() -> None:
