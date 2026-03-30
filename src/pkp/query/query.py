@@ -6,12 +6,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from pkp.types.access import AccessPolicy, ExecutionLocationPreference
-from pkp.types.content import ChunkRole
-from pkp.types.diagnostics import ProviderAttempt
-from pkp.types.envelope import EvidenceItem
-from pkp.types.generation import GroundedAnswer
-from pkp.types.retrieval import RetrievalResult
+from pkp.schema._types.access import AccessPolicy, ExecutionLocationPreference
+from pkp.schema._types.content import ChunkRole
+from pkp.schema._types.diagnostics import ProviderAttempt
+from pkp.schema._types.envelope import EvidenceItem
+from pkp.schema._types.generation import GroundedAnswer
+from pkp.schema._types.retrieval import RetrievalResult
 
 
 class QueryMode(StrEnum):

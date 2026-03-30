@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pkp.repo.storage.file_object_store import FileObjectStore
+from pkp.storage._repo.file_object_store import FileObjectStore
 
 
 def test_file_object_store_round_trips_bytes(tmp_path: Path) -> None:

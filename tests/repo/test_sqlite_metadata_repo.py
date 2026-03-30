@@ -1,8 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
-from pkp.types import (
+from pkp.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
+from pkp.schema._types import (
     AccessPolicy,
     ArtifactStatus,
     ArtifactType,
@@ -14,7 +14,7 @@ from pkp.types import (
     Source,
     SourceType,
 )
-from pkp.types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
+from pkp.schema._types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
 
 
 def test_sqlite_metadata_repo_persists_source_document_chunks_and_artifacts(tmp_path: Path) -> None:

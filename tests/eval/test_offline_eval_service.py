@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pkp.eval.offline_eval_service import OfflineEvalService
+from pkp.interfaces._eval.offline_eval_service import OfflineEvalService
 
 
 def test_offline_eval_service_writes_reports_and_scores_expected_chunk_types(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pkp.eval.ragas_eval import (
+from pkp.interfaces._eval.ragas_eval import (
     ChunkReference,
     EmbeddingCompatibilityAdapter,
     enrich_generated_samples,

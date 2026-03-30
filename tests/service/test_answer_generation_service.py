@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pkp.llm.generation import AnswerGenerationService
-from pkp.types import ChunkRole, EvidenceItem, RuntimeMode
+from pkp.schema._types import ChunkRole, EvidenceItem, RuntimeMode
 
 
 def _evidence_item(

@@ -1,3 +1,3 @@
-from pkp.repo.interfaces import EmbeddingProviderBinding
+from pkp.utils._contracts import EmbeddingProviderBinding
 
 __all__ = ["EmbeddingProviderBinding"]

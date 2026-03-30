@@ -1,5 +1,5 @@
-from pkp.runtime.deep_research_runtime import resolve_execution_locations
-from pkp.types import (
+from pkp.interfaces._runtime.deep_research_runtime import resolve_execution_locations
+from pkp.schema._types import (
     AccessPolicy,
     ExecutionLocation,
     ExecutionLocationPreference,

@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from pkp.types.memory import EpisodicMemory, MemoryEvidenceLink, MemoryKind, UserMemory
+from pkp.schema._types.memory import EpisodicMemory, MemoryEvidenceLink, MemoryKind, UserMemory
 
 
 def _evidence(chunk_id: str, doc_id: str) -> MemoryEvidenceLink:

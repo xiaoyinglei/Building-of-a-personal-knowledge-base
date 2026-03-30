@@ -30,15 +30,15 @@ from pkp.document.parser import (
 )
 from pkp.ingest.chunk import ChunkingService, DocumentProcessingService, TOCService
 from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo
-from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import ModelProviderRepo, OcrVisionRepo, VectorRepo
-from pkp.repo.parse._util import normalize_whitespace
-from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
-from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
-from pkp.repo.storage.file_object_store import FileObjectStore
-from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
-from pkp.repo.vision.ocr_vision_repo import create_default_ocr_repo
-from pkp.service.policy_resolution_service import PolicyResolutionService
+from pkp.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
+from pkp.utils._contracts import ModelProviderRepo, OcrVisionRepo, VectorRepo
+from pkp.document._parse._util import normalize_whitespace
+from pkp.storage._search.sqlite_fts_repo import SQLiteFTSRepo
+from pkp.storage._search.sqlite_vector_repo import SQLiteVectorRepo
+from pkp.storage._repo.file_object_store import FileObjectStore
+from pkp.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
+from pkp.document._vision.ocr_vision_repo import create_default_ocr_repo
+from pkp.ingest._policy.service import PolicyResolutionService
 from pkp.storage.doc_status import StatusStore
 from pkp.storage.graph_store import GraphStore
 from pkp.storage.kv_store import CacheStore, ChunkStore, DocumentStore

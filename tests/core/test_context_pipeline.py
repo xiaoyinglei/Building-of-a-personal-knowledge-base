@@ -5,9 +5,9 @@ import json
 from pkp.engine import RAGCore
 from pkp.query.query import QueryOptions
 from pkp.storage import StorageConfig
-from pkp.repo.interfaces import EmbeddingProviderBinding
-from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
-from pkp.types.access import ExecutionLocationPreference
+from pkp.utils._contracts import EmbeddingProviderBinding
+from pkp.llm._providers.fallback_embedding_repo import FallbackEmbeddingRepo
+from pkp.schema._types.access import ExecutionLocationPreference
 
 
 class FakeGenerationProvider:

@@ -42,8 +42,8 @@ def test_rerank_service_penalizes_readme_cli_examples_for_definition_queries() -
     candidates = [
         Candidate(
             chunk_id="chunk-cli",
-            text='uv run python -m pkp.ui.cli query --mode fast --query "这个项目做什么？" '
-            'uv run python -m pkp.ui.cli query --mode deep --query "比较 Fast Path 和 Deep Path"',
+            text='uv run python -m pkp.interfaces._ui.cli query --mode fast --query "这个项目做什么？" '
+            'uv run python -m pkp.interfaces._ui.cli query --mode deep --query "比较 Fast Path 和 Deep Path"',
             score=1.0,
             section_path=("查询",),
         ),

@@ -1,6 +1,6 @@
-from pkp.algorithms.retrieval.mode_planner import RetrievalPlanBuilder
+from pkp.query._retrieval.mode_planner import RetrievalPlanBuilder
 from pkp.query.query import QueryMode
-from pkp.types.query import QueryUnderstanding
+from pkp.schema._types.query import QueryUnderstanding
 
 
 def _understanding(

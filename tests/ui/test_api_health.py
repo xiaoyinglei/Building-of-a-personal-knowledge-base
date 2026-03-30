@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from pkp.ui.api.app import create_app
+from pkp.interfaces._ui.api.app import create_app
 
 
 def test_health_endpoint_returns_ok() -> None:

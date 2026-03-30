@@ -4,13 +4,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from pkp.algorithms.generation.answer_generator import AnswerGenerator
-from pkp.algorithms.retrieval.branch_retrievers import BranchRetrieverRegistry
-from pkp.algorithms.retrieval.contracts import GraphExpander, Reranker, RetrieverFn
-from pkp.algorithms.retrieval.fusion import FusedCandidateView, ReciprocalRankFusion
-from pkp.algorithms.retrieval.mode_planner import RetrievalPlan, RetrievalPlanBuilder
-from pkp.algorithms.retrieval.rerank import UnifiedReranker
-from pkp.config.policies import RoutingThresholds
+from pkp.llm._generation.answer_generator import AnswerGenerator
+from pkp.query._retrieval.branch_retrievers import BranchRetrieverRegistry
+from pkp.query._retrieval.contracts import GraphExpander, Reranker, RetrieverFn
+from pkp.query._retrieval.fusion import FusedCandidateView, ReciprocalRankFusion
+from pkp.query._retrieval.mode_planner import RetrievalPlan, RetrievalPlanBuilder
+from pkp.query._retrieval.rerank import UnifiedReranker
+from pkp.interfaces._config.policies import RoutingThresholds
 from pkp.query.context import (
     CandidateLike,
     ContextEvidenceMerger,
@@ -23,10 +23,10 @@ from pkp.query.context import (
 )
 from pkp.query.graph import GraphExpansionService
 from pkp.query.query import BuiltContext, QueryMode, QueryOptions, RAGQueryResult
-from pkp.service.artifact_service import ArtifactService
-from pkp.service.telemetry_service import TelemetryService
-from pkp.types.diagnostics import RetrievalDiagnostics
-from pkp.types.envelope import PreservationSuggestion
+from pkp.query._artifact.service import ArtifactService
+from pkp.utils._telemetry import TelemetryService
+from pkp.schema._types.diagnostics import RetrievalDiagnostics
+from pkp.schema._types.envelope import PreservationSuggestion
 from pkp.schema.document import AccessPolicy, ExecutionLocationPreference
 from pkp.schema.query import RetrievalResult
 

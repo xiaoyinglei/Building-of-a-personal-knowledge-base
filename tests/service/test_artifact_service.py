@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pkp.service.artifact_service import ArtifactService
-from pkp.types.access import RuntimeMode
-from pkp.types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
-from pkp.types.envelope import EvidenceItem
+from pkp.query._artifact.service import ArtifactService
+from pkp.schema._types.access import RuntimeMode
+from pkp.schema._types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
+from pkp.schema._types.envelope import EvidenceItem
 
 
 def _evidence(chunk_id: str, doc_id: str, evidence_kind: str = "internal") -> EvidenceItem:

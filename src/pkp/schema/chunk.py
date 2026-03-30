@@ -1,5 +1,5 @@
-from pkp.types.content import Chunk, ChunkRole
-from pkp.types.processing import (
+from pkp.schema._types.content import Chunk, ChunkRole
+from pkp.schema._types.processing import (
     ChunkingStrategy,
     ChunkRoutingDecision,
     ChunkStatistics,

@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pkp.types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
+from pkp.schema._types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
 from pkp.query.query import QueryMode
 from pkp.query.retrieve import RetrievalService
-from pkp.types.content import ChunkRole
+from pkp.schema._types.content import ChunkRole
 
 
 @dataclass(frozen=True)
@@ -264,7 +264,7 @@ def test_retrieval_service_prefers_definition_chunk_when_vector_and_sparse_signa
             FakeCandidate(
                 "chunk-cli",
                 "doc-a",
-                'uv run python -m pkp.ui.cli query --mode fast --query "这个项目做什么？"',
+                'uv run python -m pkp.interfaces._ui.cli query --mode fast --query "这个项目做什么？"',
                 "#query",
                 1.0,
                 1,
@@ -293,7 +293,7 @@ def test_retrieval_service_prefers_definition_chunk_when_vector_and_sparse_signa
             FakeCandidate(
                 "chunk-cli",
                 "doc-a",
-                'uv run python -m pkp.ui.cli query --mode fast --query "这个项目做什么？"',
+                'uv run python -m pkp.interfaces._ui.cli query --mode fast --query "这个项目做什么？"',
                 "#query",
                 0.51,
                 2,

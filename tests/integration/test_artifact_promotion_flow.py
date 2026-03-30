@@ -2,8 +2,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from pkp.bootstrap import build_test_container
-from pkp.ui.api.app import create_app
+from pkp.interfaces._bootstrap import build_test_container
+from pkp.interfaces._ui.api.app import create_app
 
 
 def test_artifact_promotion_flow_reindexes_approved_artifact(tmp_path: Path) -> None:

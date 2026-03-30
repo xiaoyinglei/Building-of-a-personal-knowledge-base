@@ -10,7 +10,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from pkp.repo.interfaces import ModelProviderRepo
+from pkp.utils._contracts import ModelProviderRepo
 from pkp.schema.chunk import Chunk
 from pkp.schema.document import Document
 

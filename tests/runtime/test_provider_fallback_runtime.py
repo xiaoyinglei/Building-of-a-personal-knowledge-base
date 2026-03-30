@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pkp.runtime.adapters import RuntimeEvidenceAdapter
-from pkp.runtime.deep_research_runtime import DeepResearchRuntime
-from pkp.runtime.session_runtime import SessionRuntime
+from pkp.interfaces._runtime.adapters import RuntimeEvidenceAdapter
+from pkp.interfaces._runtime.deep_research_runtime import DeepResearchRuntime
+from pkp.interfaces._runtime.session_runtime import SessionRuntime
 from pkp.query.context import EvidenceService
-from pkp.service.artifact_service import ArtifactService
-from pkp.service.telemetry_service import TelemetryService
-from pkp.types import (
+from pkp.query._artifact.service import ArtifactService
+from pkp.utils._telemetry import TelemetryService
+from pkp.schema._types import (
     AccessPolicy,
     ArtifactStatus,
     EvidenceItem,
@@ -17,7 +17,7 @@ from pkp.types import (
     RuntimeMode,
     TaskType,
 )
-from pkp.types.query import ComplexityLevel
+from pkp.schema._types.query import ComplexityLevel
 
 
 def make_policy() -> ExecutionPolicy:

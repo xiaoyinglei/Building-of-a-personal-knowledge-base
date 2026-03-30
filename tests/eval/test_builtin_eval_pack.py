@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from pkp.eval.sample_pack import prepare_builtin_eval_pack
-from pkp.types.content import SourceType
+from pkp.interfaces._eval.sample_pack import prepare_builtin_eval_pack
+from pkp.schema._types.content import SourceType
 
 
 def test_prepare_builtin_eval_pack_generates_four_supported_file_types(tmp_path: Path) -> None:

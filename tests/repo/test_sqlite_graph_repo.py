@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.types.content import GraphEdge, GraphNode
+from pkp.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
+from pkp.schema._types.content import GraphEdge, GraphNode
 
 
 def test_sqlite_graph_repo_tracks_candidates_and_promoted_edges(tmp_path: Path) -> None:

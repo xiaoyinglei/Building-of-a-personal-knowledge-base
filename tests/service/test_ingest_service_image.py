@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 from PIL import Image, ImageDraw
 
-from pkp.repo.interfaces import OcrResult, ParsedDocument
+from pkp.utils._contracts import OcrResult, ParsedDocument
 from pkp.ingest.ingest import IngestService
 
 

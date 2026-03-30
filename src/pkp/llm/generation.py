@@ -4,9 +4,9 @@ import json
 import re
 from collections.abc import Callable, Sequence
 
-from pkp.types import EvidenceItem, RuntimeMode
-from pkp.types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection, GroundedAnswer
-from pkp.types.text import focus_terms, keyword_overlap, search_terms, split_sentences
+from pkp.schema._types import EvidenceItem, RuntimeMode
+from pkp.schema._types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection, GroundedAnswer
+from pkp.schema._types.text import focus_terms, keyword_overlap, search_terms, split_sentences
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -448,7 +448,7 @@ class AnswerGenerationService:
 
 def __getattr__(name: str) -> object:
     if name == "AnswerGenerator":
-        from pkp.algorithms.generation.answer_generator import AnswerGenerator
+        from pkp.llm._generation.answer_generator import AnswerGenerator
 
         return AnswerGenerator
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

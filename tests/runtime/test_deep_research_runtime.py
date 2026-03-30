@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 
-from pkp.runtime.deep_research_runtime import DeepResearchRuntime
-from pkp.runtime.session_runtime import SessionRuntime
-from pkp.types import (
+from pkp.interfaces._runtime.deep_research_runtime import DeepResearchRuntime
+from pkp.interfaces._runtime.session_runtime import SessionRuntime
+from pkp.schema._types import (
     AccessPolicy,
     EvidenceItem,
     ExecutionLocationPreference,
@@ -12,7 +12,7 @@ from pkp.types import (
     RuntimeMode,
     TaskType,
 )
-from pkp.types.query import ComplexityLevel
+from pkp.schema._types.query import ComplexityLevel
 
 
 def make_policy() -> ExecutionPolicy:

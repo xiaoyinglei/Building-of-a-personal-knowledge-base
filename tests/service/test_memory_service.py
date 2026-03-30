@@ -4,10 +4,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from pkp.service.memory_service import MemoryService
-from pkp.types.access import RuntimeMode
-from pkp.types.envelope import EvidenceItem, PreservationSuggestion, QueryResponse
-from pkp.types.memory import EpisodicMemory, MemoryEvidenceLink, UserMemory
+from pkp.query._memory.service import MemoryService
+from pkp.schema._types.access import RuntimeMode
+from pkp.schema._types.envelope import EvidenceItem, PreservationSuggestion, QueryResponse
+from pkp.schema._types.memory import EpisodicMemory, MemoryEvidenceLink, UserMemory
 
 
 class FakeMemoryRepo:

@@ -1,5 +1,5 @@
-from pkp.repo.parse._util import normalize_whitespace
-from pkp.types.text import (
+from pkp.document._parse._util import normalize_whitespace
+from pkp.schema._types.text import (
     build_fts_query,
     focus_terms,
     keyword_overlap,

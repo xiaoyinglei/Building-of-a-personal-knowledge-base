@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from pkp.query.context import ContextEvidenceMerger, EvidenceBundle, EvidenceTruncator, RoutingDecision, SelfCheckResult
-from pkp.types.access import RuntimeMode
-from pkp.types.content import ChunkRole
-from pkp.types.envelope import EvidenceItem, PreservationSuggestion
-from pkp.types.query import ComplexityLevel, TaskType
-from pkp.types.retrieval import RetrievalResult
+from pkp.schema._types.access import RuntimeMode
+from pkp.schema._types.content import ChunkRole
+from pkp.schema._types.envelope import EvidenceItem, PreservationSuggestion
+from pkp.schema._types.query import ComplexityLevel, TaskType
+from pkp.schema._types.retrieval import RetrievalResult
 
 
 def _item(

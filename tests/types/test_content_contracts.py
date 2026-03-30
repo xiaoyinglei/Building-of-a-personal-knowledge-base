@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 
-from pkp.types.access import AccessPolicy
-from pkp.types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
-from pkp.types.content import (
+from pkp.schema._types.access import AccessPolicy
+from pkp.schema._types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
+from pkp.schema._types.content import (
     Chunk,
     Document,
     DocumentType,

@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from pkp.runtime.ingest_runtime import IngestRuntime
-from pkp.types import (
+from pkp.interfaces._runtime.ingest_runtime import IngestRuntime
+from pkp.schema._types import (
     AccessPolicy,
     ExecutionLocation,
     ExternalRetrievalPolicy,

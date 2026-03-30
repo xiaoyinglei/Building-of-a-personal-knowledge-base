@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pkp.engine import RAGCore
 from pkp.storage import StorageConfig
-from pkp.types.storage import DocumentProcessingStatus
+from pkp.schema._types.storage import DocumentProcessingStatus
 
 
 def test_ragcore_delete_removes_retrieval_indexes_and_marks_document_deleted() -> None:

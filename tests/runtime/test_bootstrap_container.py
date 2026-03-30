@@ -4,13 +4,13 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
-import pkp.bootstrap as bootstrap_module
-from pkp.bootstrap import build_runtime_container
-from pkp.config import AppSettings, build_execution_policy, default_access_policy
-from pkp.repo.models.fallback_embedding_repo import FallbackEmbeddingRepo
-from pkp.types import ComplexityLevel, ExecutionLocationPreference, TaskType
-from pkp.ui.api.app import create_app
-from pkp.ui.dependencies import clear_container_factory
+import pkp.interfaces._bootstrap as bootstrap_module
+from pkp.interfaces._bootstrap import build_runtime_container
+from pkp.interfaces._config import AppSettings, build_execution_policy, default_access_policy
+from pkp.llm._providers.fallback_embedding_repo import FallbackEmbeddingRepo
+from pkp.schema._types import ComplexityLevel, ExecutionLocationPreference, TaskType
+from pkp.interfaces._ui.api.app import create_app
+from pkp.interfaces._ui.dependencies import clear_container_factory
 
 
 def _settings(tmp_path: Path) -> AppSettings:

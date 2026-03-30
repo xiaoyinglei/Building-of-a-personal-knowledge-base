@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-from pkp.runtime.fast_query_runtime import FastQueryRuntime
-from pkp.service.telemetry_service import TelemetryService
-from pkp.types import (
+from pkp.interfaces._runtime.fast_query_runtime import FastQueryRuntime
+from pkp.utils._telemetry import TelemetryService
+from pkp.schema._types import (
     AccessPolicy,
     EvidenceItem,
     ExecutionLocationPreference,
@@ -12,7 +12,7 @@ from pkp.types import (
     RuntimeMode,
     TaskType,
 )
-from pkp.types.query import ComplexityLevel
+from pkp.schema._types.query import ComplexityLevel
 
 
 def make_policy() -> ExecutionPolicy:

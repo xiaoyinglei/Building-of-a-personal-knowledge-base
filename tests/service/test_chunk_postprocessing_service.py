@@ -1,7 +1,7 @@
 from pkp.ingest.chunk import ChunkPostprocessingService
-from pkp.types.access import AccessPolicy
-from pkp.types.content import Chunk
-from pkp.types.processing import ChunkRole
+from pkp.schema._types.access import AccessPolicy
+from pkp.schema._types.content import Chunk
+from pkp.schema._types.processing import ChunkRole
 
 
 def _chunk(

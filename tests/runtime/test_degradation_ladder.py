@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-from pkp.runtime.deep_research_runtime import DeepResearchRuntime
-from pkp.runtime.session_runtime import SessionRuntime
-from pkp.types import (
+from pkp.interfaces._runtime.deep_research_runtime import DeepResearchRuntime
+from pkp.interfaces._runtime.session_runtime import SessionRuntime
+from pkp.schema._types import (
     AccessPolicy,
     EvidenceItem,
     ExecutionLocationPreference,
@@ -10,7 +10,7 @@ from pkp.types import (
     RuntimeMode,
     TaskType,
 )
-from pkp.types.query import ComplexityLevel
+from pkp.schema._types.query import ComplexityLevel
 
 
 def make_policy() -> ExecutionPolicy:
@@ -60,7 +60,7 @@ class FakeEvidenceService:
         raise RuntimeError(f"{location} synthesis failed")
 
     def build_retrieval_only_response(self, query: str, hits: list[EvidenceItem]):
-        from pkp.types import PreservationSuggestion, QueryResponse
+        from pkp.schema._types import PreservationSuggestion, QueryResponse
 
         return QueryResponse(
             conclusion="retrieval fallback",

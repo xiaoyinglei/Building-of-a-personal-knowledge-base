@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pkp.ingest.ingest import IngestService
-from pkp.types.content import SourceType
+from pkp.schema._types.content import SourceType
 
 
 @dataclass

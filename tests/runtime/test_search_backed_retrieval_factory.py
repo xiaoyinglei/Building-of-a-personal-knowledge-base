@@ -5,12 +5,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pkp.query.graph import RetrievedCandidate, SearchBackedRetrievalFactory
-from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import EmbeddingProviderBinding
-from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
-from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
-from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
-from pkp.types import (
+from pkp.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
+from pkp.utils._contracts import EmbeddingProviderBinding
+from pkp.storage._search.sqlite_fts_repo import SQLiteFTSRepo
+from pkp.storage._search.sqlite_vector_repo import SQLiteVectorRepo
+from pkp.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
+from pkp.schema._types import (
     AccessPolicy,
     Chunk,
     Document,

@@ -1,1 +1,1 @@
-from pkp.types import *  # noqa: F403
+from pkp.schema._types import *  # noqa: F403

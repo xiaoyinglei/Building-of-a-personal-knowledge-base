@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+import httpx
+
+from pkp.utils._contracts import ModelProviderRepo
+from pkp.llm._providers.fallback_embedding_repo import FallbackEmbeddingRepo
+
+
+class OllamaProviderRepo(ModelProviderRepo):
+    def __init__(
+        self,
+        *,
+        base_url: str = "http://localhost:11434",
+        chat_model: str = "qwen3.5:9b",
+        embedding_model: str | None = "qwen3-embedding:8b",
+        embedding_fallback: FallbackEmbeddingRepo | None = None,
+        http_client: httpx.Client | None = None,
+        timeout_seconds: float = 120.0,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._chat_model = chat_model
+        self._embedding_model = embedding_model
+        self._fallback = embedding_fallback or FallbackEmbeddingRepo()
+        self._http_client = http_client
+        self._timeout_seconds = timeout_seconds
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if not self.is_embed_configured or not self._embedding_model:
+            raise RuntimeError("Ollama embedding model is not configured")
+        try:
+            response = self._client().post(
+                f"{self._base_url}/api/embed",
+                json={
+                    "model": self._embedding_model,
+                    "input": list(texts),
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return [list(vector) for vector in payload["embeddings"]]
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Ollama embedding request failed: {exc}") from exc
+
+    def chat(self, prompt: str) -> str:
+        try:
+            response = self._client().post(
+                f"{self._base_url}/api/chat",
+                json={
+                    "model": self._chat_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return str(payload["message"]["content"])
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Ollama chat request failed: {exc}") from exc
+
+    def rerank(self, query: str, candidates: Sequence[str]) -> list[int]:
+        return self._fallback.rerank(query, candidates)
+
+    @property
+    def provider_name(self) -> str:
+        return "ollama"
+
+    @property
+    def chat_model_name(self) -> str:
+        return self._chat_model
+
+    @property
+    def embedding_model_name(self) -> str | None:
+        return self._embedding_model
+
+    @property
+    def is_chat_configured(self) -> bool:
+        return bool(self._base_url and self._chat_model)
+
+    @property
+    def is_embed_configured(self) -> bool:
+        return bool(self._base_url and self._embedding_model)
+
+    @property
+    def is_rerank_configured(self) -> bool:
+        return False
+
+    def _client(self) -> httpx.Client:
+        if self._http_client is None:
+            self._http_client = httpx.Client(timeout=httpx.Timeout(self._timeout_seconds))
+        return self._http_client
