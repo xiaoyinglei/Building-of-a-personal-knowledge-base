@@ -178,6 +178,145 @@ core = build_rag_core(load_settings())
 - `pkp` 顶层公开的是纯库 API
 - `interfaces._bootstrap` 是工程装配辅助入口，适合项目内使用
 
+### 场景 1：本地 Ollama / BGE 全链路接入
+
+这是最贴近“本地个人知识库”的用法：本地聊天模型负责生成，本地 BGE 负责 embedding 和 rerank。
+
+先准备 `.env`：
+
+```bash
+PKP_OLLAMA__BASE_URL=http://localhost:11434
+PKP_OLLAMA__CHAT_MODEL=qwen3.5:9b
+PKP_OLLAMA__EMBEDDING_MODEL=qwen3-embedding:8b
+
+PKP_LOCAL_BGE__ENABLED=true
+PKP_LOCAL_BGE__EMBEDDING_MODEL=BAAI/bge-m3
+PKP_LOCAL_BGE__EMBEDDING_MODEL_PATH=~/.cache/huggingface/hub/models--BAAI--bge-m3
+PKP_LOCAL_BGE__RERANK_MODEL=BAAI/bge-reranker-v2-m3
+PKP_LOCAL_BGE__RERANK_MODEL_PATH=~/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3
+
+PKP_RUNTIME__EXECUTION_LOCATION_PREFERENCE=local_only
+```
+
+然后用库入口跑一条完整链路：
+
+```python
+from pkp.interfaces._bootstrap import build_rag_core, load_settings
+from pkp.query import QueryOptions
+
+core = build_rag_core(load_settings())
+
+core.insert(
+    source_type="markdown",
+    location="README.md",
+    owner="user",
+)
+
+result = core.query(
+    "这个项目的核心架构是什么？",
+    options=QueryOptions(mode="mix"),
+)
+
+print(result.answer.answer_text)
+print(result.generation_provider)
+print(result.generation_model)
+print([item.citation_anchor for item in result.context.evidence[:3]])
+```
+
+这个场景下通常是：
+
+- 本地 BGE 负责 chunk / entity / relation 向量和 rerank
+- Ollama 聊天模型负责 grounded answer 生成
+- `mix` 模式会同时使用图检索和普通 chunk 检索
+
+### 场景 2：用 PDF 和网页做一次完整 ingest + query
+
+下面这个示例更贴近日常知识整理：一份本地 PDF，加一篇网页文章，然后做综合查询。
+
+```python
+from pkp.interfaces._bootstrap import build_rag_core, load_settings
+from pkp.query import QueryOptions
+
+core = build_rag_core(load_settings())
+
+pdf_result = core.insert(
+    source_type="pdf",
+    location="/absolute/path/annual-report.pdf",
+    owner="user",
+)
+
+web_result = core.insert(
+    source_type="web",
+    location="https://example.com/industry-analysis",
+    owner="user",
+)
+
+answer = core.query(
+    "结合 PDF 报告和网页文章，总结 Alpha Engine 的业务重点和风险点。",
+    options=QueryOptions(
+        mode="hybrid",
+        max_context_tokens=1800,
+        max_evidence_chunks=10,
+    ),
+)
+
+print(answer.answer.answer_text)
+for item in answer.context.evidence[:5]:
+    print(item.doc_id, item.citation_anchor, item.score)
+```
+
+如果你只想用 CLI 跑同样的流程：
+
+```bash
+uv run python -m pkp.interfaces.cli ingest --source-type pdf --location /absolute/path/annual-report.pdf
+uv run python -m pkp.interfaces.cli ingest --source-type web --location https://example.com/industry-analysis
+uv run python -m pkp.interfaces.cli query --mode fast --query "总结 Alpha Engine 的业务重点和风险点"
+```
+
+### 场景 3：用 delete / rebuild 管理知识库生命周期
+
+当原始文件更新、索引异常、或者你想强制重建图和向量时，可以直接用 `location` 做生命周期管理。
+
+```python
+from pkp.interfaces._bootstrap import build_rag_core, load_settings
+
+core = build_rag_core(load_settings())
+
+core.insert(
+    source_type="pdf",
+    location="/absolute/path/design-doc.pdf",
+    owner="user",
+)
+
+delete_result = core.delete(location="/absolute/path/design-doc.pdf")
+print(delete_result.deleted_doc_ids)
+print(delete_result.deleted_chunk_ids[:5])
+
+rebuild_result = core.rebuild(location="/absolute/path/design-doc.pdf")
+print(rebuild_result.rebuilt_doc_ids)
+```
+
+说明：
+
+- `delete` 会清理该文档对应的 FTS、vector、graph 索引，并把文档状态落成 `DELETED`
+- `rebuild` 会重新解析原始文档并重建 chunk、向量和图索引
+- `delete / rebuild` 都支持三种选择器，但一次只能传一种：
+  `doc_id`、`source_id`、`location`
+
+如果你更习惯先看入库结果再做生命周期管理，可以这样写：
+
+```python
+result = core.insert(
+    source_type="plain_text",
+    location="memory://note-ops",
+    owner="user",
+    content_text="Alpha Engine v2 replaces the v1 ingest scheduler.",
+)
+
+core.delete(doc_id=result.document_id)
+core.rebuild(location="memory://note-ops")
+```
+
 ## 模型配置
 
 ### 本地 Ollama + BGE
