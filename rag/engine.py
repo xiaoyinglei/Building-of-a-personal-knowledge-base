@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,12 +48,22 @@ from rag.query.graph import GraphExpansionService, SearchBackedRetrievalFactory
 from rag.query.query import QueryOptions, RAGQueryResult
 from rag.query.retrieve import RAGQueryPipeline, RetrievalService
 from rag.schema._types.diagnostics import ProviderAttempt
+from rag.schema._types.storage import CacheEntry
+from rag.schema._types.text import (
+    DEFAULT_TOKENIZER_FALLBACK_MODEL,
+    TokenAccountingService,
+    TokenizerContract,
+    load_env_file,
+)
 from rag.schema.graph import GraphEdge, GraphNode
 from rag.storage import StorageBundle, StorageConfig
 from rag.storage._repo.file_object_store import FileObjectStore
 from rag.storage._search.sqlite_fts_repo import SQLiteFTSRepo
 from rag.utils._contracts import VisualDescriptionRepo
 from rag.utils._telemetry import TelemetryService
+
+_RUNTIME_CONTRACT_NAMESPACE = "rag_runtime"
+_RUNTIME_CONTRACT_KEY = "core_contract_v1"
 
 
 class _CoreInstrumentedReranker:
@@ -96,6 +107,8 @@ class RAG:
     embedding_bindings: tuple[EmbeddingProviderBinding, ...] = ()
     telemetry_service: TelemetryService | None = None
     vlm_repo: VisualDescriptionRepo | None = None
+    token_contract: TokenizerContract = field(init=False, repr=False)
+    token_accounting: TokenAccountingService = field(init=False, repr=False)
     stores: StorageBundle = field(init=False)
     ingest_pipeline: IngestPipeline = field(init=False)
     delete_pipeline: DeletePipeline = field(init=False, repr=False)
@@ -106,7 +119,14 @@ class RAG:
     _object_store: FileObjectStore = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        resolved_embedding_model = self._resolve_embedding_model_name(self.embedding_bindings)
+        self.token_contract = TokenizerContract.from_env(
+            embedding_model_name=resolved_embedding_model,
+            default_context_tokens=QueryOptions().max_context_tokens,
+        )
+        self.token_accounting = TokenAccountingService(self.token_contract)
         self.stores = self.storage.build()
+        self._register_or_validate_runtime_contract()
         ocr_repo = create_default_ocr_repo()
         self._fts_repo = SQLiteFTSRepo(self.stores.root / "fts.sqlite3")
         self._object_store = FileObjectStore(self.stores.root / "objects")
@@ -128,8 +148,12 @@ class RAG:
             docling_parser=DoclingParserRepo(ocr_repo, self.vlm_repo),
             policy_resolution_service=PolicyResolutionService(),
             toc_service=TOCService(),
-            chunking_service=ChunkingService(),
-            document_processing_service=DocumentProcessingService(toc_service=TOCService()),
+            chunking_service=ChunkingService(token_accounting=self.token_accounting),
+            document_processing_service=DocumentProcessingService(
+                toc_service=TOCService(),
+                token_accounting=self.token_accounting,
+                tokenizer_contract=self.token_contract,
+            ),
             embedding_bindings=self.embedding_bindings,
         )
         self.embedding_bindings = self.ingest_pipeline.embedding_bindings
@@ -152,9 +176,10 @@ class RAG:
         self.query_pipeline = RAGQueryPipeline(
             retrieval=self.retrieval_service,
             context_merger=ContextEvidenceMerger(),
-            truncator=EvidenceTruncator(),
+            truncator=EvidenceTruncator(token_accounting=self.token_accounting),
             prompt_builder=ContextPromptBuilder(
                 answer_generation_service=answer_generation_service,
+                token_accounting=self.token_accounting,
             ),
             answer_generator=AnswerGenerator(
                 answer_generation_service=answer_generation_service,
@@ -163,6 +188,7 @@ class RAG:
         )
 
     def insert(self, request: IngestRequest | None = None, /, **kwargs: Any) -> IngestPipelineResult:
+        self._register_or_validate_runtime_contract()
         return self.ingest_pipeline.run(self._coerce_ingest_request(request, **kwargs))
 
     def insert_many(
@@ -171,6 +197,7 @@ class RAG:
         *,
         continue_on_error: bool = False,
     ) -> BatchIngestResult:
+        self._register_or_validate_runtime_contract()
         return self.ingest_pipeline.run_many(requests, continue_on_error=continue_on_error)
 
     def insert_content_list(
@@ -179,6 +206,7 @@ class RAG:
         *,
         continue_on_error: bool = False,
     ) -> BatchIngestResult:
+        self._register_or_validate_runtime_contract()
         return self.ingest_pipeline.run_content_list(items, continue_on_error=continue_on_error)
 
     def query(
@@ -188,13 +216,15 @@ class RAG:
         **kwargs: Any,
     ) -> RAGQueryResult:
         query_text = self._coerce_query_text(*args, **kwargs)
-        return self.query_pipeline.run(query_text, options=options or QueryOptions())
+        self._register_or_validate_runtime_contract()
+        return self.query_pipeline.run(query_text, options=self._normalize_query_options(options))
 
     def delete(self, *args: Any, **kwargs: Any) -> DeletePipelineResult:
         request = self._coerce_delete_request(*args, **kwargs)
         return self.delete_pipeline.run(request)
 
     def rebuild(self, *args: Any, **kwargs: Any) -> RebuildPipelineResult:
+        self._register_or_validate_runtime_contract()
         request = self._coerce_rebuild_request(*args, **kwargs)
         return self.rebuild_pipeline.run(request)
 
@@ -291,6 +321,91 @@ class RAG:
             ),
             None,
         )
+
+    def _register_or_validate_runtime_contract(self) -> None:
+        payload = self._runtime_contract_payload()
+        existing = self.stores.cache.get(_RUNTIME_CONTRACT_KEY, namespace=_RUNTIME_CONTRACT_NAMESPACE)
+        if existing is None or not isinstance(existing.payload, dict):
+            self.stores.cache.save(
+                CacheEntry(
+                    namespace=_RUNTIME_CONTRACT_NAMESPACE,
+                    cache_key=_RUNTIME_CONTRACT_KEY,
+                    payload=payload,
+                )
+            )
+            return
+        mismatches = [
+            key
+            for key in (
+                "embedding_model_name",
+                "tokenizer_model_name",
+                "chunking_tokenizer_model_name",
+                "tokenizer_backend",
+                "chunk_token_size",
+                "chunk_overlap_tokens",
+            )
+            if existing.payload.get(key) != payload.get(key)
+        ]
+        if mismatches:
+            details = ", ".join(
+                f"{key}: current={payload.get(key)!r} stored={existing.payload.get(key)!r}"
+                for key in mismatches
+            )
+            raise RuntimeError(
+                "RAG runtime contract does not match the existing index. "
+                f"Mismatched fields: {details}. Use the same embedding/tokenizer contract or rebuild the index."
+            )
+
+    def _runtime_contract_payload(self) -> dict[str, str | int | bool]:
+        tokenizer_backend, _tokenizer_model = self.token_accounting.backend_descriptor()
+        return {
+            "embedding_model_name": self.token_contract.embedding_model_name,
+            "tokenizer_model_name": self.token_contract.tokenizer_model_name,
+            "chunking_tokenizer_model_name": self.token_contract.chunking_tokenizer_model_name,
+            "tokenizer_backend": tokenizer_backend,
+            "chunk_token_size": self.token_contract.chunk_token_size,
+            "chunk_overlap_tokens": self.token_contract.normalized_chunk_overlap_tokens(),
+        }
+
+    @staticmethod
+    def _resolve_embedding_model_name(bindings: tuple[EmbeddingProviderBinding, ...]) -> str:
+        load_env_file()
+        configured = next(
+            (
+                str(model_name)
+                for binding in bindings
+                for model_name in [getattr(binding.provider, "embedding_model_name", None)]
+                if isinstance(model_name, str) and model_name.strip()
+            ),
+            "",
+        )
+        env_locked_model = os.environ.get("RAG_EMBEDDING_MODEL") or os.environ.get("RAG_INDEX_EMBEDDING_MODEL")
+        if env_locked_model and not configured:
+            raise RuntimeError(
+                "RAG_EMBEDDING_MODEL is set, but no embedding-capable provider "
+                "with embedding_model_name was configured."
+            )
+        contract = TokenizerContract.from_env(
+            embedding_model_name=configured or DEFAULT_TOKENIZER_FALLBACK_MODEL
+        )
+        if configured and contract.embedding_model_name and contract.embedding_model_name != configured:
+            raise RuntimeError(
+                "Configured embedding model does not match RAG_EMBEDDING_MODEL/RAG_TOKENIZER contract: "
+                f"{configured!r} != {contract.embedding_model_name!r}"
+            )
+        if configured:
+            return configured
+        return contract.embedding_model_name or DEFAULT_TOKENIZER_FALLBACK_MODEL
+
+    def _normalize_query_options(self, options: QueryOptions | None) -> QueryOptions:
+        if options is None:
+            return QueryOptions(max_context_tokens=self.token_contract.max_context_tokens)
+        if (
+            options.max_context_tokens == QueryOptions().max_context_tokens
+            and self.token_contract.max_context_tokens != QueryOptions().max_context_tokens
+        ):
+            return replace(options, max_context_tokens=self.token_contract.max_context_tokens)
+        return options
 
     @staticmethod
     def _coerce_query_text(*args: Any, **kwargs: Any) -> str:

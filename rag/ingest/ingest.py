@@ -34,6 +34,7 @@ from rag.ingest.extract import (
     normalize_entity_key,
 )
 from rag.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo
+from rag.schema._types.text import DEFAULT_TOKENIZER_FALLBACK_MODEL, TokenAccountingService, TokenizerContract
 from rag.schema.chunk import Chunk, ChunkRole, DocumentProcessingPackage
 from rag.schema.document import (
     AccessPolicy,
@@ -1950,6 +1951,8 @@ class IngestService:
         root.mkdir(parents=True, exist_ok=True)
         resolved_ocr_repo = ocr_repo or create_default_ocr_repo()
         resolved_web_fetch_repo = web_fetch_repo or HttpWebFetchRepo()
+        token_contract = TokenizerContract.from_env(embedding_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL)
+        token_accounting = TokenAccountingService(token_contract)
         return cls(
             metadata_repo=SQLiteMetadataRepo(root / "metadata.sqlite3"),
             fts_repo=SQLiteFTSRepo(root / "fts.sqlite3"),
@@ -1965,8 +1968,12 @@ class IngestService:
             docling_parser=DoclingParserRepo(resolved_ocr_repo, vlm_repo),
             policy_resolution_service=PolicyResolutionService(),
             toc_service=TOCService(),
-            chunking_service=ChunkingService(),
-            document_processing_service=DocumentProcessingService(toc_service=TOCService()),
+            chunking_service=ChunkingService(token_accounting=token_accounting),
+            document_processing_service=DocumentProcessingService(
+                toc_service=TOCService(),
+                token_accounting=token_accounting,
+                tokenizer_contract=token_contract,
+            ),
             embedding_bindings=(
                 EmbeddingProviderBinding(
                     provider=FallbackEmbeddingRepo(),

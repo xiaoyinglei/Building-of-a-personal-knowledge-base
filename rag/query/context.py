@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Protocol
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,18 +14,26 @@ from rag.schema._types.access import AccessPolicy, RuntimeMode
 from rag.schema._types.content import ChunkRole
 from rag.schema._types.envelope import EvidenceItem
 from rag.schema._types.query import ComplexityLevel, QueryUnderstanding, TaskType
-from rag.schema._types.text import focus_terms, text_unit_count
+from rag.schema._types.text import (
+    DEFAULT_TOKENIZER_FALLBACK_MODEL,
+    TokenAccountingService,
+    TokenizerContract,
+    focus_terms,
+)
 
 if TYPE_CHECKING:
     from rag.query.query import ContextEvidence
     from rag.schema._types.retrieval import RetrievalResult
 
-_TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff]")
 _COMPARISON_TOKENS = ("compare", "versus", " vs ", "difference", "contrast")
 _TIMELINE_TOKENS = ("timeline", "trend", "over time", "chronology")
 _RESEARCH_TOKENS = ("research", "synthesize", "summary", "summarize", "why", "how ")
 _SCOPED_TOKENS = ("this document", "this source", "in this doc")
 _RETRIEVAL_FAMILIES: Final[tuple[str, ...]] = ("kg", "vector", "multimodal", "external")
+
+
+def _default_token_accounting() -> TokenAccountingService:
+    return TokenAccountingService(TokenizerContract.from_env(embedding_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL))
 
 
 class CandidateLike(Protocol):
@@ -537,6 +545,7 @@ class ContextPromptBuildResult:
 @dataclass(slots=True)
 class ContextPromptBuilder:
     answer_generation_service: AnswerGenerationService
+    token_accounting: TokenAccountingService = field(default_factory=_default_token_accounting)
 
     def build(
         self,
@@ -545,18 +554,25 @@ class ContextPromptBuilder:
         grounded_candidate: str,
         evidence: list[ContextEvidence],
         runtime_mode: RuntimeMode,
-        token_count: int,
+        response_type: str,
+        user_prompt: str | None,
+        conversation_history: Sequence[tuple[str, str]],
+        prompt_style: Literal["full", "compact", "minimal"] = "full",
     ) -> ContextPromptBuildResult:
         prompt = self.answer_generation_service.build_prompt(
             query=query,
             evidence_pack=[item.as_evidence_item() for item in evidence],
             grounded_candidate=grounded_candidate,
             runtime_mode=runtime_mode,
+            response_type=response_type,
+            user_prompt=user_prompt,
+            conversation_history=conversation_history,
+            prompt_style=prompt_style,
         )
         return ContextPromptBuildResult(
             grounded_candidate=grounded_candidate,
             prompt=prompt,
-            token_count=token_count,
+            token_count=self.token_accounting.count(prompt),
         )
 
 
@@ -570,6 +586,8 @@ class ContextTruncationResult:
 
 @dataclass(slots=True)
 class EvidenceTruncator:
+    token_accounting: TokenAccountingService = field(default_factory=_default_token_accounting)
+
     def truncate(
         self,
         evidence: list[EvidenceItem],
@@ -595,7 +613,7 @@ class EvidenceTruncator:
         clipped_count = 0
 
         for item, item_budget in zip(prioritized_items, assigned_budgets, strict=False):
-            original_token_count = text_unit_count(item.text)
+            original_token_count = self.token_accounting.count(item.text)
             effective_budget = max(item_budget, 1)
             selected_text = item.text
             selected_token_count = original_token_count
@@ -603,7 +621,7 @@ class EvidenceTruncator:
 
             if original_token_count > effective_budget:
                 clipped = self._clip_text(item.text, effective_budget)
-                clipped_token_count = text_unit_count(clipped)
+                clipped_token_count = self.token_accounting.count(clipped)
                 if not clipped.strip():
                     continue
                 selected_text = clipped
@@ -918,24 +936,8 @@ class EvidenceTruncator:
             return f"special:{item.doc_id}:{item.chunk_id}"
         return f"chunk:{item.doc_id}:{item.chunk_id}"
 
-    @classmethod
-    def _clip_text(cls, text: str, budget: int) -> str:
-        normalized_budget = max(budget, 1)
-        tokens = cls._token_units(text)
-        if len(tokens) <= normalized_budget:
-            return text
-        clipped = "".join(tokens[:normalized_budget]).strip()
-        if not clipped:
-            return ""
-        return f"{clipped} ..."
-
-    @classmethod
-    def _token_units(cls, text: str) -> list[str]:
-        return cls._findall(text)
-
-    @staticmethod
-    def _findall(text: str) -> list[str]:
-        return _TOKEN_RE.findall(text)
+    def _clip_text(self, text: str, budget: int) -> str:
+        return self.token_accounting.clip(text, budget, add_ellipsis=True)
 
     @staticmethod
     def _evidence_family(item: EvidenceItem) -> str:

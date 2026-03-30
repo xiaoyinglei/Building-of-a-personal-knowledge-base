@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from rag.llm._generation.answer_generator import AnswerGenerator
 from rag.query._artifact.service import ArtifactService
@@ -14,6 +14,8 @@ from rag.query.context import (
     CandidateLike,
     ContextEvidenceMerger,
     ContextPromptBuilder,
+    ContextPromptBuildResult,
+    ContextTruncationResult,
     EvidenceBundle,
     EvidenceService,
     EvidenceTruncator,
@@ -26,8 +28,8 @@ from rag.query.graph import GraphExpansionService
 from rag.query.policies import RoutingThresholds
 from rag.query.query import BuiltContext, QueryMode, QueryOptions, RAGQueryResult, normalize_query_mode
 from rag.schema._types.diagnostics import ProviderAttempt, RetrievalDiagnostics
+from rag.schema._types.envelope import EvidenceItem
 from rag.schema._types.query import QueryUnderstanding
-from rag.schema._types.text import text_unit_count
 from rag.schema.document import AccessPolicy, ExecutionLocationPreference
 from rag.schema.query import RetrievalResult
 from rag.utils._telemetry import TelemetryService
@@ -761,7 +763,7 @@ class RAGQueryPipeline:
                 context=BuiltContext(
                     evidence=[],
                     token_budget=options.max_context_tokens,
-                    token_count=text_unit_count(prompt),
+                    token_count=self.prompt_builder.token_accounting.count(prompt),
                     truncated_count=0,
                     grounded_candidate="Bypass mode does not use retrieved evidence.",
                     prompt=prompt,
@@ -771,21 +773,17 @@ class RAGQueryPipeline:
                 generation_attempts=generated.attempts,
             )
         merged_evidence = self.context_merger.merge(retrieval)
-        truncated = self.truncator.truncate(
-            merged_evidence,
-            token_budget=options.max_context_tokens,
-            max_evidence_chunks=options.max_evidence_chunks,
-            mode=options.mode,
+        total_budget = max(options.max_context_tokens, 1)
+        evidence_budget = self.truncator.token_accounting.prompt_budget(total_budget)
+        truncated, prompt_build = self._build_bounded_context(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            merged_evidence=merged_evidence,
+            total_budget=total_budget,
+            evidence_budget=evidence_budget,
         )
         context_evidence_items = [item.as_evidence_item() for item in truncated.evidence]
-        grounded_candidate = self.answer_generator.grounded_candidate(query, context_evidence_items)
-        prompt_build = self.prompt_builder.build(
-            query=query,
-            grounded_candidate=grounded_candidate,
-            evidence=truncated.evidence,
-            runtime_mode=retrieval.decision.runtime_mode,
-            token_count=truncated.token_count,
-        )
         generated = self.answer_generator.generate(
             query=query,
             prompt=prompt_build.prompt,
@@ -802,8 +800,8 @@ class RAGQueryPipeline:
             retrieval=retrieval,
             context=BuiltContext(
                 evidence=truncated.evidence,
-                token_budget=truncated.token_budget,
-                token_count=truncated.token_count,
+                token_budget=total_budget,
+                token_count=prompt_build.token_count,
                 truncated_count=truncated.truncated_count,
                 grounded_candidate=prompt_build.grounded_candidate,
                 prompt=prompt_build.prompt,
@@ -811,6 +809,161 @@ class RAGQueryPipeline:
             generation_provider=generated.provider,
             generation_model=generated.model,
             generation_attempts=generated.attempts,
+        )
+
+    def _build_bounded_context(
+        self,
+        *,
+        query: str,
+        options: QueryOptions,
+        retrieval: RetrievalResult,
+        merged_evidence: list[EvidenceItem],
+        total_budget: int,
+        evidence_budget: int,
+    ) -> tuple[ContextTruncationResult, ContextPromptBuildResult]:
+        current_budget = max(evidence_budget, 1)
+        truncated = self.truncator.truncate(
+            merged_evidence,
+            token_budget=current_budget,
+            max_evidence_chunks=options.max_evidence_chunks,
+            mode=options.mode,
+        )
+        prompt_build = self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="full",
+            user_prompt=options.user_prompt,
+            conversation_history=options.conversation_history,
+        )
+        while prompt_build.token_count > total_budget and truncated.evidence and current_budget > 1:
+            overflow = prompt_build.token_count - total_budget
+            current_budget = max(current_budget - max(overflow, 1), 1)
+            retruncated = self.truncator.truncate(
+                merged_evidence,
+                token_budget=current_budget,
+                max_evidence_chunks=options.max_evidence_chunks,
+                mode=options.mode,
+            )
+            if (
+                retruncated.token_count >= truncated.token_count
+                and len(retruncated.evidence) >= len(truncated.evidence)
+            ):
+                break
+            truncated = retruncated
+            prompt_build = self._build_prompt_from_truncation(
+                query=query,
+                options=options,
+                retrieval=retrieval,
+                truncated=truncated,
+                prompt_style="full",
+                user_prompt=options.user_prompt,
+                conversation_history=options.conversation_history,
+            )
+        if prompt_build.token_count > total_budget:
+            prompt_build = self._build_reduced_prompt(
+                query=query,
+                options=options,
+                retrieval=retrieval,
+                truncated=truncated,
+            )
+            while prompt_build.token_count > total_budget and truncated.evidence and current_budget > 1:
+                overflow = prompt_build.token_count - total_budget
+                current_budget = max(current_budget - max(overflow, 1), 1)
+                retruncated = self.truncator.truncate(
+                    merged_evidence,
+                    token_budget=current_budget,
+                    max_evidence_chunks=options.max_evidence_chunks,
+                    mode=options.mode,
+                )
+                if (
+                    retruncated.token_count >= truncated.token_count
+                    and len(retruncated.evidence) >= len(truncated.evidence)
+                ):
+                    break
+                truncated = retruncated
+                prompt_build = self._build_reduced_prompt(
+                    query=query,
+                    options=options,
+                    retrieval=retrieval,
+                    truncated=truncated,
+                )
+        return truncated, prompt_build
+
+    def _build_reduced_prompt(
+        self,
+        *,
+        query: str,
+        options: QueryOptions,
+        retrieval: RetrievalResult,
+        truncated: ContextTruncationResult,
+    ) -> ContextPromptBuildResult:
+        prompt_build = self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="compact",
+            user_prompt=options.user_prompt,
+            conversation_history=options.conversation_history,
+        )
+        if prompt_build.token_count <= options.max_context_tokens:
+            return prompt_build
+        prompt_build = self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="compact",
+            user_prompt=options.user_prompt,
+            conversation_history=(),
+        )
+        if prompt_build.token_count <= options.max_context_tokens:
+            return prompt_build
+        prompt_build = self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="compact",
+            user_prompt=None,
+            conversation_history=(),
+        )
+        if prompt_build.token_count <= options.max_context_tokens:
+            return prompt_build
+        return self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="minimal",
+            user_prompt=None,
+            conversation_history=(),
+        )
+
+    def _build_prompt_from_truncation(
+        self,
+        *,
+        query: str,
+        options: QueryOptions,
+        retrieval: RetrievalResult,
+        truncated: ContextTruncationResult,
+        prompt_style: Literal["full", "compact", "minimal"],
+        user_prompt: str | None,
+        conversation_history: Sequence[tuple[str, str]],
+    ) -> ContextPromptBuildResult:
+        context_evidence_items = [item.as_evidence_item() for item in truncated.evidence]
+        grounded_candidate = self.answer_generator.grounded_candidate(query, context_evidence_items)
+        return self.prompt_builder.build(
+            query=query,
+            grounded_candidate=grounded_candidate,
+            evidence=truncated.evidence,
+            runtime_mode=retrieval.decision.runtime_mode,
+            response_type=options.response_type,
+            user_prompt=user_prompt,
+            conversation_history=conversation_history,
+            prompt_style=prompt_style,
         )
 
 
