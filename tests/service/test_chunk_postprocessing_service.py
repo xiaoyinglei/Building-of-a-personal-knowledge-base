@@ -1,4 +1,4 @@
-from pkp.service.chunk_postprocessing_service import ChunkPostprocessingService
+from pkp.ingest.chunk import ChunkPostprocessingService
 from pkp.types.access import AccessPolicy
 from pkp.types.content import Chunk
 from pkp.types.processing import ChunkRole

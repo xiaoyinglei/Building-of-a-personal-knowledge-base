@@ -14,6 +14,7 @@ from pkp.document.parser import (
     PlainTextParserRepo,
     WebParserRepo,
 )
+from pkp.ingest.chunk import ChunkingService, DocumentProcessingService, TOCService
 from pkp.ingest.ingest import (
     DeletePipeline,
     DeletePipelineResult,
@@ -44,11 +45,8 @@ from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
 from pkp.repo.vision.ocr_vision_repo import create_default_ocr_repo
 from pkp.service.artifact_service import ArtifactService
-from pkp.service.chunking_service import ChunkingService
-from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.policy_resolution_service import PolicyResolutionService
 from pkp.service.telemetry_service import TelemetryService
-from pkp.service.toc_service import TOCService
 from pkp.storage import StorageBundle, StorageConfig
 from pkp.types.diagnostics import ProviderAttempt
 

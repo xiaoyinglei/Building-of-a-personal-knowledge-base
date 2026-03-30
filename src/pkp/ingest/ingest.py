@@ -28,14 +28,12 @@ from pkp.document.parser import (
     PlainTextParserRepo,
     WebParserRepo,
 )
+from pkp.ingest.chunk import ChunkingService, DocumentProcessingService, TOCService
 from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo
 from pkp.repo.parse._util import normalize_whitespace
 from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
 from pkp.repo.storage.file_object_store import FileObjectStore
-from pkp.service.chunking_service import ChunkingService
-from pkp.service.document_processing_service import DocumentProcessingService
 from pkp.service.policy_resolution_service import PolicyResolutionService
-from pkp.service.toc_service import TOCService
 from pkp.storage.doc_status import StatusStore
 from pkp.storage.graph_store import GraphStore
 from pkp.storage.kv_store import CacheStore, ChunkStore, DocumentStore
