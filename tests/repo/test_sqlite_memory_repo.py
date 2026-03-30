@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pkp.storage._repo.sqlite_memory_repo import SQLiteMemoryRepo
-from pkp.schema._types.memory import EpisodicMemory, MemoryEvidenceLink, UserMemory
+from rag.schema._types.memory import EpisodicMemory, MemoryEvidenceLink, UserMemory
+from rag.storage._repo.sqlite_memory_repo import SQLiteMemoryRepo
 
 
 def _evidence(chunk_id: str, doc_id: str) -> MemoryEvidenceLink:

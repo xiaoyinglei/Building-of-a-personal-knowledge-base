@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from pytest import MonkeyPatch
 
-from pkp.llm._providers.local_bge_provider_repo import LocalBgeProviderRepo
+from rag.llm._providers.local_bge_provider_repo import LocalBgeProviderRepo
 
 
 def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
@@ -98,7 +98,7 @@ def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
             return [0.2, 0.9]
 
     monkeypatch.setattr(
-        "pkp.llm._providers.local_bge_provider_repo.importlib.import_module",
+        "rag.llm._providers.local_bge_provider_repo.importlib.import_module",
         lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagReranker=FakeFlagReranker),
     )
     provider = LocalBgeProviderRepo(
@@ -185,7 +185,7 @@ def test_local_bge_provider_repo_suppresses_fast_tokenizer_padding_warning(
             return [0.8 for _ in pairs]
 
     monkeypatch.setattr(
-        "pkp.llm._providers.local_bge_provider_repo.importlib.import_module",
+        "rag.llm._providers.local_bge_provider_repo.importlib.import_module",
         lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagReranker=FakeFlagReranker),
     )
     provider = LocalBgeProviderRepo(

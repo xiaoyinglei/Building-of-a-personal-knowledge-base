@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 
-from pkp.engine import RAGCore
-from pkp.query.query import QueryOptions
-from pkp.storage import StorageConfig
-from pkp.utils._contracts import EmbeddingProviderBinding
-from pkp.llm._providers.fallback_embedding_repo import FallbackEmbeddingRepo
-from pkp.schema._types.access import ExecutionLocationPreference
+from rag.engine import RAG
+from rag.llm._providers.fallback_embedding_repo import FallbackEmbeddingRepo
+from rag.query.query import QueryOptions
+from rag.schema._types.access import ExecutionLocationPreference
+from rag.storage import StorageConfig
+from rag.utils._contracts import EmbeddingProviderBinding
 
 
 class FakeGenerationProvider:
@@ -41,7 +41,7 @@ class FakeGenerationProvider:
 
 
 def test_ragcore_query_returns_grounded_answer_retrieval_and_context() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     core.insert(
         source_type="plain_text",
         location="memory://alpha-engine",
@@ -66,19 +66,16 @@ def test_ragcore_query_returns_grounded_answer_retrieval_and_context() -> None:
 
 def test_ragcore_query_uses_generation_provider_when_available() -> None:
     provider = FakeGenerationProvider()
-    core = RAGCore(
+    core = RAG(
         storage=StorageConfig.in_memory(),
-        embedding_bindings=(
-            EmbeddingProviderBinding(provider=provider, space="default", location="local"),
-        ),
+        embedding_bindings=(EmbeddingProviderBinding(provider=provider, space="default", location="local"),),
     )
     core.insert(
         source_type="plain_text",
         location="memory://alpha-beta",
         owner="user",
         content_text=(
-            "Alpha Engine processes ingestion requests. "
-            "Beta Service depends on Alpha Engine for upstream context."
+            "Alpha Engine processes ingestion requests. Beta Service depends on Alpha Engine for upstream context."
         ),
     )
 
@@ -96,17 +93,12 @@ def test_ragcore_query_uses_generation_provider_when_available() -> None:
 
 
 def test_ragcore_query_truncates_context_to_budget() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     core.insert(
         source_type="plain_text",
         location="memory://long-context",
         owner="user",
-        content_text=" ".join(
-            [
-                "Alpha Engine processes ingestion requests and validates chunks."
-                for _ in range(120)
-            ]
-        ),
+        content_text=" ".join(["Alpha Engine processes ingestion requests and validates chunks." for _ in range(120)]),
     )
 
     result = core.query(

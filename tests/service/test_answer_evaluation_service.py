@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pkp.llm._evaluation import AnswerEvaluationCase, AnswerEvaluationService
-from pkp.schema._types.generation import (
+from rag.llm._evaluation import AnswerEvaluationCase, AnswerEvaluationService
+from rag.schema._types.generation import (
     AnswerCitation,
     AnswerEvidenceLink,
     AnswerSection,

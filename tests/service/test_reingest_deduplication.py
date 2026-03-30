@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from pkp.ingest.ingest import IngestService
+from rag.ingest.ingest import IngestService
 
 
 def test_duplicate_ingest_does_not_create_duplicate_active_documents(tmp_path: Path) -> None:

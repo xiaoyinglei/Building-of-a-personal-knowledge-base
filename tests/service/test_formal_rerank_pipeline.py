@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 from pytest import MonkeyPatch
 
-from pkp.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
-from pkp.llm._rerank.evaluation import RerankEvaluator
-from pkp.llm._rerank.models import RerankCandidate, RerankEvaluationCase, RerankRequest
-from pkp.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
-from pkp.llm._rerank.training import ExportFormat, TrainingSampleExporter
-from pkp.schema._types.query import QueryUnderstanding
+from rag.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
+from rag.llm._rerank.evaluation import RerankEvaluator
+from rag.llm._rerank.models import RerankCandidate, RerankEvaluationCase, RerankRequest
+from rag.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
+from rag.llm._rerank.training import ExportFormat, TrainingSampleExporter
+from rag.schema._types.query import QueryUnderstanding
 
 
 class FakeCrossEncoder:
@@ -282,7 +282,7 @@ def test_training_sample_exporter_outputs_pairwise_samples_with_hard_negatives()
                     chunk_id="chunk-cli",
                     doc_id="doc-a",
                     parent_id="parent-cli",
-                    text="uv run pkp query --mode fast --query \"系统架构分为哪几层？\"",
+                    text='uv run rag query --mode fast --query "系统架构分为哪几层？"',
                     chunk_type="child",
                     section_path=["查询"],
                     heading_text="查询",
@@ -316,7 +316,7 @@ def test_training_sample_exporter_outputs_pairwise_samples_with_hard_negatives()
 
 def test_provider_backed_cross_encoder_uses_provider_ranking_as_scores(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "pkp.llm._rerank.cross_encoder.ProviderBackedCrossEncoder._try_flag_embedding_backend",
+        "rag.llm._rerank.cross_encoder.ProviderBackedCrossEncoder._try_flag_embedding_backend",
         lambda self: None,
     )
     encoder = ProviderBackedCrossEncoder(provider=FakeProvider(), config=CrossEncoderConfig(batch_size=2))
@@ -370,7 +370,7 @@ def test_provider_backed_cross_encoder_prefers_snapshot_resolved_model_path(
             return [0.88 for _ in pairs]
 
     monkeypatch.setattr(
-        "pkp.llm._rerank.cross_encoder.importlib.import_module",
+        "rag.llm._rerank.cross_encoder.importlib.import_module",
         lambda _name: SimpleNamespace(FlagReranker=FakeFlagReranker),
     )
     encoder = ProviderBackedCrossEncoder(
@@ -436,7 +436,7 @@ def test_provider_backed_cross_encoder_suppresses_fast_tokenizer_padding_warning
             return [0.88 for _ in pairs]
 
     monkeypatch.setattr(
-        "pkp.llm._rerank.cross_encoder.importlib.import_module",
+        "rag.llm._rerank.cross_encoder.importlib.import_module",
         lambda _name: SimpleNamespace(FlagReranker=FakeFlagReranker),
     )
     encoder = ProviderBackedCrossEncoder(

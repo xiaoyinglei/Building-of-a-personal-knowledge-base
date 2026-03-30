@@ -24,7 +24,7 @@ The implementation follows this hard dependency rule:
 
 ## Non-Negotiable Constraints
 
-- provider SDK imports stay under `src/pkp/repo/**`
+- provider SDK imports stay under `src/rag/repo/**`
 - UI must not import storage repos or service-layer internals directly
 - runtime owns orchestration, retries, fallback ordering, and session state
 - services stay framework-agnostic and do not depend on FastAPI or Typer objects
@@ -32,5 +32,5 @@ The implementation follows this hard dependency rule:
 ## Enforcement
 
 - `import-linter` checks the package order.
-- `scripts/check_repo_only_imports.py` ensures provider/parser SDK imports remain under `src/pkp/repo`.
+- `scripts/check_repo_only_imports.py` ensures provider/parser SDK imports remain under `src/rag/repo`.
 - CI runs `pytest`, `ruff check`, `mypy src`, `lint-imports`, and the repo-only import guard.

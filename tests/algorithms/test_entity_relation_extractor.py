@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pkp.ingest.extract import HeuristicEntityRelationExtractor
-from pkp.schema._types import AccessPolicy, Chunk, Document, DocumentType
+from rag.ingest.extract import HeuristicEntityRelationExtractor
+from rag.schema._types import AccessPolicy, Chunk, Document, DocumentType
 
 
 def test_heuristic_extractor_canonicalizes_aliases_and_relation_direction() -> None:

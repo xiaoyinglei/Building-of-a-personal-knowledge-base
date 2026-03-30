@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from pkp.engine import RAGCore
-from pkp.storage import StorageConfig
-from pkp.ingest._chunking.multimodal_chunk_router import special_type_for_element
-from pkp.ingest._chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
-from pkp.ingest._chunking.token_chunker import chunk_by_tokens
-from pkp.utils._contracts import ParsedDocument, ParsedElement, ParsedSection
-from pkp.schema._types import DocumentType, SourceType
-from pkp.schema._types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
+from rag.engine import RAG
+from rag.ingest._chunking.multimodal_chunk_router import special_type_for_element
+from rag.ingest._chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
+from rag.ingest._chunking.token_chunker import chunk_by_tokens
+from rag.ingest.ingest import IngestRequest
+from rag.schema._types import DocumentType, SourceType
+from rag.schema._types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
+from rag.storage import StorageConfig
+from rag.utils._contracts import ParsedDocument, ParsedElement, ParsedSection
 
 
 def test_token_chunker_produces_stable_child_chunks() -> None:
@@ -80,7 +81,7 @@ def test_storage_groups_include_document_chunk_status_graph_cache() -> None:
 
 
 def test_ragcore_insert_persists_document_chunks_entities_relations_and_status() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     try:
         result = core.insert(
             location="memory://reliability.md",
@@ -101,9 +102,7 @@ def test_ragcore_insert_persists_document_chunks_entities_relations_and_status()
             if node.metadata.get("doc_id") == result.document_id
         ]
         relation_edges = [
-            edge
-            for edge in core.stores.graph.list_edges()
-            if edge.metadata.get("doc_id") == result.document_id
+            edge for edge in core.stores.graph.list_edges() if edge.metadata.get("doc_id") == result.document_id
         ]
 
         assert result.document_id
@@ -121,7 +120,7 @@ def test_ragcore_insert_persists_document_chunks_entities_relations_and_status()
 
 
 def test_ragcore_merges_graph_and_entity_indexes_across_documents() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     try:
         first = core.insert(
             location="memory://alpha.txt",
@@ -160,9 +159,7 @@ def test_ragcore_merges_graph_and_entity_indexes_across_documents() -> None:
         core.delete(doc_id=first.document_id)
 
         assert core.stores.graph.get_node(alpha_node.node_id) is not None
-        assert set(core.stores.graph.list_node_evidence_chunk_ids(alpha_node.node_id)) == {
-            second.chunks[0].chunk_id
-        }
+        assert set(core.stores.graph.list_node_evidence_chunk_ids(alpha_node.node_id)) == {second.chunks[0].chunk_id}
         remaining_edge = core.stores.graph.get_edge(relation_edges[0].edge_id)
         assert remaining_edge is not None
         assert remaining_edge.evidence_chunk_ids == [second.chunks[0].chunk_id]
@@ -171,7 +168,7 @@ def test_ragcore_merges_graph_and_entity_indexes_across_documents() -> None:
 
 
 def test_ragcore_insert_canonicalizes_alias_entities_and_relation_direction() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     try:
         core.insert(
             location="memory://alias-graph.txt",
@@ -204,8 +201,37 @@ def test_ragcore_insert_canonicalizes_alias_entities_and_relation_direction() ->
         core.stores.close()
 
 
+def test_ragcore_insert_many_processes_multiple_requests() -> None:
+    core = RAG(storage=StorageConfig.in_memory())
+    try:
+        result = core.insert_many(
+            [
+                IngestRequest(
+                    location="memory://alpha.txt",
+                    source_type="plain_text",
+                    owner="user",
+                    content_text="Alpha Engine supports Beta Service.",
+                ),
+                IngestRequest(
+                    location="memory://beta.txt",
+                    source_type="plain_text",
+                    owner="user",
+                    content_text="Gamma Index depends on Alpha Engine.",
+                ),
+            ]
+        )
+
+        assert result.success_count == 2
+        assert result.failure_count == 0
+        assert len(result.results) == 2
+        assert result.errors == []
+        assert {item.document_id for item in result.results}
+    finally:
+        core.stores.close()
+
+
 def test_ragcore_merges_alias_entities_across_documents_when_alias_is_known() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     try:
         first = core.insert(
             location="memory://alpha-alias.txt",
@@ -244,7 +270,7 @@ def test_ragcore_merges_alias_entities_across_documents_when_alias_is_known() ->
 
 
 def test_ragcore_insert_links_multimodal_nodes_into_graph_across_sections() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     try:
         parsed = ParsedDocument(
             title="Alpha Metrics",
@@ -253,8 +279,7 @@ def test_ragcore_insert_links_multimodal_nodes_into_graph_across_sections() -> N
             authors=["tester"],
             language="en",
             visible_text=(
-                "Alpha Engine coordinates ingestion. "
-                "Metrics section contains a table about Alpha Engine throughput."
+                "Alpha Engine coordinates ingestion. Metrics section contains a table about Alpha Engine throughput."
             ),
             sections=[
                 ParsedSection(

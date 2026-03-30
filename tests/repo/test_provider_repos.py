@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import httpx
 
-from pkp.llm._providers.ollama_provider_repo import OllamaProviderRepo
-from pkp.llm._providers.openai_provider_repo import OpenAIProviderRepo
+from rag.llm._providers.ollama_provider_repo import OllamaProviderRepo
+from rag.llm._providers.openai_provider_repo import OpenAIProviderRepo
 
 
 class FakeOpenAIClient:
@@ -36,9 +36,7 @@ class FakeOpenAIClient:
 
     def _create_chat_completion(self, **kwargs: object) -> object:
         self.chat_completion_calls.append(kwargs)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="chat completion response"))]
-        )
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="chat completion response"))])
 
 
 def test_openai_provider_repo_lazily_creates_client_and_uses_responses_api() -> None:
