@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from pkp.engine import RAGCore
-from pkp.storage import StorageConfig
-from pkp.schema._types.storage import DocumentProcessingStatus
+from rag.engine import RAG
+from rag.schema._types.storage import DocumentProcessingStatus
+from rag.storage import StorageConfig
 
 
 def test_ragcore_delete_removes_retrieval_indexes_and_marks_document_deleted() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     try:
         inserted = core.insert(
             source_type="plain_text",
             location="memory://alpha-engine",
             owner="user",
             content_text=(
-                "Alpha Engine processes ingestion requests. "
-                "Beta Service depends on Alpha Engine for upstream context."
+                "Alpha Engine processes ingestion requests. Beta Service depends on Alpha Engine for upstream context."
             ),
         )
 
@@ -36,16 +35,13 @@ def test_ragcore_delete_removes_retrieval_indexes_and_marks_document_deleted() -
 
 
 def test_ragcore_rebuild_restores_deleted_document_from_stored_source() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     try:
         inserted = core.insert(
             source_type="plain_text",
             location="memory://rebuildable-note",
             owner="user",
-            content_text=(
-                "Alpha Engine processes ingestion requests. "
-                "Gamma Index stores chunk vectors for retrieval."
-            ),
+            content_text=("Alpha Engine processes ingestion requests. Gamma Index stores chunk vectors for retrieval."),
         )
         core.delete(location="memory://rebuildable-note")
 
@@ -64,7 +60,7 @@ def test_ragcore_rebuild_restores_deleted_document_from_stored_source() -> None:
 
 
 def test_ragcore_rebuild_marks_status_failed_when_source_payload_is_missing() -> None:
-    core = RAGCore(storage=StorageConfig.in_memory())
+    core = RAG(storage=StorageConfig.in_memory())
     try:
         inserted = core.insert(
             source_type="plain_text",

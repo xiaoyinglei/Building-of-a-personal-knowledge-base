@@ -13,14 +13,14 @@
 ## Implementation Notes
 
 - Reuse current strengths instead of rewriting blindly:
-  - parse layer under `src/pkp/repo/parse/**`
-  - model providers under `src/pkp/repo/models/**`
-  - SQLite-backed storage under `src/pkp/repo/storage/**`, `src/pkp/repo/search/**`, `src/pkp/repo/graph/**`
-  - structural/special chunk knowledge from `src/pkp/service/document_processing_service.py`
-  - fusion/rerank ideas from `src/pkp/service/retrieval_service.py`
+  - parse layer under `src/rag/repo/parse/**`
+  - model providers under `src/rag/repo/models/**`
+  - SQLite-backed storage under `src/rag/repo/storage/**`, `src/rag/repo/search/**`, `src/rag/repo/graph/**`
+  - structural/special chunk knowledge from `src/rag/service/document_processing_service.py`
+  - fusion/rerank ideas from `src/rag/service/retrieval_service.py`
 - Remove these from the core control plane:
-  - `src/pkp/runtime/**`
-  - `src/pkp/ui/**`
+  - `src/rag/runtime/**`
+  - `src/rag/ui/**`
   - artifact/session/telemetry/workbench-driven orchestration
 - Hard design rules:
   - No FastAPI or CLI imports inside the new core path.
@@ -30,60 +30,60 @@
 
 ## File Map
 
-- Create: `src/pkp/core/rag_core.py`
-- Create: `src/pkp/core/options.py`
-- Create: `src/pkp/core/storage_config.py`
-- Create: `src/pkp/core/query_modes.py`
-- Create: `src/pkp/core/pipelines/ingest_pipeline.py`
-- Create: `src/pkp/core/pipelines/query_pipeline.py`
-- Create: `src/pkp/core/pipelines/delete_pipeline.py`
-- Create: `src/pkp/core/pipelines/rebuild_pipeline.py`
-- Create: `src/pkp/algorithms/chunking/token_chunker.py`
-- Create: `src/pkp/algorithms/chunking/structured_chunker.py`
-- Create: `src/pkp/algorithms/chunking/multimodal_chunk_router.py`
-- Create: `src/pkp/algorithms/extract/entity_relation_extractor.py`
-- Create: `src/pkp/algorithms/extract/entity_relation_merger.py`
-- Create: `src/pkp/algorithms/retrieval/mode_planner.py`
-- Create: `src/pkp/algorithms/retrieval/branch_retrievers.py`
-- Create: `src/pkp/algorithms/retrieval/fusion.py`
-- Create: `src/pkp/algorithms/retrieval/rerank.py`
-- Create: `src/pkp/algorithms/context_build/truncation.py`
-- Create: `src/pkp/algorithms/context_build/merge.py`
-- Create: `src/pkp/algorithms/context_build/prompt_builder.py`
-- Create: `src/pkp/algorithms/generation/answer_generator.py`
-- Create: `src/pkp/stores/document_store.py`
-- Create: `src/pkp/stores/chunk_store.py`
-- Create: `src/pkp/stores/vector_store.py`
-- Create: `src/pkp/stores/graph_store.py`
-- Create: `src/pkp/stores/status_store.py`
-- Create: `src/pkp/stores/cache_store.py`
+- Create: `src/rag/core/rag_core.py`
+- Create: `src/rag/core/options.py`
+- Create: `src/rag/core/storage_config.py`
+- Create: `src/rag/core/query_modes.py`
+- Create: `src/rag/core/pipelines/ingest_pipeline.py`
+- Create: `src/rag/core/pipelines/query_pipeline.py`
+- Create: `src/rag/core/pipelines/delete_pipeline.py`
+- Create: `src/rag/core/pipelines/rebuild_pipeline.py`
+- Create: `src/rag/algorithms/chunking/token_chunker.py`
+- Create: `src/rag/algorithms/chunking/structured_chunker.py`
+- Create: `src/rag/algorithms/chunking/multimodal_chunk_router.py`
+- Create: `src/rag/algorithms/extract/entity_relation_extractor.py`
+- Create: `src/rag/algorithms/extract/entity_relation_merger.py`
+- Create: `src/rag/algorithms/retrieval/mode_planner.py`
+- Create: `src/rag/algorithms/retrieval/branch_retrievers.py`
+- Create: `src/rag/algorithms/retrieval/fusion.py`
+- Create: `src/rag/algorithms/retrieval/rerank.py`
+- Create: `src/rag/algorithms/context_build/truncation.py`
+- Create: `src/rag/algorithms/context_build/merge.py`
+- Create: `src/rag/algorithms/context_build/prompt_builder.py`
+- Create: `src/rag/algorithms/generation/answer_generator.py`
+- Create: `src/rag/stores/document_store.py`
+- Create: `src/rag/stores/chunk_store.py`
+- Create: `src/rag/stores/vector_store.py`
+- Create: `src/rag/stores/graph_store.py`
+- Create: `src/rag/stores/status_store.py`
+- Create: `src/rag/stores/cache_store.py`
 - Create: `tests/core/test_public_api.py`
 - Create: `tests/core/test_ingest_pipeline.py`
 - Create: `tests/core/test_query_modes.py`
 - Create: `tests/core/test_context_pipeline.py`
 - Create: `tests/core/test_delete_rebuild.py`
-- Modify: `src/pkp/service/document_processing_service.py`
-- Modify: `src/pkp/service/retrieval_service.py`
-- Modify: `src/pkp/repo/graph/sqlite_graph_repo.py`
-- Modify: `src/pkp/repo/search/sqlite_vector_repo.py`
-- Modify: `src/pkp/repo/storage/sqlite_metadata_repo.py`
-- Modify: `src/pkp/bootstrap.py`
+- Modify: `src/rag/service/document_processing_service.py`
+- Modify: `src/rag/service/retrieval_service.py`
+- Modify: `src/rag/repo/graph/sqlite_graph_repo.py`
+- Modify: `src/rag/repo/search/sqlite_vector_repo.py`
+- Modify: `src/rag/repo/storage/sqlite_metadata_repo.py`
+- Modify: `src/rag/bootstrap.py`
 - Modify: `README.md`
 
 ### Task 1: Freeze the New Public Core API
 
 **Files:**
-- Create: `src/pkp/core/rag_core.py`
-- Create: `src/pkp/core/options.py`
-- Create: `src/pkp/core/storage_config.py`
+- Create: `src/rag/core/rag_core.py`
+- Create: `src/rag/core/options.py`
+- Create: `src/rag/core/storage_config.py`
 - Test: `tests/core/test_public_api.py`
 
 - [ ] **Step 1: Write the failing public API tests**
 
 ```python
-from pkp.core.options import QueryOptions
-from pkp.core.rag_core import RAGCore
-from pkp.core.storage_config import StorageConfig
+from rag.core.options import QueryOptions
+from rag.core.rag_core import RAGCore
+from rag.core.storage_config import StorageConfig
 
 
 def test_ragcore_exposes_insert_query_delete_rebuild():
@@ -124,17 +124,17 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/pkp/core tests/core/test_public_api.py
+git add src/rag/core tests/core/test_public_api.py
 git commit -m "feat: add public rag core api skeleton"
 ```
 
 ### Task 2: Extract Chunking Into Independent Algorithms
 
 **Files:**
-- Create: `src/pkp/algorithms/chunking/token_chunker.py`
-- Create: `src/pkp/algorithms/chunking/structured_chunker.py`
-- Create: `src/pkp/algorithms/chunking/multimodal_chunk_router.py`
-- Modify: `src/pkp/service/document_processing_service.py`
+- Create: `src/rag/algorithms/chunking/token_chunker.py`
+- Create: `src/rag/algorithms/chunking/structured_chunker.py`
+- Create: `src/rag/algorithms/chunking/multimodal_chunk_router.py`
+- Modify: `src/rag/service/document_processing_service.py`
 - Test: `tests/service/test_document_processing_pipeline.py`
 - Test: `tests/core/test_ingest_pipeline.py`
 
@@ -183,22 +183,22 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/pkp/algorithms/chunking src/pkp/service/document_processing_service.py tests/core/test_ingest_pipeline.py tests/service/test_document_processing_pipeline.py
+git add src/rag/algorithms/chunking src/rag/service/document_processing_service.py tests/core/test_ingest_pipeline.py tests/service/test_document_processing_pipeline.py
 git commit -m "refactor: extract chunking algorithms from document processing"
 ```
 
 ### Task 3: Introduce LightRAG-Style Storage Groups
 
 **Files:**
-- Create: `src/pkp/stores/document_store.py`
-- Create: `src/pkp/stores/chunk_store.py`
-- Create: `src/pkp/stores/vector_store.py`
-- Create: `src/pkp/stores/graph_store.py`
-- Create: `src/pkp/stores/status_store.py`
-- Create: `src/pkp/stores/cache_store.py`
-- Modify: `src/pkp/repo/storage/sqlite_metadata_repo.py`
-- Modify: `src/pkp/repo/search/sqlite_vector_repo.py`
-- Modify: `src/pkp/repo/graph/sqlite_graph_repo.py`
+- Create: `src/rag/stores/document_store.py`
+- Create: `src/rag/stores/chunk_store.py`
+- Create: `src/rag/stores/vector_store.py`
+- Create: `src/rag/stores/graph_store.py`
+- Create: `src/rag/stores/status_store.py`
+- Create: `src/rag/stores/cache_store.py`
+- Modify: `src/rag/repo/storage/sqlite_metadata_repo.py`
+- Modify: `src/rag/repo/search/sqlite_vector_repo.py`
+- Modify: `src/rag/repo/graph/sqlite_graph_repo.py`
 - Test: `tests/core/test_ingest_pipeline.py`
 - Test: `tests/repo/test_sqlite_graph_repo.py`
 - Test: `tests/repo/test_sqlite_vector_repo.py`
@@ -241,17 +241,17 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/pkp/stores src/pkp/repo/storage/sqlite_metadata_repo.py src/pkp/repo/search/sqlite_vector_repo.py src/pkp/repo/graph/sqlite_graph_repo.py tests/core/test_ingest_pipeline.py tests/repo/test_sqlite_graph_repo.py tests/repo/test_sqlite_vector_repo.py
+git add src/rag/stores src/rag/repo/storage/sqlite_metadata_repo.py src/rag/repo/search/sqlite_vector_repo.py src/rag/repo/graph/sqlite_graph_repo.py tests/core/test_ingest_pipeline.py tests/repo/test_sqlite_graph_repo.py tests/repo/test_sqlite_vector_repo.py
 git commit -m "feat: add lightrag-style grouped storage contracts"
 ```
 
 ### Task 4: Build the Ingest Pipeline Around Parse -> Chunk -> Extract -> Persist
 
 **Files:**
-- Create: `src/pkp/core/pipelines/ingest_pipeline.py`
-- Create: `src/pkp/algorithms/extract/entity_relation_extractor.py`
-- Create: `src/pkp/algorithms/extract/entity_relation_merger.py`
-- Modify: `src/pkp/service/ingest_service.py`
+- Create: `src/rag/core/pipelines/ingest_pipeline.py`
+- Create: `src/rag/algorithms/extract/entity_relation_extractor.py`
+- Create: `src/rag/algorithms/extract/entity_relation_merger.py`
+- Modify: `src/rag/service/ingest_service.py`
 - Test: `tests/core/test_ingest_pipeline.py`
 - Test: `tests/integration/test_markdown_query_flow.py`
 - Test: `tests/integration/test_pdf_ingest_query_flow.py`
@@ -292,20 +292,20 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/pkp/core/pipelines/ingest_pipeline.py src/pkp/algorithms/extract src/pkp/service/ingest_service.py tests/core/test_ingest_pipeline.py tests/integration/test_markdown_query_flow.py tests/integration/test_pdf_ingest_query_flow.py
+git add src/rag/core/pipelines/ingest_pipeline.py src/rag/algorithms/extract src/rag/service/ingest_service.py tests/core/test_ingest_pipeline.py tests/integration/test_markdown_query_flow.py tests/integration/test_pdf_ingest_query_flow.py
 git commit -m "feat: add unified ingest pipeline for rag core"
 ```
 
 ### Task 5: Replace Fast/Deep Retrieval Control With LightRAG Query Modes
 
 **Files:**
-- Create: `src/pkp/core/query_modes.py`
-- Create: `src/pkp/core/pipelines/query_pipeline.py`
-- Create: `src/pkp/algorithms/retrieval/mode_planner.py`
-- Create: `src/pkp/algorithms/retrieval/branch_retrievers.py`
-- Create: `src/pkp/algorithms/retrieval/fusion.py`
-- Create: `src/pkp/algorithms/retrieval/rerank.py`
-- Modify: `src/pkp/service/retrieval_service.py`
+- Create: `src/rag/core/query_modes.py`
+- Create: `src/rag/core/pipelines/query_pipeline.py`
+- Create: `src/rag/algorithms/retrieval/mode_planner.py`
+- Create: `src/rag/algorithms/retrieval/branch_retrievers.py`
+- Create: `src/rag/algorithms/retrieval/fusion.py`
+- Create: `src/rag/algorithms/retrieval/rerank.py`
+- Modify: `src/rag/service/retrieval_service.py`
 - Test: `tests/core/test_query_modes.py`
 - Test: `tests/service/test_retrieval_service.py`
 
@@ -357,17 +357,17 @@ Expected: PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/pkp/core/query_modes.py src/pkp/core/pipelines/query_pipeline.py src/pkp/algorithms/retrieval src/pkp/service/retrieval_service.py tests/core/test_query_modes.py tests/service/test_retrieval_service.py
+git add src/rag/core/query_modes.py src/rag/core/pipelines/query_pipeline.py src/rag/algorithms/retrieval src/rag/service/retrieval_service.py tests/core/test_query_modes.py tests/service/test_retrieval_service.py
 git commit -m "feat: implement lightrag-style query modes and unified rerank"
 ```
 
 ### Task 6: Separate Context Building Into Search -> Truncation -> Fusion -> Prompt Build
 
 **Files:**
-- Create: `src/pkp/algorithms/context_build/truncation.py`
-- Create: `src/pkp/algorithms/context_build/merge.py`
-- Create: `src/pkp/algorithms/context_build/prompt_builder.py`
-- Create: `src/pkp/algorithms/generation/answer_generator.py`
+- Create: `src/rag/algorithms/context_build/truncation.py`
+- Create: `src/rag/algorithms/context_build/merge.py`
+- Create: `src/rag/algorithms/context_build/prompt_builder.py`
+- Create: `src/rag/algorithms/generation/answer_generator.py`
 - Test: `tests/core/test_context_pipeline.py`
 - Test: `tests/service/test_answer_generation_service.py`
 
@@ -402,16 +402,16 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/pkp/algorithms/context_build src/pkp/algorithms/generation tests/core/test_context_pipeline.py tests/service/test_answer_generation_service.py
+git add src/rag/algorithms/context_build src/rag/algorithms/generation tests/core/test_context_pipeline.py tests/service/test_answer_generation_service.py
 git commit -m "refactor: separate context building and answer generation pipeline"
 ```
 
 ### Task 7: Add Delete/Rebuild/DocStatus as First-Class Core Flows
 
 **Files:**
-- Create: `src/pkp/core/pipelines/delete_pipeline.py`
-- Create: `src/pkp/core/pipelines/rebuild_pipeline.py`
-- Modify: `src/pkp/core/rag_core.py`
+- Create: `src/rag/core/pipelines/delete_pipeline.py`
+- Create: `src/rag/core/pipelines/rebuild_pipeline.py`
+- Modify: `src/rag/core/rag_core.py`
 - Test: `tests/core/test_delete_rebuild.py`
 
 - [ ] **Step 1: Write failing delete/rebuild tests**
@@ -444,16 +444,16 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/pkp/core/pipelines/delete_pipeline.py src/pkp/core/pipelines/rebuild_pipeline.py src/pkp/core/rag_core.py tests/core/test_delete_rebuild.py
+git add src/rag/core/pipelines/delete_pipeline.py src/rag/core/pipelines/rebuild_pipeline.py src/rag/core/rag_core.py tests/core/test_delete_rebuild.py
 git commit -m "feat: add delete rebuild and doc status flows to rag core"
 ```
 
 ### Task 8: Demote Runtime/UI to Optional Adapters
 
 **Files:**
-- Modify: `src/pkp/bootstrap.py`
+- Modify: `src/rag/bootstrap.py`
 - Modify: `README.md`
-- Optional cleanup: `src/pkp/runtime/**`, `src/pkp/ui/**`
+- Optional cleanup: `src/rag/runtime/**`, `src/rag/ui/**`
 - Test: `tests/integration/test_project_bootstrap.py`
 
 - [ ] **Step 1: Write failing bootstrap tests for library-first entry**
@@ -484,7 +484,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/pkp/bootstrap.py README.md tests/integration/test_project_bootstrap.py
+git add src/rag/bootstrap.py README.md tests/integration/test_project_bootstrap.py
 git commit -m "refactor: make rag core the primary bootstrap target"
 ```
 

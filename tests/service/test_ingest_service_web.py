@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from pkp.ingest.ingest import IngestService
-from pkp.schema._types.content import SourceType
+from rag.ingest.ingest import IngestService
+from rag.schema._types.content import SourceType
+from rag.utils._contracts import WebFetchRepo
 
 
 @dataclass
-class FakeWebFetchRepo:
+class FakeWebFetchRepo(WebFetchRepo):
     calls: list[str]
     html: str
 

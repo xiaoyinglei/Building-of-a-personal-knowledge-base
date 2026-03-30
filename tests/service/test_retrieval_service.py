@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pkp.schema._types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
-from pkp.query.query import QueryMode
-from pkp.query.retrieve import RetrievalService
-from pkp.schema._types.content import ChunkRole
+from rag.query.query import QueryMode
+from rag.query.retrieve import RetrievalService
+from rag.schema._types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
+from rag.schema._types.content import ChunkRole
 
 
 @dataclass(frozen=True)
@@ -258,13 +258,55 @@ def test_retrieval_service_skips_web_search_when_internal_evidence_is_already_su
     assert result.evidence.external == []
 
 
+def test_retrieval_service_bypass_mode_skips_retrieval_and_graph_expansion() -> None:
+    service, calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate("chunk-a", "doc-a", "alpha", "#a", 0.8, 1),
+        ],
+        vector_candidates=[
+            FakeCandidate("chunk-b", "doc-b", "beta", "#b", 0.9, 1),
+        ],
+        section_candidates=[
+            FakeCandidate("chunk-section", "doc-a", "section", "#s", 0.95, 1),
+        ],
+        special_candidates=[
+            FakeCandidate("chunk-special", "doc-a", "special", "#sp", 0.95, 1),
+        ],
+        metadata_candidates=[
+            FakeCandidate("chunk-meta", "doc-a", "meta", "#m", 0.95, 1),
+        ],
+        graph_candidates=[
+            FakeCandidate("chunk-graph", "doc-a", "graph", "#g", 0.95, 1, source_kind="graph"),
+        ],
+        web_candidates=[
+            FakeCandidate("chunk-web", "web-doc", "web", "#w", 0.95, 1, source_kind="external"),
+        ],
+    )
+
+    result = service.retrieve(
+        "What is Alpha Engine?",
+        access_policy=AccessPolicy.default(),
+        query_mode=QueryMode.BYPASS,
+    )
+
+    assert result.evidence.internal == []
+    assert result.reranked_chunk_ids == []
+    assert calls["vector_calls"] == 0
+    assert calls["full_text_calls"] == 0
+    assert calls["structure_calls"] == 0
+    assert calls["special_calls"] == 0
+    assert calls["metadata_calls"] == 0
+    assert calls["graph_calls"] == 0
+    assert calls["web_calls"] == 0
+
+
 def test_retrieval_service_prefers_definition_chunk_when_vector_and_sparse_signals_disagree() -> None:
     service, calls = _build_service(
         full_text_candidates=[
             FakeCandidate(
                 "chunk-cli",
                 "doc-a",
-                'uv run python -m pkp.interfaces._ui.cli query --mode fast --query "这个项目做什么？"',
+                'uv run python -m rag.cli query --mode fast --query "这个项目做什么？"',
                 "#query",
                 1.0,
                 1,
@@ -293,7 +335,7 @@ def test_retrieval_service_prefers_definition_chunk_when_vector_and_sparse_signa
             FakeCandidate(
                 "chunk-cli",
                 "doc-a",
-                'uv run python -m pkp.interfaces._ui.cli query --mode fast --query "这个项目做什么？"',
+                'uv run python -m rag.cli query --mode fast --query "这个项目做什么？"',
                 "#query",
                 0.51,
                 2,
@@ -340,6 +382,74 @@ def test_retrieval_service_uses_query_understanding_to_enable_special_branch() -
     assert result.diagnostics.query_understanding is not None
     assert result.diagnostics.query_understanding.needs_special is True
     assert result.diagnostics.branch_hits["special"] == 1
+
+
+def test_retrieval_service_special_query_prioritizes_special_evidence_in_unified_fusion() -> None:
+    service, calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate("chunk-text", "doc-a", "本段讲了总体背景。", "#a", 0.98, 1),
+        ],
+        special_candidates=[
+            FakeCandidate(
+                "chunk-table",
+                "doc-a",
+                "| 指标 | 数值 |\n|---|---|\n| 收入 | 120 |",
+                "#table",
+                0.72,
+                1,
+                chunk_role=ChunkRole.SPECIAL,
+                special_chunk_type="table",
+            ),
+        ],
+    )
+
+    result = service.retrieve(
+        "表格里指标数值是多少？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+    )
+
+    assert calls["special_calls"] == 1
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-table", "chunk-text"]
+
+
+def test_retrieval_service_hybrid_mode_keeps_structure_special_and_metadata_branches() -> None:
+    service, calls = _build_service(
+        local_candidates=[FakeCandidate("chunk-local", "doc-a", "local hit", "#l", 0.9, 1)],
+        global_candidates=[FakeCandidate("chunk-global", "doc-a", "global hit", "#g", 0.88, 1)],
+        section_candidates=[FakeCandidate("chunk-section", "doc-a", "系统架构分三层。", "#s", 0.92, 1)],
+        special_candidates=[
+            FakeCandidate(
+                "chunk-table",
+                "doc-a",
+                "| 指标 | 数值 |",
+                "#table",
+                0.91,
+                1,
+                chunk_role=ChunkRole.SPECIAL,
+                special_chunk_type="table",
+            )
+        ],
+        metadata_candidates=[
+            FakeCandidate("chunk-page", "doc-a", "第二页介绍了架构。", "#page-2", 0.89, 1, metadata={"page_no": "2"})
+        ],
+    )
+
+    result = service.retrieve(
+        "pptx 第2页表格里的系统架构是什么？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+        query_mode=QueryMode.HYBRID,
+    )
+
+    assert calls["local_calls"] == 1
+    assert calls["global_calls"] == 1
+    assert calls["structure_calls"] == 1
+    assert calls["special_calls"] == 1
+    assert calls["metadata_calls"] == 1
+    assert result.diagnostics.branch_hits["section"] == 1
+    assert result.diagnostics.branch_hits["special"] == 1
+    assert result.diagnostics.branch_hits["metadata"] == 1
 
 
 def test_retrieval_service_applies_parent_backfill_to_child_evidence() -> None:
@@ -548,3 +658,50 @@ def test_retrieval_service_hybrid_mode_combines_local_and_global_without_vector(
     assert calls["global_calls"] == 1
     assert calls["vector_calls"] == 0
     assert calls["full_text_calls"] == 0
+
+
+def test_retrieval_service_hybrid_and_mix_publish_distinct_mode_executor_budgets() -> None:
+    service, _calls = _build_service(
+        local_candidates=[FakeCandidate("chunk-local", "doc-a", "local hit", "#l", 0.95, 1)],
+        global_candidates=[FakeCandidate("chunk-global", "doc-a", "global hit", "#g", 0.94, 1)],
+        vector_candidates=[FakeCandidate("chunk-vector", "doc-a", "vector hit", "#v", 0.91, 1)],
+        full_text_candidates=[FakeCandidate("chunk-sparse", "doc-a", "sparse hit", "#s", 0.90, 1)],
+        section_candidates=[FakeCandidate("chunk-section", "doc-a", "section hit", "#sec", 0.89, 1)],
+        special_candidates=[
+            FakeCandidate(
+                "chunk-table",
+                "doc-a",
+                "| 指标 | 数值 |",
+                "#table",
+                0.88,
+                1,
+                chunk_role=ChunkRole.SPECIAL,
+                special_chunk_type="table",
+            )
+        ],
+        metadata_candidates=[
+            FakeCandidate("chunk-page", "doc-a", "第二页信息。", "#page-2", 0.87, 1, metadata={"page_no": "2"})
+        ],
+    )
+
+    hybrid = service.retrieve(
+        "pptx 第2页表格里的 Alpha 和 Beta 有什么关系？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+        query_mode=QueryMode.HYBRID,
+    )
+    mix = service.retrieve(
+        "pptx 第2页表格里的 Alpha 和 Beta 有什么关系？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+        query_mode=QueryMode.MIX,
+    )
+
+    assert hybrid.diagnostics.mode_executor == "hybrid"
+    assert mix.diagnostics.mode_executor == "mix"
+    assert "vector" not in hybrid.diagnostics.branch_limits
+    assert "full_text" not in hybrid.diagnostics.branch_limits
+    assert mix.diagnostics.branch_limits["local"] > 0
+    assert mix.diagnostics.branch_limits["global"] > 0
+    assert mix.diagnostics.branch_limits["vector"] > 0
+    assert mix.diagnostics.branch_limits["full_text"] > 0

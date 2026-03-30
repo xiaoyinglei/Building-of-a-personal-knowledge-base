@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from pkp.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.schema._types.content import GraphEdge, GraphNode
+from rag.schema._types.content import GraphEdge, GraphNode
+from rag.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
 
 
 def test_sqlite_graph_repo_tracks_candidates_and_promoted_edges(tmp_path: Path) -> None:
@@ -88,3 +88,26 @@ def test_sqlite_graph_repo_indexes_entity_aliases_for_lookup_and_cleanup(tmp_pat
     repo.delete_by_chunk_ids(["chunk-1"])
 
     assert repo.list_nodes_by_alias("AE", node_type="entity") == []
+
+
+def test_sqlite_graph_repo_deletes_nodes_and_edges_explicitly(tmp_path: Path) -> None:
+    repo = SQLiteGraphRepo(tmp_path / "graph.sqlite3")
+    node = GraphNode(node_id="entity-alpha", node_type="entity", label="Alpha Engine")
+    edge = GraphEdge(
+        edge_id="edge-supports",
+        from_node_id="entity-alpha",
+        to_node_id="entity-beta",
+        relation_type="supports",
+        confidence=0.9,
+        evidence_chunk_ids=["chunk-1"],
+    )
+
+    repo.save_node(node)
+    repo.bind_node_evidence(node.node_id, ["chunk-1"])
+    repo.save_edge(edge)
+
+    repo.delete_edge(edge.edge_id)
+    repo.delete_node(node.node_id)
+
+    assert repo.get_edge(edge.edge_id) is None
+    assert repo.get_node(node.node_id) is None

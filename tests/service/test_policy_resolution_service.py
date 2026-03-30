@@ -1,5 +1,5 @@
-from pkp.ingest._policy.service import PolicyResolutionService
-from pkp.schema._types.access import (
+from rag.ingest._policy.service import PolicyResolutionService
+from rag.schema._types.access import (
     AccessPolicy,
     ExecutionLocation,
     ExternalRetrievalPolicy,
@@ -13,23 +13,23 @@ def test_policy_resolution_narrows_source_policy_to_chunk_policy() -> None:
     source = AccessPolicy(
         residency=Residency.CLOUD_ALLOWED,
         external_retrieval=ExternalRetrievalPolicy.ALLOW,
-        allowed_runtimes={RuntimeMode.FAST, RuntimeMode.DEEP},
-        allowed_locations={ExecutionLocation.CLOUD, ExecutionLocation.LOCAL},
-        sensitivity_tags={"general"},
+        allowed_runtimes=frozenset({RuntimeMode.FAST, RuntimeMode.DEEP}),
+        allowed_locations=frozenset({ExecutionLocation.CLOUD, ExecutionLocation.LOCAL}),
+        sensitivity_tags=frozenset({"general"}),
     )
     document = AccessPolicy(
         residency=Residency.LOCAL_PREFERRED,
         external_retrieval=ExternalRetrievalPolicy.ALLOW,
-        allowed_runtimes={RuntimeMode.FAST, RuntimeMode.DEEP},
-        allowed_locations={ExecutionLocation.LOCAL},
-        sensitivity_tags={"general"},
+        allowed_runtimes=frozenset({RuntimeMode.FAST, RuntimeMode.DEEP}),
+        allowed_locations=frozenset({ExecutionLocation.LOCAL}),
+        sensitivity_tags=frozenset({"general"}),
     )
     segment = AccessPolicy(
         residency=Residency.LOCAL_REQUIRED,
         external_retrieval=ExternalRetrievalPolicy.DENY,
-        allowed_runtimes={RuntimeMode.FAST},
-        allowed_locations={ExecutionLocation.LOCAL},
-        sensitivity_tags={"restricted"},
+        allowed_runtimes=frozenset({RuntimeMode.FAST}),
+        allowed_locations=frozenset({ExecutionLocation.LOCAL}),
+        sensitivity_tags=frozenset({"restricted"}),
     )
 
     resolved = service.resolve_effective_access_policy(

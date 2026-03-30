@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from pkp.query.context import ContextEvidenceMerger, EvidenceBundle, EvidenceTruncator, RoutingDecision, SelfCheckResult
-from pkp.schema._types.access import RuntimeMode
-from pkp.schema._types.content import ChunkRole
-from pkp.schema._types.envelope import EvidenceItem, PreservationSuggestion
-from pkp.schema._types.query import ComplexityLevel, TaskType
-from pkp.schema._types.retrieval import RetrievalResult
+from rag.query.context import ContextEvidenceMerger, EvidenceBundle, EvidenceTruncator, RoutingDecision, SelfCheckResult
+from rag.query.query import QueryMode
+from rag.schema._types.access import RuntimeMode
+from rag.schema._types.content import ChunkRole
+from rag.schema._types.envelope import EvidenceItem, PreservationSuggestion
+from rag.schema._types.query import ComplexityLevel, TaskType
+from rag.schema._types.retrieval import RetrievalResult
 
 
 def _item(
@@ -16,6 +17,7 @@ def _item(
     score: float = 1.0,
     evidence_kind: str = "internal",
     special_chunk_type: str | None = None,
+    retrieval_channels: list[str] | None = None,
 ) -> EvidenceItem:
     return EvidenceItem(
         chunk_id=chunk_id,
@@ -34,6 +36,7 @@ def _item(
         page_end=None,
         chunk_type=special_chunk_type or "child",
         source_type="markdown",
+        retrieval_channels=list(retrieval_channels or []),
     )
 
 
@@ -128,3 +131,94 @@ def test_evidence_truncator_keeps_special_and_graph_evidence_under_tight_budget(
     assert result.token_count <= 120
     assert len(result.evidence) == 3
     assert any(item.truncated for item in result.evidence)
+
+
+def test_evidence_truncator_local_mode_prioritizes_kg_and_multimodal_over_vector_fallback() -> None:
+    truncator = EvidenceTruncator()
+    evidence = [
+        _item(
+            "chunk-local-1",
+            text=" ".join(["Alpha entity context"] * 50),
+            score=1.45,
+            retrieval_channels=["local"],
+        ),
+        _item(
+            "chunk-local-2",
+            text=" ".join(["Beta entity context"] * 44),
+            score=1.32,
+            retrieval_channels=["local"],
+        ),
+        _item(
+            "chunk-vector-1",
+            text=" ".join(["fallback semantic match"] * 48),
+            score=1.60,
+            retrieval_channels=["vector"],
+        ),
+        _item(
+            "chunk-table-1",
+            text=" ".join(["table metric value"] * 22),
+            score=0.62,
+            special_chunk_type="table",
+            retrieval_channels=["special"],
+        ),
+    ]
+
+    result = truncator.truncate(
+        evidence,
+        token_budget=96,
+        max_evidence_chunks=3,
+        mode=QueryMode.LOCAL,
+    )
+
+    selected_ids = {item.chunk_id for item in result.evidence}
+    selected_families = {item.retrieval_family for item in result.evidence}
+    assert selected_ids == {"chunk-local-1", "chunk-local-2", "chunk-table-1"}
+    assert selected_families == {"kg", "multimodal"}
+
+
+def test_evidence_truncator_mix_mode_preserves_kg_vector_and_multimodal_families_under_tight_budget() -> None:
+    truncator = EvidenceTruncator()
+    evidence = [
+        _item(
+            "chunk-local-1",
+            text=" ".join(["Alpha entity relation"] * 44),
+            score=1.34,
+            retrieval_channels=["local"],
+        ),
+        _item(
+            "chunk-global-1",
+            text=" ".join(["dependency relation evidence"] * 40),
+            score=1.28,
+            retrieval_channels=["global"],
+        ),
+        _item(
+            "chunk-vector-1",
+            text=" ".join(["semantic overview paragraph"] * 42),
+            score=1.38,
+            retrieval_channels=["vector"],
+        ),
+        _item(
+            "chunk-sparse-1",
+            text=" ".join(["keyword hit paragraph"] * 38),
+            score=1.18,
+            retrieval_channels=["full_text"],
+        ),
+        _item(
+            "chunk-table-1",
+            text=" ".join(["table metric value"] * 20),
+            score=0.72,
+            special_chunk_type="table",
+            retrieval_channels=["special"],
+        ),
+    ]
+
+    result = truncator.truncate(
+        evidence,
+        token_budget=90,
+        max_evidence_chunks=3,
+        mode="mix",
+    )
+
+    selected_families = {item.retrieval_family for item in result.evidence}
+    assert selected_families == {"kg", "vector", "multimodal"}
+    assert result.token_count <= 90

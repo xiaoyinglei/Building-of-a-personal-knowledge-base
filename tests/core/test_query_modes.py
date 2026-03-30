@@ -1,6 +1,6 @@
-from pkp.query._retrieval.mode_planner import RetrievalPlanBuilder
-from pkp.query.query import QueryMode
-from pkp.schema._types.query import QueryUnderstanding
+from rag.query._retrieval.mode_planner import RetrievalPlanBuilder
+from rag.query.query import QueryMode
+from rag.schema._types.query import QueryUnderstanding
 
 
 def _understanding(
@@ -38,6 +38,10 @@ def test_retrieval_plan_builder_maps_explicit_modes_to_expected_branches() -> No
         "local",
         "global",
     )
+    assert planner.build(query_understanding=understanding, requested_mode=QueryMode.BYPASS).internal_branches == (
+        "vector",
+        "full_text",
+    )
 
 
 def test_retrieval_plan_builder_extends_mix_mode_with_sparse_structure_special_and_metadata() -> None:
@@ -70,3 +74,45 @@ def test_retrieval_plan_builder_disables_graph_expansion_for_naive_mode() -> Non
 
     assert plan.mode is QueryMode.NAIVE
     assert plan.allow_graph_expansion is False
+
+
+def test_retrieval_plan_builder_disables_graph_and_web_for_bypass_mode() -> None:
+    planner = RetrievalPlanBuilder()
+
+    plan = planner.build(
+        query_understanding=_understanding(
+            needs_sparse=True,
+            needs_structure=True,
+            needs_special=True,
+            needs_metadata=True,
+        ),
+        requested_mode="bypass",
+    )
+
+    assert plan.mode is QueryMode.BYPASS
+    assert plan.internal_branches == ("vector", "full_text")
+    assert plan.allow_graph_expansion is False
+    assert plan.allow_web is False
+    assert plan.allow_special is False
+    assert plan.allow_structure is False
+    assert plan.allow_metadata is False
+
+
+def test_retrieval_plan_builder_keeps_multimodal_branches_for_hybrid_mode() -> None:
+    planner = RetrievalPlanBuilder()
+
+    plan = planner.build(
+        query_understanding=_understanding(
+            needs_sparse=True,
+            needs_structure=True,
+            needs_special=True,
+            needs_metadata=True,
+        ),
+        requested_mode=QueryMode.HYBRID,
+    )
+
+    assert plan.internal_branches == ("local", "global", "section", "special", "metadata")
+    assert plan.allow_graph_expansion is True
+    assert plan.allow_special is True
+    assert plan.allow_structure is True
+    assert plan.allow_metadata is True
