@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from pkp.query.context import RoutingDecision
-from pkp.service.retrieval_service import RetrievalService
+from pkp.query.retrieve import RetrievalService
 from pkp.service.telemetry_service import TelemetryService
 from pkp.types import AccessPolicy, RuntimeMode, TaskType
 from pkp.types.query import ComplexityLevel

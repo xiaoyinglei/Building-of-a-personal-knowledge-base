@@ -20,10 +20,12 @@ from pkp.document.parser import (
 )
 from pkp.engine import RAGCore
 from pkp.ingest.chunk import ChunkingService, DocumentProcessingService, TOCService
+from pkp.ingest.ingest import IngestService
 from pkp.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo, LocalBgeProviderRepo, OllamaProviderRepo, OpenAIProviderRepo
 from pkp.llm.rerank import CrossEncoderConfig, HeuristicRerankService, RerankPipelineConfig
 from pkp.query.context import CandidateLike, EvidenceService, RoutingService
 from pkp.query.graph import GraphExpansionService, SearchBackedRetrievalFactory
+from pkp.query.retrieve import RetrievalService
 from pkp.storage import StorageConfig
 from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
 from pkp.repo.interfaces import OcrResult, OcrVisionRepo, VectorRepo
@@ -50,11 +52,10 @@ from pkp.runtime.ingest_runtime import IngestRuntime
 from pkp.runtime.provider_metadata import capability_configured, embedding_space
 from pkp.runtime.session_runtime import SessionRuntime
 from pkp.service.artifact_service import ArtifactService
-from pkp.service.ingest_service import IngestService
 from pkp.service.memory_service import MemoryService
 from pkp.service.policy_resolution_service import PolicyResolutionService
-from pkp.service.retrieval_service import Reranker, RetrievalService
 from pkp.service.telemetry_service import TelemetryService
+from pkp.algorithms.retrieval.contracts import Reranker
 
 
 def load_settings() -> AppSettings:

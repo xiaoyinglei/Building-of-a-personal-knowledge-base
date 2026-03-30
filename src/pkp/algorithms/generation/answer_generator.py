@@ -4,8 +4,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from pkp.llm.generation import AnswerGenerationService
 from pkp.repo.interfaces import EmbeddingProviderBinding
-from pkp.service.answer_generation_service import AnswerGenerationService
 from pkp.types.access import AccessPolicy, ExecutionLocation, ExecutionLocationPreference, RuntimeMode
 from pkp.types.diagnostics import ProviderAttempt
 from pkp.types.envelope import EvidenceItem

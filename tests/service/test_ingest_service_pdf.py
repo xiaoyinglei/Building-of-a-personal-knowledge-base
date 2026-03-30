@@ -2,7 +2,7 @@ from pathlib import Path
 
 import fitz
 
-from pkp.service.ingest_service import IngestService
+from pkp.ingest.ingest import IngestService
 
 
 def test_pdf_ingest_produces_page_anchored_segments_and_chunks(tmp_path: Path) -> None:

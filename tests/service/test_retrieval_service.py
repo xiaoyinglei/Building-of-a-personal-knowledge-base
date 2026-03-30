@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pkp.service.retrieval_service import RetrievalService
 from pkp.types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
 from pkp.query.query import QueryMode
+from pkp.query.retrieve import RetrievalService
 from pkp.types.content import ChunkRole
 
 

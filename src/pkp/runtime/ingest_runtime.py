@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol, cast
 from urllib.parse import urlparse
 
-from pkp.service.ingest_service import IngestResult
+from pkp.ingest.ingest import IngestResult
 from pkp.types import AccessPolicy
 
 

@@ -25,6 +25,27 @@ _INGEST_LEGACY_IMPORTS = (
     "pkp.service.document_processing_service",
     "pkp.service.toc_service",
 )
+_LLM_TARGETS = (
+    "src/pkp/bootstrap.py",
+    "src/pkp/eval/offline_eval_service.py",
+    "src/pkp/query/context.py",
+    "src/pkp/runtime/adapters.py",
+    "src/pkp/algorithms/generation/answer_generator.py",
+    "src/pkp/llm/generation.py",
+    "src/pkp/llm/rerank.py",
+)
+_LLM_LEGACY_IMPORTS = (
+    "pkp.service.answer_generation_service",
+    "pkp.service.rerank_service",
+    "pkp.service.retrieval_service",
+)
+_INGEST_API_TARGETS = (
+    "src/pkp/bootstrap.py",
+    "src/pkp/eval/offline_eval_service.py",
+    "src/pkp/runtime/adapters.py",
+    "src/pkp/runtime/ingest_runtime.py",
+)
+_INGEST_API_LEGACY_IMPORTS = ("pkp.service.ingest_service",)
 
 
 def test_query_modules_do_not_depend_on_legacy_query_services() -> None:
@@ -43,6 +64,28 @@ def test_ingest_chunk_module_does_not_depend_on_legacy_chunk_services() -> None:
     for relative_path in _INGEST_TARGETS:
         content = (_ROOT / relative_path).read_text(encoding="utf-8")
         hits = [legacy for legacy in _INGEST_LEGACY_IMPORTS if legacy in content]
+        if hits:
+            offenders[relative_path] = hits
+
+    assert offenders == {}
+
+
+def test_llm_and_retrieval_modules_do_not_depend_on_service_wrappers() -> None:
+    offenders: dict[str, list[str]] = {}
+    for relative_path in _LLM_TARGETS:
+        content = (_ROOT / relative_path).read_text(encoding="utf-8")
+        hits = [legacy for legacy in _LLM_LEGACY_IMPORTS if legacy in content]
+        if hits:
+            offenders[relative_path] = hits
+
+    assert offenders == {}
+
+
+def test_runtime_and_bootstrap_modules_do_not_depend_on_ingest_service_wrapper() -> None:
+    offenders: dict[str, list[str]] = {}
+    for relative_path in _INGEST_API_TARGETS:
+        content = (_ROOT / relative_path).read_text(encoding="utf-8")
+        hits = [legacy for legacy in _INGEST_API_LEGACY_IMPORTS if legacy in content]
         if hits:
             offenders[relative_path] = hits
 

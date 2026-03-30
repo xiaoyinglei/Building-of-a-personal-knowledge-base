@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pkp.service.rerank_service import HeuristicRerankService
+from pkp.llm.rerank import HeuristicRerankService
 
 
 @dataclass(frozen=True)

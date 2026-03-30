@@ -8,7 +8,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from pkp.repo.interfaces import OcrResult, ParsedDocument
-from pkp.service.ingest_service import IngestService
+from pkp.ingest.ingest import IngestService
 
 
 class FakeOcrVisionRepo:
