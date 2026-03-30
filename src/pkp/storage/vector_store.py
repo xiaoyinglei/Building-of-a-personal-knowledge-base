@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from pkp.repo.interfaces import VectorSearchResult
-from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
+from pkp.utils._contracts import VectorSearchResult
+from pkp.storage._search.sqlite_vector_repo import SQLiteVectorRepo
 
 
 @dataclass(slots=True)

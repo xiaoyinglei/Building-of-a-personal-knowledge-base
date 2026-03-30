@@ -1,14 +1,14 @@
 from pathlib import Path
 
 from pkp.ingest.ingest import IngestService
-from pkp.types.access import (
+from pkp.schema._types.access import (
     AccessPolicy,
     ExecutionLocation,
     ExternalRetrievalPolicy,
     Residency,
     RuntimeMode,
 )
-from pkp.types.content import SourceType
+from pkp.schema._types.content import SourceType
 
 
 def test_plain_text_ingest_infers_root_toc_and_inherits_policy(tmp_path: Path) -> None:

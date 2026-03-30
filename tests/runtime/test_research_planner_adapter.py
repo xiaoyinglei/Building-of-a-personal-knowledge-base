@@ -1,4 +1,4 @@
-from pkp.runtime.adapters import ResearchPlannerAdapter
+from pkp.interfaces._runtime.adapters import ResearchPlannerAdapter
 
 
 def test_research_planner_adapter_detects_comparison_queries_in_english_and_chinese() -> None:

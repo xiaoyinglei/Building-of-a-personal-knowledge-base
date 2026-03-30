@@ -3,8 +3,8 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from pkp.runtime.session_runtime import SessionRuntime
-from pkp.types import (
+from pkp.interfaces._runtime.session_runtime import SessionRuntime
+from pkp.schema._types import (
     AccessPolicy,
     ExecutionLocation,
     ExecutionLocationPreference,
@@ -19,8 +19,8 @@ from pkp.types import (
     RetrievalDiagnostics,
     RuntimeMode,
 )
-from pkp.ui import cli
-from pkp.ui.cli import app, set_container_factory
+from pkp.interfaces import cli
+from pkp.interfaces._ui.cli import app, set_container_factory
 
 runner = CliRunner()
 
@@ -456,7 +456,7 @@ def test_cli_exposes_offline_retrieval_evaluation_entry(monkeypatch, tmp_path: P
             },
         }
 
-    monkeypatch.setattr("pkp.ui.cli.run_builtin_offline_eval", fake_run_builtin_offline_eval)
+    monkeypatch.setattr("pkp.interfaces._ui.cli.run_builtin_offline_eval", fake_run_builtin_offline_eval)
 
     result = runner.invoke(
         app,
@@ -498,7 +498,7 @@ def test_cli_exposes_single_file_evaluation_entry(monkeypatch, tmp_path: Path) -
             },
         }
 
-    monkeypatch.setattr("pkp.ui.cli.run_file_offline_eval", fake_run_file_offline_eval)
+    monkeypatch.setattr("pkp.interfaces._ui.cli.run_file_offline_eval", fake_run_file_offline_eval)
 
     result = runner.invoke(
         app,

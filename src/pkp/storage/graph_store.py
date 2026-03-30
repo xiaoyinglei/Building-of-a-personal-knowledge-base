@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.types.content import GraphEdge, GraphNode
+from pkp.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
+from pkp.schema._types.content import GraphEdge, GraphNode
 
 
 @dataclass(slots=True)

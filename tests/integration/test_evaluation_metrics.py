@@ -1,5 +1,5 @@
-from pkp.service.telemetry_service import summarize_evaluation_metrics
-from pkp.types.telemetry import EvaluationMetricInput
+from pkp.utils._telemetry import summarize_evaluation_metrics
+from pkp.schema._types.telemetry import EvaluationMetricInput
 
 
 def test_compute_evaluation_metrics_summarizes_quality_dimensions() -> None:

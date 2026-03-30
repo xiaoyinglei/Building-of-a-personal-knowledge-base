@@ -3,8 +3,8 @@ from pathlib import Path
 from pydantic import SecretStr
 from pytest import MonkeyPatch
 
-from pkp.config.settings import AppSettings
-from pkp.types.access import ExecutionLocationPreference
+from pkp.interfaces._config.settings import AppSettings
+from pkp.schema._types.access import ExecutionLocationPreference
 
 
 def test_settings_parse_nested_env_values() -> None:

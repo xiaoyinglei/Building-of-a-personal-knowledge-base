@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 from fastapi.testclient import TestClient
 
-from pkp.runtime.session_runtime import SessionRuntime
-from pkp.types import (
+from pkp.interfaces._runtime.session_runtime import SessionRuntime
+from pkp.schema._types import (
     AccessPolicy,
     AnswerCitation,
     AnswerEvidenceLink,
@@ -21,7 +21,7 @@ from pkp.types import (
     RetrievalDiagnostics,
     RuntimeMode,
 )
-from pkp.ui.api.app import create_app
+from pkp.interfaces._ui.api.app import create_app
 
 
 @dataclass

@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
-from pkp.types.content import Chunk, Document, Segment, Source
-from pkp.types.storage import CacheEntry
+from pkp.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
+from pkp.schema._types.content import Chunk, Document, Segment, Source
+from pkp.schema._types.storage import CacheEntry
 
 
 @dataclass(slots=True)

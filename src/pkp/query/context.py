@@ -8,17 +8,17 @@ from typing import TYPE_CHECKING, Final, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from pkp.config.policies import RoutingThresholds
+from pkp.interfaces._config.policies import RoutingThresholds
 from pkp.llm.generation import AnswerGenerationService
-from pkp.types.access import AccessPolicy, RuntimeMode
-from pkp.types.content import ChunkRole
-from pkp.types.envelope import EvidenceItem
-from pkp.types.query import ComplexityLevel, QueryUnderstanding, TaskType
-from pkp.types.text import focus_terms, text_unit_count
+from pkp.schema._types.access import AccessPolicy, RuntimeMode
+from pkp.schema._types.content import ChunkRole
+from pkp.schema._types.envelope import EvidenceItem
+from pkp.schema._types.query import ComplexityLevel, QueryUnderstanding, TaskType
+from pkp.schema._types.text import focus_terms, text_unit_count
 
 if TYPE_CHECKING:
     from pkp.query.query import ContextEvidence
-    from pkp.types.retrieval import RetrievalResult
+    from pkp.schema._types.retrieval import RetrievalResult
 
 _TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff]")
 _COMPARISON_TOKENS = ("compare", "versus", " vs ", "difference", "contrast")

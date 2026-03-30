@@ -2,9 +2,9 @@ from dataclasses import dataclass
 
 from pkp.query.context import RoutingDecision
 from pkp.query.retrieve import RetrievalService
-from pkp.service.telemetry_service import TelemetryService
-from pkp.types import AccessPolicy, RuntimeMode, TaskType
-from pkp.types.query import ComplexityLevel
+from pkp.utils._telemetry import TelemetryService
+from pkp.schema._types import AccessPolicy, RuntimeMode, TaskType
+from pkp.schema._types.query import ComplexityLevel
 
 
 @dataclass(frozen=True)

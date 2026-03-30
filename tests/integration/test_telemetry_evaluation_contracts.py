@@ -1,5 +1,5 @@
-from pkp.service.telemetry_service import compute_evaluation_metrics, summarize_evaluation_metrics
-from pkp.types.telemetry import EvaluationMetricInput
+from pkp.utils._telemetry import compute_evaluation_metrics, summarize_evaluation_metrics
+from pkp.schema._types.telemetry import EvaluationMetricInput
 
 
 def test_compute_evaluation_metrics_accepts_legacy_dicts() -> None:

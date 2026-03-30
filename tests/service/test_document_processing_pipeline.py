@@ -6,12 +6,12 @@ import pytest
 from docx import Document as WordDocument
 from PIL import Image, ImageDraw
 
-from pkp.repo.interfaces import OcrRegion, OcrResult
+from pkp.utils._contracts import OcrRegion, OcrResult
 from pkp.ingest import chunk as document_processing_module
 from pkp.ingest.ingest import IngestService
 from pkp.ingest.chunk import TOCService
-from pkp.types.content import SourceType
-from pkp.types.processing import ChunkingStrategy, ChunkRole
+from pkp.schema._types.content import SourceType
+from pkp.schema._types.processing import ChunkingStrategy, ChunkRole
 
 
 class FakeOcrVisionRepo:

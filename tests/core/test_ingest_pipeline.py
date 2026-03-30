@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pkp.engine import RAGCore
 from pkp.storage import StorageConfig
-from pkp.algorithms.chunking.multimodal_chunk_router import special_type_for_element
-from pkp.algorithms.chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
-from pkp.algorithms.chunking.token_chunker import chunk_by_tokens
-from pkp.repo.interfaces import ParsedDocument, ParsedElement, ParsedSection
-from pkp.types import DocumentType, SourceType
-from pkp.types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
+from pkp.ingest._chunking.multimodal_chunk_router import special_type_for_element
+from pkp.ingest._chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
+from pkp.ingest._chunking.token_chunker import chunk_by_tokens
+from pkp.utils._contracts import ParsedDocument, ParsedElement, ParsedSection
+from pkp.schema._types import DocumentType, SourceType
+from pkp.schema._types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
 
 
 def test_token_chunker_produces_stable_child_chunks() -> None:

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
+from pkp.storage._search.sqlite_vector_repo import SQLiteVectorRepo
 
 
 def test_sqlite_vector_repo_persists_vectors_across_instances(tmp_path: Path) -> None:

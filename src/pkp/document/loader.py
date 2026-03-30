@@ -1,4 +1,4 @@
-from pkp.repo.parse.web_fetch_repo import WebFetchRepo
+from pkp.document._parse.web_fetch_repo import WebFetchRepo
 
 HttpWebFetchRepo = WebFetchRepo
 

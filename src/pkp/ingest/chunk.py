@@ -10,21 +10,21 @@ from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from docling_core.types.doc.document import PictureItem, TableItem
 
-from pkp.algorithms.chunking.multimodal_chunk_router import build_special_chunks, special_type_for_element
-from pkp.algorithms.chunking.structured_chunker import ChunkSeed, build_cached_hybrid_chunker, merge_adjacent_seeds
-from pkp.algorithms.chunking.token_chunker import chunk_by_tokens
-from pkp.repo.interfaces import ParsedDocument
-from pkp.repo.parse._util import normalize_whitespace, slugify
+from pkp.ingest._chunking.multimodal_chunk_router import build_special_chunks, special_type_for_element
+from pkp.ingest._chunking.structured_chunker import ChunkSeed, build_cached_hybrid_chunker, merge_adjacent_seeds
+from pkp.ingest._chunking.token_chunker import chunk_by_tokens
+from pkp.utils._contracts import ParsedDocument
+from pkp.document._parse._util import normalize_whitespace, slugify
 from pkp.schema.document import AccessPolicy
-from pkp.types.content import Chunk, ChunkRole, Document, Segment, Source, SourceType
-from pkp.types.processing import (
+from pkp.schema._types.content import Chunk, ChunkRole, Document, Segment, Source, SourceType
+from pkp.schema._types.processing import (
     ChunkRoutingDecision,
     ChunkStatistics,
     ChunkingStrategy,
     DocumentFeatures,
     DocumentProcessingPackage,
 )
-from pkp.types.text import text_unit_count
+from pkp.schema._types.text import text_unit_count
 
 
 class TOCService:

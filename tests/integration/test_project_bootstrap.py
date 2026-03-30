@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pkp.bootstrap import build_rag_core
-from pkp.config import AppSettings
+from pkp.interfaces._bootstrap import build_rag_core
+from pkp.interfaces._config import AppSettings
 from pkp.engine import RAGCore
 
 

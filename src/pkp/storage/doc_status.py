@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
-from pkp.types.storage import DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
+from pkp.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
+from pkp.schema._types.storage import DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
 
 
 @dataclass(slots=True)

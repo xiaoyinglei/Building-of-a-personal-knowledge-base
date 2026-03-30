@@ -1,6 +1,6 @@
-from pkp.types.access import AccessPolicy, ExecutionLocationPreference, RuntimeMode
-from pkp.types.envelope import ExecutionPolicy
-from pkp.types.query import ComplexityLevel, TaskType
+from pkp.schema._types.access import AccessPolicy, ExecutionLocationPreference, RuntimeMode
+from pkp.schema._types.envelope import ExecutionPolicy
+from pkp.schema._types.query import ComplexityLevel, TaskType
 
 
 def test_execution_policy_carries_routing_contract_fields() -> None:

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pkp.algorithms.generation.answer_generator import AnswerGenerator
+from pkp.llm._generation.answer_generator import AnswerGenerator
 from pkp.document.loader import HttpWebFetchRepo
 from pkp.document.parser import (
     DoclingParserRepo,
@@ -41,14 +41,14 @@ from pkp.query.context import (
 from pkp.query.graph import GraphExpansionService, SearchBackedRetrievalFactory
 from pkp.query.query import QueryOptions, RAGQueryResult
 from pkp.query.retrieve import RAGQueryPipeline, RetrievalService
-from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
-from pkp.repo.storage.file_object_store import FileObjectStore
-from pkp.repo.vision.ocr_vision_repo import create_default_ocr_repo
-from pkp.service.artifact_service import ArtifactService
-from pkp.service.policy_resolution_service import PolicyResolutionService
-from pkp.service.telemetry_service import TelemetryService
+from pkp.storage._search.sqlite_fts_repo import SQLiteFTSRepo
+from pkp.storage._repo.file_object_store import FileObjectStore
+from pkp.document._vision.ocr_vision_repo import create_default_ocr_repo
+from pkp.query._artifact.service import ArtifactService
+from pkp.ingest._policy.service import PolicyResolutionService
+from pkp.utils._telemetry import TelemetryService
 from pkp.storage import StorageBundle, StorageConfig
-from pkp.types.diagnostics import ProviderAttempt
+from pkp.schema._types.diagnostics import ProviderAttempt
 
 
 class _CoreInstrumentedReranker:

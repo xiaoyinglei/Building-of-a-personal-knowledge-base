@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from pkp.runtime.artifact_promotion_runtime import ArtifactPromotionRuntime
-from pkp.service.telemetry_service import TelemetryService
-from pkp.types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
+from pkp.interfaces._runtime.artifact_promotion_runtime import ArtifactPromotionRuntime
+from pkp.utils._telemetry import TelemetryService
+from pkp.schema._types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
 
 
 @dataclass

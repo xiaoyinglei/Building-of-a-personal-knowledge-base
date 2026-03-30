@@ -1,4 +1,4 @@
-from pkp.runtime.session_runtime import SessionRuntime
+from pkp.interfaces._runtime.session_runtime import SessionRuntime
 
 
 def test_session_runtime_tracks_sub_questions_and_evidence_matrix() -> None:

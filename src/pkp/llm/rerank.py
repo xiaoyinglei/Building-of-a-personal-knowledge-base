@@ -4,8 +4,8 @@ from collections.abc import Sequence
 from typing import Protocol, cast
 
 from pkp.query.context import QueryUnderstandingService
-from pkp.rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
-from pkp.rerank.pipeline import FormalRerankService, RerankPipelineConfig
+from pkp.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
+from pkp.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
 
 
 class CandidateLike(Protocol):

@@ -1,5 +1,5 @@
-from pkp.service.telemetry_service import TelemetryService
-from pkp.types.telemetry import TelemetryEvent
+from pkp.utils._telemetry import TelemetryService
+from pkp.schema._types.telemetry import TelemetryEvent
 
 
 def test_telemetry_service_groups_and_counts_events() -> None:

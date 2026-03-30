@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.search.sqlite_vector_repo import SQLiteVectorRepo
-from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
+from pkp.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
+from pkp.storage._search.sqlite_vector_repo import SQLiteVectorRepo
+from pkp.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
 from pkp.storage.doc_status import StatusStore
 from pkp.storage.graph_store import GraphStore
 from pkp.storage.kv_store import CacheStore, ChunkStore, DocumentStore

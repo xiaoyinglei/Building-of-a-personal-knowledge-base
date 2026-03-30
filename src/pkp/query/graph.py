@@ -7,14 +7,14 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from pkp.query.context import CandidateLike, EvidenceBundle, QueryUnderstandingService
-from pkp.repo.graph.sqlite_graph_repo import SQLiteGraphRepo
-from pkp.repo.interfaces import EmbeddingProviderBinding, VectorSearchResult
-from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
-from pkp.repo.search.web_search_repo import DeterministicWebSearchRepo
-from pkp.repo.storage.sqlite_metadata_repo import SQLiteMetadataRepo
+from pkp.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
+from pkp.utils._contracts import EmbeddingProviderBinding, VectorSearchResult
+from pkp.storage._search.sqlite_fts_repo import SQLiteFTSRepo
+from pkp.storage._search.web_search_repo import DeterministicWebSearchRepo
+from pkp.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
 from pkp.schema.chunk import ChunkRole
 from pkp.schema.document import AccessPolicy, Document, ExecutionLocationPreference
-from pkp.types.text import keyword_overlap, search_terms
+from pkp.schema._types.text import keyword_overlap, search_terms
 
 _GRAPH_RELATION_WEIGHTS = {
     "depends_on": 1.18,

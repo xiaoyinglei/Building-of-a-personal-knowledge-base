@@ -8,8 +8,8 @@ _TARGETS = (
     "src/pkp/query/retrieve.py",
     "src/pkp/query/graph.py",
     "src/pkp/engine.py",
-    "src/pkp/bootstrap.py",
-    "src/pkp/eval/offline_eval_service.py",
+    "src/pkp/interfaces/_bootstrap.py",
+    "src/pkp/interfaces/_eval/offline_eval_service.py",
 )
 _LEGACY_IMPORTS = (
     "pkp.service.evidence_service",
@@ -26,11 +26,11 @@ _INGEST_LEGACY_IMPORTS = (
     "pkp.service.toc_service",
 )
 _LLM_TARGETS = (
-    "src/pkp/bootstrap.py",
-    "src/pkp/eval/offline_eval_service.py",
+    "src/pkp/interfaces/_bootstrap.py",
+    "src/pkp/interfaces/_eval/offline_eval_service.py",
     "src/pkp/query/context.py",
-    "src/pkp/runtime/adapters.py",
-    "src/pkp/algorithms/generation/answer_generator.py",
+    "src/pkp/interfaces/_runtime/adapters.py",
+    "src/pkp/llm/_generation/answer_generator.py",
     "src/pkp/llm/generation.py",
     "src/pkp/llm/rerank.py",
 )
@@ -40,12 +40,24 @@ _LLM_LEGACY_IMPORTS = (
     "pkp.service.retrieval_service",
 )
 _INGEST_API_TARGETS = (
-    "src/pkp/bootstrap.py",
-    "src/pkp/eval/offline_eval_service.py",
-    "src/pkp/runtime/adapters.py",
-    "src/pkp/runtime/ingest_runtime.py",
+    "src/pkp/interfaces/_bootstrap.py",
+    "src/pkp/interfaces/_eval/offline_eval_service.py",
+    "src/pkp/interfaces/_runtime/adapters.py",
+    "src/pkp/interfaces/_runtime/ingest_runtime.py",
 )
 _INGEST_API_LEGACY_IMPORTS = ("pkp.service.ingest_service",)
+_ALLOWED_TOP_LEVEL = {
+    "__init__.py",
+    "document",
+    "engine.py",
+    "ingest",
+    "interfaces",
+    "llm",
+    "query",
+    "schema",
+    "storage",
+    "utils",
+}
 
 
 def test_query_modules_do_not_depend_on_legacy_query_services() -> None:
@@ -90,3 +102,9 @@ def test_runtime_and_bootstrap_modules_do_not_depend_on_ingest_service_wrapper()
             offenders[relative_path] = hits
 
     assert offenders == {}
+
+
+def test_top_level_package_matches_target_architecture() -> None:
+    package_root = _ROOT / "src/pkp"
+    present = {path.name for path in package_root.iterdir() if path.name != "__pycache__"}
+    assert present == _ALLOWED_TOP_LEVEL

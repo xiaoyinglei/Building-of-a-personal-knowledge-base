@@ -1,5 +1,5 @@
-from pkp.service.policy_resolution_service import PolicyResolutionService
-from pkp.types.access import (
+from pkp.ingest._policy.service import PolicyResolutionService
+from pkp.schema._types.access import (
     AccessPolicy,
     ExecutionLocation,
     ExternalRetrievalPolicy,

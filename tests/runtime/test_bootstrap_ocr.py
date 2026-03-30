@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import pkp.bootstrap as bootstrap_module
-from pkp.bootstrap import build_runtime_container
-from pkp.config import AppSettings
+import pkp.interfaces._bootstrap as bootstrap_module
+from pkp.interfaces._bootstrap import build_runtime_container
+from pkp.interfaces._config import AppSettings
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="default runtime OCR is macOS-specific")

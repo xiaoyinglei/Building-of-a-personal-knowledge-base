@@ -3,12 +3,12 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from pkp.bootstrap import build_test_container
-from pkp.config import build_execution_policy, default_access_policy
-from pkp.types import ComplexityLevel, ExecutionLocationPreference, TaskType
-from pkp.ui.api.app import create_app
-from pkp.ui.cli import app as cli_app
-from pkp.ui.dependencies import clear_container_factory, set_container_factory
+from pkp.interfaces._bootstrap import build_test_container
+from pkp.interfaces._config import build_execution_policy, default_access_policy
+from pkp.schema._types import ComplexityLevel, ExecutionLocationPreference, TaskType
+from pkp.interfaces._ui.api.app import create_app
+from pkp.interfaces._ui.cli import app as cli_app
+from pkp.interfaces._ui.dependencies import clear_container_factory, set_container_factory
 
 runner = CliRunner()
 

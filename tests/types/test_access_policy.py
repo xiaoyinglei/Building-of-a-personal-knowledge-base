@@ -1,4 +1,4 @@
-from pkp.types.access import (
+from pkp.schema._types.access import (
     AccessPolicy,
     ExecutionLocation,
     ExternalRetrievalPolicy,

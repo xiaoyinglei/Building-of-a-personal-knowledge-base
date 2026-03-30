@@ -1,3 +1,3 @@
-from pkp.ui.api.app import create_app
+from pkp.interfaces._ui.api.app import create_app
 
 __all__ = ["create_app"]
