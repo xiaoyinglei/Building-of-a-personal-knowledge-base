@@ -1,33 +1,124 @@
-# 个人知识平台
+# 个人知识库 RAG Core
 
-一个以可靠性为优先的个人知识平台，用来完成资料接入、索引构建、检索问答、深度研究和知识沉淀。
+一个以 `RAGCore` 为中心的中文 RAG 项目。
 
-当前项目已经切到 `library-first` 入口，核心使用方式是直接构建 `RAGCore`。FastAPI 和 CLI 仍然保留，但它们是可选包装层，不再定义项目骨架。
+当前实现已经完成一次骨架收口：项目不再以 FastAPI 或 runtime 作为主骨架，而是以纯库形态的核心链路为中心；接口层只作为薄包装保留。整体设计吸收了 LightRAG 的主流程、四类存储和查询模式，也吸收了 RAG-Anything 的多模态 special chunk 思路。
 
-项目采用严格分层架构：
+## 当前定位
 
-`Types -> Config -> Repo -> Service/Algorithms -> Core -> Runtime/UI`
+- 核心形态：纯库优先，`RAGCore` 是唯一核心入口
+- 包装层：CLI、FastAPI、runtime、eval 仍可用，但全部下沉到 `interfaces`
+- 核心目标：把文档接入、索引、检索、上下文构建、答案生成做成长期可维护的 RAG Core，而不是先做 Web 框架
 
-## 架构
+## 核心链路
 
-- `Types`：领域模型、枚举、请求响应契约
-- `Config`：配置加载、默认策略、运行参数
-- `Repo`：解析、存储、检索、图谱、模型适配
-- `Service`：ingest、chunking、retrieval、evidence、artifact 等领域逻辑
-- `Core`：`RAGCore` 主入口，以及 ingest/query/delete/rebuild 主流程
-- `Runtime`：Fast Path、Deep Path、artifact promotion、session orchestration，可作为包装层保留
-- `UI`：FastAPI 和 CLI 对外入口，可选
+当前主链路是：
 
-## 核心模块
+`文档输入 -> 解析 -> 切块 -> 实体/关系抽取 -> KV/Vector/Graph/DocStatus -> 多模式检索 -> Context Build -> LLM/grounded 生成`
 
-- `Ingest Pipeline`：接入 PDF、Markdown、纯文本、图片、网页和内联内容
-- `Index Layer`：构建 metadata、FTS、vector、graph 等索引
-- `Model Gateway`：统一接入 OpenAI、Ollama，并支持 fallback
-- `Retrieval Orchestrator`：融合全文检索、向量检索、章节检索、图扩展
-- `Research Agent`：支持 Fast Path 和 Deep Path，两种研究路径
-- `Knowledge Layer`：支持 artifact 生成、审批、重索引和复用
+具体能力包括：
 
-## 如何使用
+- 文档接入：`markdown / pdf / docx / image / web / plain_text / pasted_text / browser_clip`
+- 切块策略：结构切块 + token 切块 + `special` 多模态切块
+- 图索引：实体、关系、证据 chunk 回指、跨文档聚合
+- 查询模式：`naive / local / global / hybrid / mix`
+- 上下文流水线：`search -> truncation -> merge/fusion -> prompt build -> generation`
+- 文档生命周期：`insert / query / delete / rebuild`
+
+## 目录结构
+
+现在 `src/pkp` 顶层只保留下面这些目录和文件：
+
+```text
+src/pkp/
+├── engine.py
+├── ingest/
+├── query/
+├── llm/
+├── storage/
+├── document/
+├── schema/
+├── interfaces/
+└── utils/
+```
+
+各目录职责：
+
+- `engine.py`
+  `RAGCore` 总入口，统一调度 `insert / query / delete / rebuild`
+- `ingest/`
+  入库主流程、切块、实体关系抽取
+- `query/`
+  查询主流程、检索、图扩展、上下文构建
+- `llm/`
+  embedding、rerank、生成，以及模型 provider 适配
+- `storage/`
+  存储逻辑层和底层 SQLite/FTS/对象存储实现
+- `document/`
+  文档加载、解析、OCR、多模态解析工具
+- `schema/`
+  领域模型、查询结构、图结构、存储状态定义
+- `interfaces/`
+  CLI、FastAPI、runtime、配置装配、评测等薄包装
+- `utils/`
+  公共文本工具、契约、telemetry 工具
+
+说明：
+
+- 目录里带 `_` 前缀的子包，表示内部实现细节，不作为主骨架对外暴露。
+- 顶层已经移除了旧的 `algorithms / core / repo / service / runtime / ui / types / stores` 平行骨架。
+
+## 存储设计
+
+当前存储设计已经对齐 LightRAG 的四类核心存储，只是做了更细的逻辑拆分。
+
+逻辑层：
+
+- `KV`
+  文档、segment、chunk、缓存
+- `Vector`
+  `chunk / entity / relation / multimodal` 向量
+- `Graph`
+  实体关系图、证据回指、alias
+- `Doc Status`
+  文档处理状态和阶段
+
+默认物理落盘：
+
+```text
+.ragcore/
+├── metadata.sqlite3
+├── vectors.sqlite3
+├── graph.sqlite3
+├── fts.sqlite3
+└── objects/
+```
+
+直接对应实现：
+
+- `storage/kv_store.py`
+- `storage/vector_store.py`
+- `storage/graph_store.py`
+- `storage/doc_status.py`
+
+## 检索模式
+
+当前公开查询模式在 `pkp.query.QueryMode` 中定义：
+
+- `naive`
+  只走普通 chunk 检索
+- `local`
+  偏实体、偏局部的图检索
+- `global`
+  偏关系、偏全局的图检索
+- `hybrid`
+  `local + global`
+- `mix`
+  图检索和普通 chunk 检索一起使用，是默认模式
+
+此外，系统内部还会把表格、图片、caption、OCR 区域、公式等 special chunk 作为 companion evidence 带入检索和 context build。
+
+## 快速开始
 
 安装依赖：
 
@@ -36,60 +127,83 @@ uv sync --all-extras
 cp .env.example .env
 ```
 
-项目会自动读取根目录 `.env`。
+### 最小库调用
 
-库调用示例：
+最小公开 API：
 
 ```python
-from pkp.bootstrap import build_rag_core, load_settings
+from pkp import RAGCore, StorageConfig
+from pkp.query import QueryOptions
 
-core = build_rag_core(load_settings())
-result = core.insert(
+core = RAGCore(storage=StorageConfig(root=".ragcore"))
+
+core.insert(
     source_type="plain_text",
-    location="memory://note",
+    location="memory://note-1",
     owner="user",
     content_text="Alpha Engine processes ingestion requests.",
 )
-answer = core.query("What does Alpha Engine do?")
-core.delete(location="memory://note")
-core.rebuild(location="memory://note")
+
+result = core.query(
+    "Alpha Engine 是做什么的？",
+    options=QueryOptions(mode="mix"),
+)
+
+print(result.answer.answer_text)
+
+core.delete(location="memory://note-1")
+core.rebuild(location="memory://note-1")
 ```
 
-## Ollama 接入
+如果你只想跑临时内存实例：
 
-1. 确保本地 Ollama 服务可用
-2. 准备一个聊天模型，例如 `qwen3.5:9b`
-3. 在 `.env` 中配置：
+```python
+from pkp import RAGCore, StorageConfig
+
+core = RAGCore(storage=StorageConfig.in_memory())
+```
+
+### 按 `.env` 自动装配 provider
+
+如果你希望根据 `.env` 自动构建本地/云端 provider，可以使用工程装配入口：
+
+```python
+from pkp.interfaces._bootstrap import build_rag_core, load_settings
+
+core = build_rag_core(load_settings())
+```
+
+说明：
+
+- `pkp` 顶层公开的是纯库 API
+- `interfaces._bootstrap` 是工程装配辅助入口，适合项目内使用
+
+## 模型配置
+
+### 本地 Ollama + BGE
 
 ```bash
 PKP_OLLAMA__BASE_URL=http://localhost:11434
 PKP_OLLAMA__CHAT_MODEL=qwen3.5:9b
 PKP_OLLAMA__EMBEDDING_MODEL=qwen3-embedding:8b
+
 PKP_LOCAL_BGE__ENABLED=true
 PKP_LOCAL_BGE__EMBEDDING_MODEL=BAAI/bge-m3
 PKP_LOCAL_BGE__EMBEDDING_MODEL_PATH=~/.cache/huggingface/hub/models--BAAI--bge-m3
 PKP_LOCAL_BGE__RERANK_MODEL=BAAI/bge-reranker-v2-m3
 PKP_LOCAL_BGE__RERANK_MODEL_PATH=~/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3
+
 PKP_RUNTIME__EXECUTION_LOCATION_PREFERENCE=local_only
 ```
 
-如果你本地已经装好了 Ollama，常见准备命令是：
+常见准备命令：
 
 ```bash
 ollama pull qwen3.5:9b
 ollama pull qwen3-embedding:8b
 ```
 
-说明：
-
-- 配好后，Deep Path 和需要 synthesis 的回答会优先走本地 `Qwen`
-- embedding 和 rerank 会优先走本地 HuggingFace/FlagEmbedding 的 `bge-m3` 与 `bge-reranker-v2-m3`
-- `PKP_OLLAMA__EMBEDDING_MODEL` 会保留为可选回退，不再主导向量索引
-- 如果你只想本地运行，建议把 `PKP_RUNTIME__EXECUTION_LOCATION_PREFERENCE` 设成 `local_only`
-
-## 云端大模型接入
-
-如果你要接 OpenAI 或兼容 OpenAI API 的云端网关，在 `.env` 中配置：
+### OpenAI 或兼容 OpenAI API
 
 ```bash
 PKP_OPENAI__API_KEY=your-key
@@ -101,63 +215,57 @@ PKP_RUNTIME__EXECUTION_LOCATION_PREFERENCE=cloud_first
 
 说明：
 
-- 官方 OpenAI 直接用默认 `BASE_URL` 即可
-- 如果你用兼容 OpenAI 的第三方网关，只需要把 `PKP_OPENAI__BASE_URL` 改成对应地址
-- 没有云端 key 也没有本地模型时，项目仍可运行 ingest、索引、检索和 artifact 主流程，问答会退化为 `retrieval-only`
+- 没有 chat provider 时，系统仍然会返回基于证据的 grounded answer，不会直接中断主流程
+- embedding、rerank、generation 都支持本地优先或云端优先的装配方式
 
-## 如何上传文档
+## CLI
 
-支持这些 `source_type`：
+CLI 现在是包装层，入口在 `pkp.interfaces.cli`。
 
-- `markdown`
-- `pdf`
-- `docx`
-- `plain_text`
-- `pasted_text`
-- `image`
-- `web`
-- `browser_clip`
-
-CLI 示例：
+健康检查：
 
 ```bash
-uv run python -m pkp.ui.cli health
-
-# 本地 Markdown / 文本 / PDF / 图片
-uv run python -m pkp.ui.cli ingest --source-type markdown --location README.md
-uv run python -m pkp.ui.cli ingest --source-type plain_text --location data/samples/plain-notes.txt
-uv run python -m pkp.ui.cli ingest --source-type pdf --location /absolute/path/demo.pdf
-uv run python -m pkp.ui.cli ingest --source-type docx --location /absolute/path/demo.docx
-uv run python -m pkp.ui.cli ingest --source-type image --location /absolute/path/screenshot.png
-
-# 统一文档解析与切分入口
-uv run python -m pkp.ui.cli process-file --location /absolute/path/demo.pdf
-uv run python -m pkp.ui.cli process-file --location /absolute/path/demo.md
-uv run python -m pkp.ui.cli process-file --location /absolute/path/demo.docx
-uv run python -m pkp.ui.cli process-file --location /absolute/path/demo.png
-
-# 远程网页
-uv run python -m pkp.ui.cli ingest --source-type web --location https://example.com/article
-
-# 直接粘贴内容
-uv run python -m pkp.ui.cli ingest --source-type pasted_text --content "这里是一段笔记内容" --title "临时笔记"
-
-# 查询
-uv run python -m pkp.ui.cli query --mode fast --query "这个项目做什么？"
-uv run python -m pkp.ui.cli query --mode deep --query "比较 Fast Path 和 Deep Path"
-uv run python -m pkp.ui.cli list-artifacts
+uv run python -m pkp.interfaces.cli health
 ```
 
-说明：
-
-- `--location` 可以是相对路径、绝对路径，或网页 URL
-- 不传 `--location` 时，可以直接用 `--content` 走内联 ingest
-- ingest 后文档会进入本地索引和对象存储，默认目录是 `data/runtime`
-
-启动 API：
+文档接入：
 
 ```bash
-uv run uvicorn pkp.ui.api.app:create_app --factory --reload
+uv run python -m pkp.interfaces.cli ingest --source-type markdown --location README.md
+uv run python -m pkp.interfaces.cli ingest --source-type pdf --location /absolute/path/demo.pdf
+uv run python -m pkp.interfaces.cli ingest --source-type image --location /absolute/path/demo.png
+uv run python -m pkp.interfaces.cli ingest --source-type web --location https://example.com/article
+uv run python -m pkp.interfaces.cli ingest --source-type pasted_text --content "这里是一段笔记内容" --title "临时笔记"
+```
+
+统一文件入口：
+
+```bash
+uv run python -m pkp.interfaces.cli process-file --location /absolute/path/demo.pdf
+```
+
+查询：
+
+```bash
+uv run python -m pkp.interfaces.cli query --mode fast --query "这个项目做什么？"
+uv run python -m pkp.interfaces.cli query --mode deep --query "比较 local 和 global 检索有什么差异？"
+```
+
+评测：
+
+```bash
+uv run python -m pkp.interfaces.cli evaluate-retrieval
+uv run python -m pkp.interfaces.cli evaluate-file --location README.md --questions-file data/eval/questions.json
+```
+
+## FastAPI
+
+FastAPI 仍然可用，但它只是包装层，入口在 `pkp.interfaces.api`。
+
+启动方式：
+
+```bash
+uv run uvicorn pkp.interfaces.api:create_app --factory --reload
 ```
 
 示例请求：
@@ -167,26 +275,34 @@ curl -X POST http://127.0.0.1:8000/ingest \
   -H "Content-Type: application/json" \
   -d '{"source_type":"markdown","location":"README.md"}'
 
-curl -X POST http://127.0.0.1:8000/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"source_type":"web","location":"https://example.com/article"}'
-
-curl -X POST http://127.0.0.1:8000/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"source_type":"pasted_text","content":"这里是一段笔记内容","title":"临时笔记"}'
-
 curl -X POST http://127.0.0.1:8000/query \
   -H "Content-Type: application/json" \
   -d '{"query":"这个项目做什么？","mode":"fast"}'
 ```
 
+## 实现说明
+
+当前版本已经落地的关键点：
+
+- `RAGCore` 已打通 `insert / query / delete / rebuild`
+- 目录骨架已经按主流程收口，不再以 FastAPI、runtime 或 service 分层为中心
+- `query` 侧已经有 `naive / local / global / hybrid / mix`
+- `storage` 侧已经按 `KV / Vector / Graph / DocStatus` 组织
+- `document` 和 `ingest` 侧保留了结构切块、token 切块、多模态 special chunk
+
+当前仍然属于后续可继续加强的方向：
+
+- 更强的跨文档实体消歧和规范化
+- 更深的全局子图检索与图摘要
+- 更完整的多模态图节点和跨模态关系建模
+
 ## 开发验证
+
+常用验证命令：
 
 ```bash
 uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
-uv run lint-imports
-uv run python -m scripts.check_repo_only_imports
 ```

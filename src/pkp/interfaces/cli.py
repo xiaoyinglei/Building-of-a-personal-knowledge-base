@@ -6,3 +6,7 @@ def main() -> None:
 
 
 __all__ = ["app", "main", "set_container_factory"]
+
+
+if __name__ == "__main__":
+    main()
