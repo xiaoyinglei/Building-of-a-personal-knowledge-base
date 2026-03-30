@@ -1,14 +1,21 @@
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
-import fitz
+import fitz  # type: ignore[import-untyped]
+import openpyxl  # type: ignore[import-untyped]
 import pytest
 from docx import Document as WordDocument
 from PIL import Image, ImageDraw
+from pptx import Presentation
+from pptx.util import Inches
 
-from pkp.repo.interfaces import OcrRegion, OcrResult
-from pkp.service.ingest_service import IngestService
-from pkp.types.content import SourceType
-from pkp.types.processing import ChunkingStrategy, ChunkRole
+from rag.ingest import chunk as document_processing_module
+from rag.ingest.chunk import TOCService
+from rag.ingest.ingest import IngestService
+from rag.schema._types.content import SourceType
+from rag.schema._types.processing import ChunkingStrategy, ChunkRole
+from rag.utils._contracts import OcrRegion, OcrResult
 
 
 class FakeOcrVisionRepo:
@@ -23,6 +30,17 @@ class FakeOcrVisionRepo:
                 OcrRegion(text="Revenue grew 20 percent", bbox=(0, 91, 260, 140)),
             ],
         )
+
+
+class FakeVlmRepo:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def describe_visual(self, image_bytes: bytes, *, mime_type: str = "image/png", prompt: str | None = None) -> str:
+        self.calls += 1
+        assert image_bytes
+        assert mime_type == "image/png"
+        return "blue chart with a single highlighted rectangle"
 
 
 def _write_markdown(path: Path) -> None:
@@ -43,7 +61,7 @@ def _write_pdf(path: Path) -> None:
     page.insert_text((72, 72), "Quarterly Review\nRevenue expanded because enterprise demand improved.")
     page = document.new_page()
     page.insert_text((72, 72), "Risks\nSupply chain risk remains manageable.")
-    document.save(path)
+    document.save(str(path))
     document.close()
 
 
@@ -61,7 +79,7 @@ def _write_docx(path: Path, *, with_headings: bool) -> None:
         document.add_paragraph("Overview paragraph for the report.")
         document.add_paragraph("Revenue expanded because enterprise demand improved.")
         document.add_paragraph("Supply chain risk remains manageable.")
-    document.save(path)
+    document.save(str(path))
 
 
 def _write_image(path: Path) -> None:
@@ -71,6 +89,34 @@ def _write_image(path: Path) -> None:
     draw.text((20, 120), "Figure 1", fill="black")
     draw.text((20, 200), "Revenue grew 20 percent", fill="black")
     image.save(path)
+
+
+def _write_pptx(path: Path) -> None:
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+    slide.shapes.title.text = "Quarterly Review"
+    slide.placeholders[1].text = "Revenue expanded because enterprise demand improved."
+    presentation.save(str(path))
+
+
+def _write_pptx_with_image(path: Path) -> None:
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    image_path = path.with_suffix(".png")
+    Image.new("RGB", (160, 100), color="blue").save(image_path)
+    slide.shapes.add_picture(str(image_path), Inches(1), Inches(1), width=Inches(2))
+    presentation.save(str(path))
+
+
+def _write_xlsx(path: Path) -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Revenue"
+    sheet["A1"] = "Quarter"
+    sheet["B1"] = "Revenue"
+    sheet["A2"] = "Q1"
+    sheet["B2"] = "120"
+    workbook.save(str(path))
 
 
 @pytest.mark.parametrize(
@@ -90,7 +136,7 @@ def _write_image(path: Path) -> None:
 def test_ingest_file_builds_uniform_processing_package(
     tmp_path: Path,
     filename: str,
-    writer: object,
+    writer: Callable[[Path], None],
     expected_type: SourceType,
     expected_strategy: ChunkingStrategy,
 ) -> None:
@@ -139,15 +185,90 @@ def test_image_pipeline_produces_special_chunks_and_parent_child_links(tmp_path:
         "image_summary",
         "ocr_region",
     }
-    assert len({chunk.chunk_id for chunk in result.processing.special_chunks}) == len(
-        result.processing.special_chunks
+    assert len({chunk.chunk_id for chunk in result.processing.special_chunks}) == len(result.processing.special_chunks)
+
+
+def test_ingest_file_supports_pptx_content(tmp_path: Path) -> None:
+    path = tmp_path / "quarterly.pptx"
+    _write_pptx(path)
+    service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
+
+    result = service.ingest_file(location=str(path), file_path=path, owner="user")
+
+    assert result.source.source_type is SourceType.PPTX
+    assert result.document.title == "Quarterly Review"
+    assert result.visible_text
+    assert any("Quarterly Review" in chunk.text for chunk in result.chunks)
+
+
+def test_ingest_file_supports_xlsx_content(tmp_path: Path) -> None:
+    path = tmp_path / "quarterly.xlsx"
+    _write_xlsx(path)
+    service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
+
+    result = service.ingest_file(location=str(path), file_path=path, owner="user")
+
+    assert result.source.source_type is SourceType.XLSX
+    assert result.visible_text
+    assert any("Quarter" in chunk.text for chunk in result.chunks)
+    assert any("Revenue" in chunk.text for chunk in result.chunks)
+
+
+def test_ingest_file_enriches_embedded_figure_with_optional_vlm_description(tmp_path: Path) -> None:
+    path = tmp_path / "visual-slide.pptx"
+    _write_pptx_with_image(path)
+    vlm_repo = FakeVlmRepo()
+    service = IngestService.create_in_memory(
+        tmp_path / "runtime",
+        ocr_repo=FakeOcrVisionRepo(),
+        vlm_repo=vlm_repo,
     )
+
+    result = service.ingest_file(location=str(path), file_path=path, owner="user")
+
+    assert vlm_repo.calls >= 1
+    assert "blue chart with a single highlighted rectangle" in result.visible_text
+    assert any("blue chart with a single highlighted rectangle" in chunk.text for chunk in result.chunks)
 
 
 def test_pipeline_reports_clear_error_for_unsupported_file_types(tmp_path: Path) -> None:
-    path = tmp_path / "notes.xlsx"
+    path = tmp_path / "notes.bin"
     path.write_text("not supported", encoding="utf-8")
     service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
 
     with pytest.raises(ValueError, match="Unsupported file type"):
         service.ingest_file(location=str(path), file_path=path, owner="user")
+
+
+def test_document_processing_service_uses_cached_tokenizer_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_from_pretrained(
+        model_name: str,
+        *,
+        max_tokens: int | None = None,
+        local_files_only: bool | None = None,
+        **_: object,
+    ) -> object:
+        captured["model_name"] = model_name
+        captured["max_tokens"] = max_tokens
+        captured["local_files_only"] = local_files_only
+        return object()
+
+    class FakeHybridChunker:
+        def __init__(self, *, tokenizer: object, **_: object) -> None:
+            captured["tokenizer"] = tokenizer
+
+    monkeypatch.setattr(
+        document_processing_module,
+        "HuggingFaceTokenizer",
+        SimpleNamespace(from_pretrained=fake_from_pretrained),
+    )
+    monkeypatch.setattr(document_processing_module, "HybridChunker", FakeHybridChunker)
+
+    document_processing_module.DocumentProcessingService(toc_service=TOCService())
+
+    assert captured["model_name"] == "sentence-transformers/all-MiniLM-L6-v2"
+    assert captured["max_tokens"] == 512
+    assert captured["local_files_only"] is True
+    assert captured["tokenizer"] is not None

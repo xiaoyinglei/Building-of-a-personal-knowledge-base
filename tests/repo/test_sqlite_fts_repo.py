@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from pkp.repo.search.sqlite_fts_repo import SQLiteFTSRepo
-from pkp.types import AccessPolicy, Chunk
+from rag.schema._types import AccessPolicy, Chunk
+from rag.storage._search.sqlite_fts_repo import SQLiteFTSRepo
 
 
 def _chunk(chunk_id: str, doc_id: str, text: str) -> Chunk:

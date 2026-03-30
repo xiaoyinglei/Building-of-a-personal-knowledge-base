@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
 from pytest import MonkeyPatch
 
-from pkp.rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
-from pkp.rerank.evaluation import RerankEvaluator
-from pkp.rerank.models import RerankCandidate, RerankEvaluationCase, RerankRequest
-from pkp.rerank.pipeline import FormalRerankService, RerankPipelineConfig
-from pkp.rerank.training import ExportFormat, TrainingSampleExporter
-from pkp.types.query import QueryUnderstanding
+from rag.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
+from rag.llm._rerank.evaluation import RerankEvaluator
+from rag.llm._rerank.models import RerankCandidate, RerankEvaluationCase, RerankRequest
+from rag.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
+from rag.llm._rerank.training import ExportFormat, TrainingSampleExporter
+from rag.schema._types.query import QueryUnderstanding
 
 
 class FakeCrossEncoder:
@@ -281,7 +282,7 @@ def test_training_sample_exporter_outputs_pairwise_samples_with_hard_negatives()
                     chunk_id="chunk-cli",
                     doc_id="doc-a",
                     parent_id="parent-cli",
-                    text="uv run pkp query --mode fast --query \"系统架构分为哪几层？\"",
+                    text='uv run rag query --mode fast --query "系统架构分为哪几层？"',
                     chunk_type="child",
                     section_path=["查询"],
                     heading_text="查询",
@@ -315,7 +316,7 @@ def test_training_sample_exporter_outputs_pairwise_samples_with_hard_negatives()
 
 def test_provider_backed_cross_encoder_uses_provider_ranking_as_scores(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "pkp.rerank.cross_encoder.ProviderBackedCrossEncoder._try_flag_embedding_backend",
+        "rag.llm._rerank.cross_encoder.ProviderBackedCrossEncoder._try_flag_embedding_backend",
         lambda self: None,
     )
     encoder = ProviderBackedCrossEncoder(provider=FakeProvider(), config=CrossEncoderConfig(batch_size=2))
@@ -369,7 +370,7 @@ def test_provider_backed_cross_encoder_prefers_snapshot_resolved_model_path(
             return [0.88 for _ in pairs]
 
     monkeypatch.setattr(
-        "pkp.rerank.cross_encoder.importlib.import_module",
+        "rag.llm._rerank.cross_encoder.importlib.import_module",
         lambda _name: SimpleNamespace(FlagReranker=FakeFlagReranker),
     )
     encoder = ProviderBackedCrossEncoder(
@@ -397,3 +398,70 @@ def test_provider_backed_cross_encoder_prefers_snapshot_resolved_model_path(
     assert scores == [0.88]
     assert encoder.backend_name == "bge_local"
     assert captured["model_name_or_path"] == str(snapshot)
+
+
+def test_provider_backed_cross_encoder_suppresses_fast_tokenizer_padding_warning(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_root = tmp_path / "models--BAAI--bge-reranker-v2-m3"
+    snapshot = model_root / "snapshots" / "abc123"
+    snapshot.mkdir(parents=True)
+    (model_root / "refs").mkdir(parents=True)
+    (model_root / "refs" / "main").write_text("abc123\n", encoding="utf-8")
+    (snapshot / "config.json").write_text("{}", encoding="utf-8")
+
+    class FakeFastTokenizer:
+        is_fast = True
+
+        def __init__(self) -> None:
+            self.deprecation_warnings: dict[str, bool] = {}
+
+        def pad(self, *_args: object, **_kwargs: object) -> None:
+            if not self.deprecation_warnings.get("Asking-to-pad-a-fast-tokenizer", False):
+                warnings.warn(
+                    "You're using a XLMRobertaTokenizerFast tokenizer. Please note that with a fast tokenizer, "
+                    "using the `__call__` method is faster than using a method to encode the text followed by a "
+                    "call to the `pad` method to get a padded encoding.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+    class FakeFlagReranker:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.tokenizer = FakeFastTokenizer()
+
+        def compute_score(self, pairs: list[list[str]], *, batch_size: int, max_length: int) -> list[float]:
+            self.tokenizer.pad([{"input_ids": [1, 2, 3]}], padding=True)
+            return [0.88 for _ in pairs]
+
+    monkeypatch.setattr(
+        "rag.llm._rerank.cross_encoder.importlib.import_module",
+        lambda _name: SimpleNamespace(FlagReranker=FakeFlagReranker),
+    )
+    encoder = ProviderBackedCrossEncoder(
+        config=CrossEncoderConfig(
+            model_name="BAAI/bge-reranker-v2-m3",
+            model_path=str(model_root),
+            batch_size=2,
+            max_length=256,
+        )
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        scores = encoder.score(
+            "本地 BGE rerank 是否可用",
+            [
+                RerankCandidate(
+                    chunk_id="chunk-a",
+                    doc_id="doc-a",
+                    text="本地 BGE rerank 已经走通。",
+                    chunk_type="child",
+                    unified_rank=1,
+                )
+            ],
+        )
+
+    assert scores == [0.88]
+    assert not any("using the `__call__` method is faster" in str(item.message) for item in caught)

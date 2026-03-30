@@ -1,6 +1,6 @@
-from pkp.service.routing_service import RoutingService
-from pkp.types.access import RuntimeMode
-from pkp.types.query import ComplexityLevel, TaskType
+from rag.query.context import RoutingService
+from rag.schema._types.access import RuntimeMode
+from rag.schema._types.query import ComplexityLevel, TaskType
 
 
 def test_routing_service_routes_compare_queries_to_deep_research() -> None:

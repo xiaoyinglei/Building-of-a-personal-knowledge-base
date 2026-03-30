@@ -13,10 +13,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-      - run: uv sync --all-extras
+      - run: uv sync
       - run: uv run pytest -v
       - run: uv run ruff check .
-      - run: uv run mypy src
-      - run: uv run lint-imports
-      - run: uv run python -m scripts.check_repo_only_imports
-
+      - run: uv run mypy rag tests

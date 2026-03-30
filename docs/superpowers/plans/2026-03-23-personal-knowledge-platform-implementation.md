@@ -4,7 +4,7 @@
 
 **Goal:** Build a reliability-first personal knowledge platform with strict `Types -> Config -> Repo -> Service -> Runtime -> UI` layering, cloud-first execution, local fallback, hybrid retrieval, bounded deep research, and semi-automatic artifact preservation.
 
-**Architecture:** The implementation uses a Python monorepo managed by `uv`, with a strict layered package layout under `src/pkp/`. Local bootstrap uses SQLite metadata plus FTS5, filesystem object storage, a pluggable vector repository, and provider adapters for cloud and local models. Fast Path and Deep Path runtimes share domain services but remain separate execution modes with different routing budgets and safeguards.
+**Architecture:** The implementation uses a Python monorepo managed by `uv`, with a strict layered package layout under `src/rag/`. Local bootstrap uses SQLite metadata plus FTS5, filesystem object storage, a pluggable vector repository, and provider adapters for cloud and local models. Fast Path and Deep Path runtimes share domain services but remain separate execution modes with different routing budgets and safeguards.
 
 **Tech Stack:** Python 3.12, `uv`, FastAPI, Pydantic v2, SQLAlchemy, SQLite/FTS5, HTTPX, pytest, ruff, mypy, import-linter, PyMuPDF, markdown-it-py, BeautifulSoup/trafilatura, Pillow, optional OCR and model provider adapters.
 
@@ -24,13 +24,13 @@
 
 ### Source tree
 
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/types/`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/config/`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/runtime/`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/ui/`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/bootstrap.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/types/`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/config/`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/runtime/`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/ui/`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/bootstrap.py`
 
 ### Test tree
 
@@ -78,7 +78,7 @@ Run:
 ```bash
 git init
 uv init --python 3.12 .
-mkdir -p src/pkp tests
+mkdir -p src/rag tests
 ```
 
 Expected:
@@ -125,7 +125,7 @@ Add:
 - `pyproject.toml` with runtime, dev, lint, type-check, and test dependencies
 - `importlinter.ini` with the layer contract
 - `.github/workflows/ci.yml` running `uv sync --all-extras`, `pytest`, `ruff check`, `mypy src`, and `lint-imports`
-- `scripts/check_repo_only_imports.py` enforcing that provider SDK imports appear only under `src/pkp/repo/**`
+- `scripts/check_repo_only_imports.py` enforcing that provider SDK imports appear only under `src/rag/repo/**`
 - `README.md` with local bootstrap and execution overview
 - `.env.example` with provider, storage, and runtime settings
 
@@ -156,15 +156,15 @@ git commit -m "chore: bootstrap uv project and layering guardrails"
 ## Task 2: Define Types and Config Contracts
 
 **Files:**
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/types/__init__.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/types/access.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/types/content.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/types/query.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/types/artifact.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/types/envelope.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/config/__init__.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/config/settings.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/config/policies.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/types/__init__.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/types/access.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/types/content.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/types/query.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/types/artifact.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/types/envelope.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/config/__init__.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/config/settings.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/config/policies.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/types/test_access_policy.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/types/test_content_contracts.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/types/test_query_routing_enums.py`
@@ -235,25 +235,25 @@ Expected:
 Run:
 
 ```bash
-git add src/pkp/types src/pkp/config tests/types tests/config
+git add src/rag/types src/rag/config tests/types tests/config
 git commit -m "feat: add core type and config contracts"
 ```
 
 ## Task 3: Build Repo Layer Foundations
 
 **Files:**
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/__init__.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/interfaces.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/storage/file_object_store.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/storage/sqlite_metadata_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/search/sqlite_fts_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/search/in_memory_vector_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/graph/sqlite_graph_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/search/web_search_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/vision/ocr_vision_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/models/openai_provider_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/models/ollama_provider_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/models/fallback_embedding_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/__init__.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/interfaces.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/storage/file_object_store.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/storage/sqlite_metadata_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/search/sqlite_fts_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/search/in_memory_vector_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/graph/sqlite_graph_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/search/web_search_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/vision/ocr_vision_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/models/openai_provider_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/models/ollama_provider_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/models/fallback_embedding_repo.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/repo/test_sqlite_metadata_repo.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/repo/test_sqlite_fts_repo.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/repo/test_in_memory_vector_repo.py`
@@ -312,22 +312,22 @@ Expected:
 Run:
 
 ```bash
-git add src/pkp/repo tests/repo
+git add src/rag/repo tests/repo
 git commit -m "feat: add repository adapters for storage search and models"
 ```
 
 ## Task 4: Implement Parsing and Ingest Services
 
 **Files:**
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/parse/pdf_parser_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/parse/markdown_parser_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/parse/plain_text_parser_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/parse/image_parser_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/parse/web_parser_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/ingest_service.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/chunking_service.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/policy_resolution_service.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/toc_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/parse/pdf_parser_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/parse/markdown_parser_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/parse/plain_text_parser_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/parse/image_parser_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/parse/web_parser_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/ingest_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/chunking_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/policy_resolution_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/toc_service.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/service/test_ingest_service_markdown.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/service/test_ingest_service_pdf.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/service/test_ingest_service_plain_text.py`
@@ -396,18 +396,18 @@ Expected:
 Run:
 
 ```bash
-git add src/pkp/repo/parse src/pkp/service tests/service
+git add src/rag/repo/parse src/rag/service tests/service
 git commit -m "feat: add ingest parsing toc and policy services"
 ```
 
 ## Task 5: Implement Retrieval, Fusion, and Evidence Services
 
 **Files:**
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/retrieval_service.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/evidence_service.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/graph_expansion_service.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/artifact_service.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/routing_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/retrieval_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/evidence_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/graph_expansion_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/artifact_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/routing_service.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/service/test_retrieval_service.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/service/test_routing_service.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/service/test_artifact_service.py`
@@ -476,21 +476,21 @@ Expected:
 Run:
 
 ```bash
-git add src/pkp/service tests/service
+git add src/rag/service tests/service
 git commit -m "feat: add retrieval routing evidence and artifact services"
 ```
 
 ## Task 6: Implement Fast Path and Deep Path Runtimes
 
 **Files:**
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/runtime/__init__.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/runtime/container.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/bootstrap.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/runtime/ingest_runtime.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/runtime/fast_query_runtime.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/runtime/deep_research_runtime.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/runtime/session_runtime.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/runtime/artifact_promotion_runtime.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/runtime/__init__.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/runtime/container.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/bootstrap.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/runtime/ingest_runtime.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/runtime/fast_query_runtime.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/runtime/deep_research_runtime.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/runtime/session_runtime.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/runtime/artifact_promotion_runtime.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/runtime/test_ingest_runtime.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/runtime/test_fast_query_runtime.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/runtime/test_deep_research_runtime.py`
@@ -532,8 +532,8 @@ Expected:
 
 Implement:
 - protocol-based runtime container definitions
-- `src/pkp/runtime/container.py` as the Runtime-owned composition root, accepting injected factories and service instances without importing concrete Repo adapters directly
-- `src/pkp/bootstrap.py` as a thin launcher that instantiates concrete repos/services and delegates to the Runtime composition root
+- `src/rag/runtime/container.py` as the Runtime-owned composition root, accepting injected factories and service instances without importing concrete Repo adapters directly
+- `src/rag/bootstrap.py` as a thin launcher that instantiates concrete repos/services and delegates to the Runtime composition root
 - `IngestRuntime` for runtime-owned ingest orchestration used by UI facades
 - Fast Path runtime
 - Deep Path runtime with bounded iteration and recursion
@@ -563,20 +563,20 @@ Expected:
 Run:
 
 ```bash
-git add src/pkp/runtime tests/runtime
+git add src/rag/runtime tests/runtime
 git commit -m "feat: add fast and deep query runtimes"
 ```
 
 ## Task 7: Implement UI Layer and End-to-End Vertical Slice
 
 **Files:**
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/ui/__init__.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/ui/api/app.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/ui/api/routes/health.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/ui/api/routes/ingest.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/ui/api/routes/query.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/ui/api/routes/artifacts.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/ui/cli.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/ui/__init__.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/ui/api/app.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/ui/api/routes/health.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/ui/api/routes/ingest.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/ui/api/routes/query.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/ui/api/routes/artifacts.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/ui/cli.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/ui/test_api_health.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/ui/test_api_ingest_query.py`
 - Test: `/Users/leixiaoying/LLM/RAG学习/tests/ui/test_cli.py`
@@ -642,16 +642,16 @@ Expected:
 Run:
 
 ```bash
-git add src/pkp/ui data/samples tests/ui tests/integration/test_markdown_query_flow.py tests/integration/test_plain_text_conflict_flow.py tests/integration/test_artifact_promotion_flow.py tests/integration/test_pdf_ingest_query_flow.py tests/integration/test_image_ingest_flow.py tests/integration/test_web_ingest_flow.py
+git add src/rag/ui data/samples tests/ui tests/integration/test_markdown_query_flow.py tests/integration/test_plain_text_conflict_flow.py tests/integration/test_artifact_promotion_flow.py tests/integration/test_pdf_ingest_query_flow.py tests/integration/test_image_ingest_flow.py tests/integration/test_web_ingest_flow.py
 git commit -m "feat: add api cli and end-to-end query flow"
 ```
 
 ## Task 8: Reliability Instrumentation and Evaluation Harness
 
 **Files:**
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/types/telemetry.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/repo/telemetry/local_event_repo.py`
-- Create: `/Users/leixiaoying/LLM/RAG学习/src/pkp/service/telemetry_service.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/types/telemetry.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/repo/telemetry/local_event_repo.py`
+- Create: `/Users/leixiaoying/LLM/RAG学习/src/rag/service/telemetry_service.py`
 - Create: `/Users/leixiaoying/LLM/RAG学习/tests/service/test_telemetry_service.py`
 - Create: `/Users/leixiaoying/LLM/RAG学习/tests/integration/test_reliability_events.py`
 - Create: `/Users/leixiaoying/LLM/RAG学习/tests/integration/test_evaluation_metrics.py`
@@ -703,7 +703,7 @@ Expected:
 Run:
 
 ```bash
-git add src/pkp/types/telemetry.py src/pkp/repo/telemetry src/pkp/service/telemetry_service.py tests/service/test_telemetry_service.py tests/integration/test_reliability_events.py tests/integration/test_evaluation_metrics.py
+git add src/rag/types/telemetry.py src/rag/repo/telemetry src/rag/service/telemetry_service.py tests/service/test_telemetry_service.py tests/integration/test_reliability_events.py tests/integration/test_evaluation_metrics.py
 git commit -m "feat: add reliability telemetry and evaluation hooks"
 ```
 
@@ -777,10 +777,10 @@ Confirm explicitly:
 
 Only after Task 5 is complete and repo plus service interface shapes are frozen, split work into disjoint write domains:
 
-- Worker A: `src/pkp/repo/**`, `tests/repo/**`
-- Worker B: `src/pkp/service/ingest_service.py`, `src/pkp/service/chunking_service.py`, `src/pkp/service/policy_resolution_service.py`, `src/pkp/service/toc_service.py`, matching tests
-- Worker C: `src/pkp/service/retrieval_service.py`, `src/pkp/service/evidence_service.py`, `src/pkp/service/graph_expansion_service.py`, `src/pkp/service/artifact_service.py`, `src/pkp/service/routing_service.py`, matching tests
-- Worker D: `src/pkp/runtime/**`, `src/pkp/ui/**`, `tests/runtime/**`, `tests/ui/**`, `tests/integration/**`
+- Worker A: `src/rag/repo/**`, `tests/repo/**`
+- Worker B: `src/rag/service/ingest_service.py`, `src/rag/service/chunking_service.py`, `src/rag/service/policy_resolution_service.py`, `src/rag/service/toc_service.py`, matching tests
+- Worker C: `src/rag/service/retrieval_service.py`, `src/rag/service/evidence_service.py`, `src/rag/service/graph_expansion_service.py`, `src/rag/service/artifact_service.py`, `src/rag/service/routing_service.py`, matching tests
+- Worker D: `src/rag/runtime/**`, `src/rag/ui/**`, `tests/runtime/**`, `tests/ui/**`, `tests/integration/**`
 
 Controller responsibilities:
 

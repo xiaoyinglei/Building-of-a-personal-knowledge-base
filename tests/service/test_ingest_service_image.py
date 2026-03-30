@@ -7,8 +7,8 @@ from typing import cast
 import pytest
 from PIL import Image, ImageDraw
 
-from pkp.repo.interfaces import OcrResult, ParsedDocument
-from pkp.service.ingest_service import IngestService
+from rag.ingest.ingest import IngestService
+from rag.utils._contracts import OcrResult, ParsedDocument
 
 
 class FakeOcrVisionRepo:

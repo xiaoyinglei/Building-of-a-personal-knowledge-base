@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from pkp.service.ingest_service import IngestService
+from rag.ingest.ingest import IngestService
 
 
 def test_duplicate_ingest_does_not_create_duplicate_active_documents(tmp_path: Path) -> None:
@@ -40,7 +40,7 @@ def test_duplicate_ingest_restores_missing_vectors_for_existing_chunks(tmp_path:
         markdown="# Topic\n\nAlpha.\n\n## Detail\n\nBeta.",
         owner="user",
     )
-    vector_count = vector_db.execute("SELECT count(*) FROM vectors").fetchone()[0]
+    vector_count = vector_db.execute("SELECT count(*) FROM vectors WHERE item_kind = 'chunk'").fetchone()[0]
 
     assert second.is_duplicate is True
     assert second.document.doc_id == first.document.doc_id
@@ -60,7 +60,7 @@ def test_repair_indexes_restores_missing_vectors_without_reingest(tmp_path: Path
     vector_db.commit()
 
     summary = service.repair_indexes()
-    vector_count = vector_db.execute("SELECT count(*) FROM vectors").fetchone()[0]
+    vector_count = vector_db.execute("SELECT count(*) FROM vectors WHERE item_kind = 'chunk'").fetchone()[0]
 
     assert summary["document_count"] == 1
     assert summary["chunk_count"] == len(first.chunks)

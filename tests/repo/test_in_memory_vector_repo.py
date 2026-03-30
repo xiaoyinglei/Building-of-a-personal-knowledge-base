@@ -1,5 +1,5 @@
-from pkp.repo.search.in_memory_vector_repo import InMemoryVectorRepo
-from pkp.types import AccessPolicy, Chunk
+from rag.schema._types import AccessPolicy, Chunk
+from rag.storage._search.in_memory_vector_repo import InMemoryVectorRepo
 
 
 def _chunk(chunk_id: str, doc_id: str, text: str) -> Chunk:

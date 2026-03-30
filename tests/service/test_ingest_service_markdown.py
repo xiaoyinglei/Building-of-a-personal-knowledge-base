@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pkp.service.ingest_service import IngestService
+from rag.ingest.ingest import IngestService
 
 
 def test_markdown_ingest_builds_toc_paths_and_stable_anchors(tmp_path: Path) -> None:
