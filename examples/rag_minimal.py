@@ -16,7 +16,7 @@ def main() -> None:
     )
 
     query_result = core.query(
-        "病假期间的工资如何发放？",
+        "入职11年，每年可以休几天年假？",
         options=QueryOptions(mode="mix"),
     )
 
