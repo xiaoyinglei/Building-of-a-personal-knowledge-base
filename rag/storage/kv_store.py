@@ -5,12 +5,12 @@ from datetime import datetime
 
 from rag.schema._types.content import Chunk, Document, Segment, Source
 from rag.schema._types.storage import CacheEntry
-from rag.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
+from rag.utils._contracts import CacheRepo, MetadataRepo
 
 
 @dataclass(slots=True)
 class DocumentStore:
-    metadata_repo: SQLiteMetadataRepo
+    metadata_repo: MetadataRepo
 
     def save_source(self, source: Source) -> None:
         self.metadata_repo.save_source(source)
@@ -90,7 +90,7 @@ class DocumentStore:
 
 @dataclass(slots=True)
 class ChunkStore:
-    metadata_repo: SQLiteMetadataRepo
+    metadata_repo: MetadataRepo
 
     def save(self, chunk: Chunk) -> None:
         self.metadata_repo.save_chunk(chunk)
@@ -114,22 +114,22 @@ class ChunkStore:
 
 @dataclass(slots=True)
 class CacheStore:
-    metadata_repo: SQLiteMetadataRepo
+    cache_repo: CacheRepo
 
     def save(self, entry: CacheEntry) -> CacheEntry:
-        return self.metadata_repo.save_cache_entry(entry)
+        return self.cache_repo.save_cache_entry(entry)
 
     def get(self, cache_key: str, *, namespace: str = "default") -> CacheEntry | None:
-        return self.metadata_repo.get_cache_entry(cache_key, namespace=namespace)
+        return self.cache_repo.get_cache_entry(cache_key, namespace=namespace)
 
     def list(self, *, namespace: str | None = None) -> list[CacheEntry]:
-        return self.metadata_repo.list_cache_entries(namespace=namespace)
+        return self.cache_repo.list_cache_entries(namespace=namespace)
 
     def delete(self, cache_key: str, *, namespace: str = "default") -> None:
-        self.metadata_repo.delete_cache_entry(cache_key, namespace=namespace)
+        self.cache_repo.delete_cache_entry(cache_key, namespace=namespace)
 
     def purge_expired(self, *, now: datetime | None = None) -> int:
-        return self.metadata_repo.purge_expired_cache_entries(now=now)
+        return self.cache_repo.purge_expired_cache_entries(now=now)
 
 
 __all__ = ["CacheStore", "ChunkStore", "DocumentStore"]

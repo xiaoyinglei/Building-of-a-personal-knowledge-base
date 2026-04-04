@@ -470,23 +470,7 @@ class DocumentProcessingService:
         self._resolved_chunking_tokenizer_model = (
             contract.chunking_tokenizer_model_name or self._DEFAULT_TOKENIZER_MODEL
         )
-        try:
-            self._hybrid_chunker = build_cached_hybrid_chunker(
-                tokenizer_cls=HuggingFaceTokenizer,
-                hybrid_chunker_cls=HybridChunker,
-                model_name=self._resolved_chunking_tokenizer_model,
-                max_tokens=contract.chunk_token_size,
-                local_files_only=contract.local_files_only,
-            )
-        except Exception:
-            self._resolved_chunking_tokenizer_model = self._DEFAULT_TOKENIZER_MODEL
-            self._hybrid_chunker = build_cached_hybrid_chunker(
-                tokenizer_cls=HuggingFaceTokenizer,
-                hybrid_chunker_cls=HybridChunker,
-                model_name=self._resolved_chunking_tokenizer_model,
-                max_tokens=contract.chunk_token_size,
-                local_files_only=contract.local_files_only,
-            )
+        self._hybrid_chunker = self._build_hybrid_chunker(contract)
 
     def build(
         self,
@@ -556,6 +540,29 @@ class DocumentProcessingService:
             indexed_chunks=[*processed.child_chunks, *processed.special_chunks],
             package=package,
         )
+
+    def _build_hybrid_chunker(self, contract: TokenizerContract) -> Any:
+        attempted: list[tuple[str, bool]] = []
+        for model_name, local_files_only in (
+            (self._resolved_chunking_tokenizer_model, contract.local_files_only),
+            (self._DEFAULT_TOKENIZER_MODEL, contract.local_files_only),
+            (self._DEFAULT_TOKENIZER_MODEL, False),
+        ):
+            if (model_name, local_files_only) in attempted:
+                continue
+            attempted.append((model_name, local_files_only))
+            try:
+                self._resolved_chunking_tokenizer_model = model_name
+                return build_cached_hybrid_chunker(
+                    tokenizer_cls=HuggingFaceTokenizer,
+                    hybrid_chunker_cls=HybridChunker,
+                    model_name=model_name,
+                    max_tokens=contract.chunk_token_size,
+                    local_files_only=local_files_only,
+                )
+            except Exception:
+                continue
+        raise RuntimeError("Unable to initialize Docling chunk tokenizer for the current tokenizer contract")
 
     def _build_primary_chunks(
         self,

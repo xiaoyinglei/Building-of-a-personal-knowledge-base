@@ -48,10 +48,8 @@ class RerankFeatureExtractor:
                 )
                 if value
             }
-            preferred_sections = self._as_str_set(
-                request.query_analysis.structure_constraints.get("preferred_section_terms")
-            )
-            requested_pages = self._as_str_set(request.query_analysis.metadata_filters.get("page_numbers"))
+            preferred_sections = set(request.query_analysis.preferred_section_terms)
+            requested_pages = {str(page) for page in request.query_analysis.metadata_filters.page_numbers}
             feature_dict: dict[str, float | int | bool | str] = {
                 "dense_score": round(candidate.dense_score or 0.0, 6),
                 "sparse_score": round(candidate.sparse_score or 0.0, 6),
@@ -95,11 +93,3 @@ class RerankFeatureExtractor:
             }
             records.append(FeatureRecord(chunk_id=candidate.chunk_id, feature_dict=feature_dict))
         return records
-
-    @staticmethod
-    def _as_str_set(value: list[str] | str | bool | None) -> set[str]:
-        if isinstance(value, list):
-            return {item for item in value if isinstance(item, str)}
-        if isinstance(value, str):
-            return {value}
-        return set()

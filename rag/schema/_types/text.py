@@ -155,7 +155,7 @@ class TokenizerContract:
     tokenizer_backend: str = "auto"
     chunk_token_size: int = 480
     chunk_overlap_tokens: int = 64
-    max_context_tokens: int = 1200
+    max_context_tokens: int = 1024
     prompt_reserved_tokens: int = 256
     local_files_only: bool = True
 
@@ -164,7 +164,7 @@ class TokenizerContract:
         cls,
         *,
         embedding_model_name: str,
-        default_context_tokens: int = 1200,
+        default_context_tokens: int = 1024,
         default_chunk_token_size: int = 480,
         default_chunk_overlap_tokens: int = 64,
         default_prompt_reserved_tokens: int = 256,

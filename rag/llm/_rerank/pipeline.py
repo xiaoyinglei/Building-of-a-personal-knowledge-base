@@ -23,7 +23,7 @@ from rag.llm._rerank.models import (
     RerankResultItem,
 )
 from rag.llm._rerank.postprocess import CandidateDiversityController, PostprocessConfig
-from rag.query.context import QueryUnderstandingService
+from rag.query.understanding import QueryUnderstandingService
 from rag.schema._types.query import QueryUnderstanding
 
 

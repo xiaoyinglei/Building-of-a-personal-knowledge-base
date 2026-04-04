@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rag.schema._types.storage import DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
-from rag.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
+from rag.utils._contracts import MetadataRepo
 
 
 @dataclass(slots=True)
 class StatusStore:
-    metadata_repo: SQLiteMetadataRepo
+    metadata_repo: MetadataRepo
 
     def save(self, status: DocumentStatusRecord) -> DocumentStatusRecord:
         return self.metadata_repo.save_document_status(status)

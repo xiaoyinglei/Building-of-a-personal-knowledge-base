@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from rag.llm._providers.ollama_provider_repo import OllamaProviderRepo
 from rag.llm._providers.openai_provider_repo import OpenAIProviderRepo
@@ -58,7 +59,7 @@ def test_openai_provider_repo_lazily_creates_client_and_uses_responses_api() -> 
     assert captured[0].response_calls == [{"model": "gpt-test", "input": "Summarize this"}]
 
 
-def test_openai_provider_repo_uses_embeddings_api_and_fallback_rerank() -> None:
+def test_openai_provider_repo_uses_embeddings_api_and_rejects_rerank() -> None:
     client = FakeOpenAIClient()
     repo = OpenAIProviderRepo(client=client, embedding_model="embed-test")
 
@@ -66,7 +67,8 @@ def test_openai_provider_repo_uses_embeddings_api_and_fallback_rerank() -> None:
 
     assert embeddings == [[0.1, 0.2], [0.3, 0.4]]
     assert client.embedding_calls == [{"model": "embed-test", "input": ["alpha", "beta"]}]
-    assert repo.rerank("query", ["a", "b", "c"]) == [0, 1, 2]
+    with pytest.raises(RuntimeError, match="does not provide rerank"):
+        repo.rerank("query", ["a", "b", "c"])
 
 
 def test_openai_provider_repo_falls_back_to_chat_completions_when_responses_404s() -> None:
@@ -106,7 +108,7 @@ def test_openai_provider_repo_prefers_chat_completions_for_google_compatible_gat
     ]
 
 
-def test_ollama_provider_repo_uses_official_http_endpoints_and_fallback_rerank() -> None:
+def test_ollama_provider_repo_uses_official_http_endpoints_and_rejects_rerank() -> None:
     requests: list[tuple[str, dict[str, object]]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -155,4 +157,5 @@ def test_ollama_provider_repo_uses_official_http_endpoints_and_fallback_rerank()
             },
         ),
     ]
-    assert repo.rerank("query", ["a", "b"]) == [0, 1]
+    with pytest.raises(RuntimeError, match="does not provide rerank"):
+        repo.rerank("query", ["a", "b"])

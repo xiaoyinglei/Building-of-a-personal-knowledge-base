@@ -5,7 +5,7 @@ from typing import Protocol, cast
 
 from rag.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
 from rag.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
-from rag.query.context import QueryUnderstandingService
+from rag.query.understanding import QueryUnderstandingService
 
 
 class CandidateLike(Protocol):
@@ -18,7 +18,7 @@ class CandidateLike(Protocol):
     metadata: dict[str, str] | None
 
 
-class HeuristicRerankService:
+class ModelBackedRerankService:
     def __init__(
         self,
         *,
@@ -45,7 +45,7 @@ class HeuristicRerankService:
             backend_name = getattr(response, "backend_name", None)
             if isinstance(backend_name, str) and backend_name:
                 return backend_name
-        return "heuristic"
+        return "formal-rerank"
 
     @property
     def rerank_model_name(self) -> str:
@@ -57,7 +57,7 @@ class HeuristicRerankService:
         configured_model_name = getattr(self._cross_encoder, "model_name", None)
         if isinstance(configured_model_name, str) and configured_model_name:
             return configured_model_name
-        return "heuristic"
+        return "unconfigured-reranker"
 
     def rerank(self, query: str, candidates: Sequence[CandidateLike]) -> list[CandidateLike]:
         return cast(list[CandidateLike], self._pipeline.rerank(query, list(candidates)))
@@ -71,7 +71,7 @@ __all__ = [
     "CrossEncoderReranker",
     "FormalRerankPipeline",
     "FormalRerankService",
-    "HeuristicRerankService",
+    "ModelBackedRerankService",
     "ProviderBackedCrossEncoder",
     "RerankPipelineConfig",
 ]

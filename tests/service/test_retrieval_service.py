@@ -52,45 +52,52 @@ def _build_service(
         "global_calls": 0,
     }
 
-    def full_text_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+    def full_text_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
         calls["full_text_query"] = query
         calls["full_text_scope"] = list(source_scope)
+        calls["full_text_understanding"] = query_understanding
         calls["full_text_calls"] = cast(int, calls["full_text_calls"]) + 1
         return list(full_text_candidates or [])
 
-    def vector_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+    def vector_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
         calls["vector_query"] = query
         calls["vector_scope"] = list(source_scope)
+        calls["vector_understanding"] = query_understanding
         calls["vector_calls"] = cast(int, calls["vector_calls"]) + 1
         return list(vector_candidates or [])
 
-    def local_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+    def local_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
         calls["local_query"] = query
         calls["local_scope"] = list(source_scope)
+        calls["local_understanding"] = query_understanding
         calls["local_calls"] = cast(int, calls["local_calls"]) + 1
         return list(local_candidates or [])
 
-    def global_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+    def global_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
         calls["global_query"] = query
         calls["global_scope"] = list(source_scope)
+        calls["global_understanding"] = query_understanding
         calls["global_calls"] = cast(int, calls["global_calls"]) + 1
         return list(global_candidates or [])
 
-    def section_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+    def section_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
         calls["section_query"] = query
         calls["section_scope"] = list(source_scope)
+        calls["section_understanding"] = query_understanding
         calls["structure_calls"] = cast(int, calls["structure_calls"]) + 1
         return list(section_candidates or [])
 
-    def special_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+    def special_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
         calls["special_query"] = query
         calls["special_scope"] = list(source_scope)
+        calls["special_understanding"] = query_understanding
         calls["special_calls"] = cast(int, calls["special_calls"]) + 1
         return list(special_candidates or [])
 
-    def metadata_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+    def metadata_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
         calls["metadata_query"] = query
         calls["metadata_scope"] = list(source_scope)
+        calls["metadata_understanding"] = query_understanding
         calls["metadata_calls"] = cast(int, calls["metadata_calls"]) + 1
         return list(metadata_candidates or [])
 
@@ -102,9 +109,10 @@ def _build_service(
         calls["graph_non_graph_ids"] = [candidate.chunk_id for candidate in non_graph_evidence]
         return list(graph_candidates or [])
 
-    def web_retriever(query: str, source_scope: list[str]) -> list[FakeCandidate]:
+    def web_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
         calls["web_calls"] = cast(int, calls["web_calls"]) + 1
         calls["web_scope"] = list(source_scope)
+        calls["web_understanding"] = query_understanding
         return list(web_candidates or [])
 
     def reranker(query: str, candidates: list[FakeCandidate]) -> list[FakeCandidate]:
@@ -502,7 +510,8 @@ def test_retrieval_service_uses_structure_constraints_for_heading_queries() -> N
 
     assert calls["structure_calls"] == 1
     assert result.diagnostics.query_understanding is not None
-    assert result.diagnostics.query_understanding.structure_constraints["preferred_section_terms"] == ["系统架构"]
+    assert "系统架构" in result.diagnostics.query_understanding.preferred_section_terms
+    assert result.diagnostics.query_understanding.structure_constraints.semantic_section_families == ["architecture"]
 
 
 def test_retrieval_service_uses_metadata_branch_for_page_constrained_queries() -> None:
@@ -528,7 +537,7 @@ def test_retrieval_service_uses_metadata_branch_for_page_constrained_queries() -
 
     assert calls["metadata_calls"] == 1
     assert result.diagnostics.query_understanding is not None
-    assert result.diagnostics.query_understanding.metadata_filters["page_numbers"] == ["2"]
+    assert result.diagnostics.query_understanding.metadata_filters.page_numbers == [2]
     assert result.diagnostics.branch_hits["metadata"] == 1
 
 

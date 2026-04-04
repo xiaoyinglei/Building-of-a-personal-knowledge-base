@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rag.query._retrieval.contracts import RetrieverFn
-from rag.query._retrieval.mode_planner import RetrievalPlan
 from rag.query.context import CandidateLike
+from rag.schema._types.query import QueryUnderstanding
 
 
 @dataclass(slots=True)
@@ -19,23 +18,16 @@ class BranchRetrieverRegistry:
     global_retriever: RetrieverFn
     web_retriever: RetrieverFn
 
-    def collect_internal(
+    def collect_web(
         self,
         *,
-        plan: RetrievalPlan,
         query: str,
         source_scope: list[str],
-    ) -> dict[str, list[CandidateLike]]:
-        results: dict[str, list[CandidateLike]] = {}
-        for branch in plan.internal_branches:
-            candidates = list(self._call(branch, query=query, source_scope=source_scope))
-            results[branch] = candidates
-        return results
+        query_understanding: QueryUnderstanding,
+    ) -> list[CandidateLike]:
+        return list(self.web_retriever(query, source_scope, query_understanding))
 
-    def collect_web(self, *, query: str, source_scope: list[str]) -> list[CandidateLike]:
-        return list(self.web_retriever(query, source_scope))
-
-    def _call(self, branch: str, *, query: str, source_scope: list[str]) -> Sequence[CandidateLike]:
+    def get(self, branch: str) -> RetrieverFn:
         return {
             "full_text": self.full_text_retriever,
             "vector": self.vector_retriever,
@@ -44,4 +36,4 @@ class BranchRetrieverRegistry:
             "metadata": self.metadata_retriever,
             "local": self.local_retriever,
             "global": self.global_retriever,
-        }.get(branch, self.vector_retriever)(query, source_scope)
+        }.get(branch, self.vector_retriever)

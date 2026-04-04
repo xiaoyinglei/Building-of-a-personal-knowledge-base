@@ -17,7 +17,12 @@ class FallbackEmbeddingRepo(ModelProviderRepo):
         return prompt
 
     def rerank(self, query: str, candidates: Sequence[str]) -> list[int]:
-        return list(range(len(candidates)))
+        del query, candidates
+        raise RuntimeError("FallbackEmbeddingRepo does not implement rerank")
+
+    @property
+    def is_rerank_configured(self) -> bool:
+        return False
 
     def _embed_text(self, text: str) -> list[float]:
         digest = sha256(text.encode("utf-8")).digest()
