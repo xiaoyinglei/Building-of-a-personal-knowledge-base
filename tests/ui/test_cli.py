@@ -103,3 +103,17 @@ def test_cli_main_delegates_to_typer_app(monkeypatch: MonkeyPatch) -> None:
     cli.main()
 
     assert calls == ["called"]
+
+
+def test_cli_workbench_help_lists_core_options() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "--help",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "--workspace-root" in result.stdout
+    assert "--open-browser" in result.stdout

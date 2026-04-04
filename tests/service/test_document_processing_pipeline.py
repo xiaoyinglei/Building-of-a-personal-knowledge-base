@@ -268,7 +268,7 @@ def test_document_processing_service_uses_cached_tokenizer_configuration(monkeyp
 
     document_processing_module.DocumentProcessingService(toc_service=TOCService())
 
-    assert captured["model_name"] == "sentence-transformers/all-MiniLM-L6-v2"
+    assert captured["model_name"] == "BAAI/bge-m3"
     assert captured["max_tokens"] == 512
     assert captured["local_files_only"] is True
     assert captured["tokenizer"] is not None

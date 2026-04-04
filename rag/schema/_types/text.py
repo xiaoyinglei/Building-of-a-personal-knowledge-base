@@ -86,7 +86,7 @@ _GENERIC_QUERY_TERMS = frozenset(
         "of",
     }
 )
-DEFAULT_TOKENIZER_FALLBACK_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_TOKENIZER_FALLBACK_MODEL = "BAAI/bge-m3"
 _OPENAI_TOKENIZER_MARKERS = (
     "gpt-",
     "o1",

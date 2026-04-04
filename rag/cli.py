@@ -12,10 +12,13 @@ from pydantic import BaseModel
 from rag import RAG, StorageConfig
 from rag.query import QueryMode, QueryOptions
 from rag.schema.document import SourceType
+from rag.workbench import find_free_port, run_workbench_server
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 DEFAULT_STORAGE_ROOT = Path(".rag")
+DEFAULT_WORKSPACE_ROOT = Path("data/test_corpus/tech_docs")
 STORAGE_ROOT_OPTION = typer.Option("--storage-root")
+WORKSPACE_ROOT_OPTION = typer.Option("--workspace-root")
 SOURCE_TYPE_OPTION = typer.Option("--source-type")
 LOCATION_OPTION = typer.Option("--location")
 CONTENT_OPTION = typer.Option("--content")
@@ -26,6 +29,9 @@ MODE_OPTION = typer.Option("--mode")
 JSON_OPTION = typer.Option("--json")
 DOC_ID_OPTION = typer.Option("--doc-id")
 SOURCE_ID_OPTION = typer.Option("--source-id")
+HOST_OPTION = typer.Option("--host")
+PORT_OPTION = typer.Option("--port")
+OPEN_BROWSER_OPTION = typer.Option("--open-browser/--no-open-browser")
 
 
 def _core(storage_root: Path) -> RAG:
@@ -118,6 +124,24 @@ def rebuild(
             "rebuilt_doc_ids": result.rebuilt_doc_ids,
             "results": result.results,
         }
+    )
+
+
+@app.command()
+def workbench(
+    storage_root: Annotated[Path, STORAGE_ROOT_OPTION] = DEFAULT_STORAGE_ROOT,
+    workspace_root: Annotated[Path, WORKSPACE_ROOT_OPTION] = DEFAULT_WORKSPACE_ROOT,
+    host: Annotated[str, HOST_OPTION] = "127.0.0.1",
+    port: Annotated[int, PORT_OPTION] = 0,
+    open_browser: Annotated[bool, OPEN_BROWSER_OPTION] = True,
+) -> None:
+    resolved_port = port if port > 0 else find_free_port(host)
+    run_workbench_server(
+        storage_root=storage_root,
+        workspace_root=workspace_root,
+        host=host,
+        port=resolved_port,
+        open_browser=open_browser,
     )
 
 
