@@ -1,2 +1,0 @@
-The migration finished on 2025-01-10 and the new retrieval service is the default path.
-
