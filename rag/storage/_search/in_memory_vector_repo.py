@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from math import sqrt
 from typing import Protocol
 
-from rag.utils._contracts import VectorSearchResult
+from rag.utils._contracts import StoredVectorEntry, VectorSearchResult
 
 
 class VectorChunkRecord(Protocol):
@@ -92,6 +92,11 @@ class InMemoryVectorRepo:
                     VectorSearchResult(
                         item_id=record.item_id,
                         score=self._cosine_similarity(query_vector, record_vector),
+                        item_kind=record.item_kind,
+                        doc_id=record.metadata.get("doc_id", ""),
+                        source_id=record.metadata.get("source_id", ""),
+                        segment_id=record.metadata.get("segment_id", ""),
+                        text=record.text,
                         metadata=dict(record.metadata),
                     )
                 )
@@ -110,11 +115,38 @@ class InMemoryVectorRepo:
                 VectorSearchResult(
                     item_id=record.item_id,
                     score=self._cosine_similarity(query_vector, record.vector),
+                    item_kind=record.item_kind,
+                    doc_id=record.metadata.get("doc_id", ""),
+                    source_id=record.metadata.get("source_id", ""),
+                    segment_id=record.metadata.get("segment_id", ""),
+                    text=record.text,
                     metadata=dict(record.metadata),
                 )
             )
         scored.sort(key=lambda result: (-result.score, result.item_id))
         return scored[:limit]
+
+    def get_entry(
+        self,
+        item_id: str,
+        *,
+        embedding_space: str = "default",
+        item_kind: str = "chunk",
+    ) -> StoredVectorEntry | None:
+        record = self._records.get((embedding_space, item_kind, item_id))
+        if record is None:
+            return None
+        metadata = dict(record.metadata)
+        return StoredVectorEntry(
+            item_id=record.item_id,
+            item_kind=record.item_kind,
+            embedding_space=record.embedding_space,
+            doc_id=metadata.get("doc_id", ""),
+            segment_id=metadata.get("segment_id", ""),
+            text=record.text,
+            metadata=metadata,
+            vector=list(record.vector),
+        )
 
     def existing_item_ids(
         self,
@@ -150,6 +182,26 @@ class InMemoryVectorRepo:
         if not distinct_chunks:
             return len(records)
         return len({record.item_id for record in records})
+
+    def delete_for_documents(
+        self,
+        doc_ids: list[str] | tuple[str, ...],
+        *,
+        item_kind: str | None = None,
+    ) -> int:
+        target_doc_ids = set(doc_ids)
+        keys_to_delete = [
+            key
+            for key, record in self._records.items()
+            if record.metadata.get("doc_id") in target_doc_ids
+            and (item_kind is None or record.item_kind == item_kind)
+        ]
+        for key in keys_to_delete:
+            self._records.pop(key, None)
+        return len(keys_to_delete)
+
+    def close(self) -> None:
+        self._records.clear()
 
     @staticmethod
     def _build_vocabulary(texts: Iterable[str]) -> tuple[str, ...]:

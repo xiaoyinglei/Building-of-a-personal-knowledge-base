@@ -60,7 +60,11 @@ class OllamaProviderRepo(ModelProviderRepo):
             raise RuntimeError(f"Ollama chat request failed: {exc}") from exc
 
     def rerank(self, query: str, candidates: Sequence[str]) -> list[int]:
-        return self._fallback.rerank(query, candidates)
+        del query, candidates
+        raise RuntimeError(
+            "OllamaProviderRepo does not provide rerank. "
+            "Configure a dedicated reranker via RAG_RERANK_MODEL or a provider with is_rerank_configured=true."
+        )
 
     @property
     def provider_name(self) -> str:

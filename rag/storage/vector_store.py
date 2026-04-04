@@ -3,13 +3,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from rag.storage._search.sqlite_vector_repo import SQLiteVectorRepo
-from rag.utils._contracts import VectorSearchResult
+from rag.utils._contracts import VectorRepo, VectorSearchResult
 
 
 @dataclass(slots=True)
 class VectorStore:
-    vector_repo: SQLiteVectorRepo
+    vector_repo: VectorRepo
 
     def upsert_chunk(
         self,
@@ -17,7 +16,7 @@ class VectorStore:
         vector: Iterable[float],
         *,
         metadata: dict[str, str] | None = None,
-        embedding_space: str = "default",
+        embedding_space: str = "default", 
     ) -> None:
         self.vector_repo.upsert(
             chunk_id,

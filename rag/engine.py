@@ -31,9 +31,10 @@ from rag.ingest.ingest import (
     RebuildRequest,
 )
 from rag.llm._generation.answer_generator import AnswerGenerator
+from rag.llm._providers.local_bge_provider_repo import LocalBgeProviderRepo
 from rag.llm.embedding import EmbeddingProviderBinding
 from rag.llm.generation import AnswerGenerationService
-from rag.llm.rerank import HeuristicRerankService
+from rag.llm.rerank import ModelBackedRerankService
 from rag.query._artifact.service import ArtifactService
 from rag.query.context import (
     CandidateLike,
@@ -41,12 +42,12 @@ from rag.query.context import (
     ContextPromptBuilder,
     EvidenceService,
     EvidenceTruncator,
-    QueryUnderstandingService,
-    RoutingService,
 )
 from rag.query.graph import GraphExpansionService, SearchBackedRetrievalFactory
 from rag.query.query import QueryOptions, RAGQueryResult
 from rag.query.retrieve import RAGQueryPipeline, RetrievalService
+from rag.query.routing import RoutingService
+from rag.query.understanding import QueryUnderstandingService
 from rag.schema._types.diagnostics import ProviderAttempt
 from rag.schema._types.storage import CacheEntry
 from rag.schema._types.text import (
@@ -57,9 +58,7 @@ from rag.schema._types.text import (
 )
 from rag.schema.graph import GraphEdge, GraphNode
 from rag.storage import StorageBundle, StorageConfig
-from rag.storage._repo.file_object_store import FileObjectStore
-from rag.storage._search.sqlite_fts_repo import SQLiteFTSRepo
-from rag.utils._contracts import VisualDescriptionRepo
+from rag.utils._contracts import FullTextSearchRepo, ObjectStore, VisualDescriptionRepo
 from rag.utils._telemetry import TelemetryService
 
 _RUNTIME_CONTRACT_NAMESPACE = "rag_runtime"
@@ -69,8 +68,8 @@ _RUNTIME_CONTRACT_KEY = "core_contract_v1"
 class _CoreInstrumentedReranker:
     def __init__(self, rerank_service: object) -> None:
         self._rerank_service = rerank_service
-        self.provider_name = getattr(rerank_service, "provider_name", "heuristic")
-        self.rerank_model_name = getattr(rerank_service, "rerank_model_name", "heuristic")
+        self.provider_name = getattr(rerank_service, "provider_name", "formal-rerank")
+        self.rerank_model_name = getattr(rerank_service, "rerank_model_name", "unconfigured-reranker")
         self.last_provider: str | None = self.provider_name
         self.last_attempts: list[ProviderAttempt] = []
 
@@ -115,8 +114,8 @@ class RAG:
     rebuild_pipeline: RebuildPipeline = field(init=False, repr=False)
     retrieval_service: RetrievalService = field(init=False, repr=False)
     query_pipeline: RAGQueryPipeline = field(init=False, repr=False)
-    _fts_repo: SQLiteFTSRepo = field(init=False, repr=False)
-    _object_store: FileObjectStore = field(init=False, repr=False)
+    _fts_repo: FullTextSearchRepo = field(init=False, repr=False)
+    _object_store: ObjectStore = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         resolved_embedding_model = self._resolve_embedding_model_name(self.embedding_bindings)
@@ -128,8 +127,8 @@ class RAG:
         self.stores = self.storage.build()
         self._register_or_validate_runtime_contract()
         ocr_repo = create_default_ocr_repo()
-        self._fts_repo = SQLiteFTSRepo(self.stores.root / "fts.sqlite3")
-        self._object_store = FileObjectStore(self.stores.root / "objects")
+        self._fts_repo = self.stores.fts_repo
+        self._object_store = self.stores.object_store
         self.ingest_pipeline = IngestPipeline(
             documents=self.stores.documents,
             chunks=self.stores.chunks,
@@ -278,9 +277,8 @@ class RAG:
             fts_repo=self._fts_repo,
             graph_repo=self.stores.graph_repo,
         )
-        instrumented_reranker = _CoreInstrumentedReranker(
-            HeuristicRerankService(provider=self._default_rerank_provider()),
-        )
+        reranker_service = self._build_reranker_service()
+        instrumented_reranker = None if reranker_service is None else _CoreInstrumentedReranker(reranker_service)
         return RetrievalService(
             full_text_retriever=retrieval_factory.full_text_retriever,
             vector_retriever=retrieval_factory.vector_retriever_from_repo(
@@ -312,14 +310,35 @@ class RAG:
             telemetry_service=self.telemetry_service,
         )
 
+    def _build_reranker_service(self) -> object | None:
+        provider = self._default_rerank_provider()
+        if provider is not None:
+            return ModelBackedRerankService(provider=provider)
+        env_rerank_provider = self._env_rerank_provider()
+        if env_rerank_provider is not None:
+            return ModelBackedRerankService(provider=env_rerank_provider)
+        return None
+
     def _default_rerank_provider(self) -> object | None:
         return next(
             (
                 binding.provider
                 for binding in self.embedding_bindings
                 if callable(getattr(binding.provider, "rerank", None))
+                and bool(getattr(binding.provider, "is_rerank_configured", True))
             ),
             None,
+        )
+
+    @staticmethod
+    def _env_rerank_provider() -> object | None:
+        rerank_model = os.environ.get("RAG_RERANK_MODEL")
+        rerank_model_path = os.environ.get("RAG_RERANK_MODEL_PATH")
+        if not rerank_model and not rerank_model_path:
+            return None
+        return LocalBgeProviderRepo(
+            rerank_model=rerank_model or "BAAI/bge-reranker-v2-m3",
+            rerank_model_path=rerank_model_path,
         )
 
     def _register_or_validate_runtime_contract(self) -> None:

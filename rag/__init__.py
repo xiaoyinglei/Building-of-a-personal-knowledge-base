@@ -1,6 +1,6 @@
 """Core RAG library."""
 
 from rag.engine import RAG
-from rag.storage import StorageConfig
+from rag.storage import StorageComponentConfig, StorageConfig
 
-__all__ = ["RAG", "StorageConfig"]
+__all__ = ["RAG", "StorageComponentConfig", "StorageConfig"]

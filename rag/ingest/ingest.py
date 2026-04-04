@@ -48,16 +48,23 @@ from rag.schema.document import (
     SourceType,
 )
 from rag.schema.graph import GraphEdge, GraphNode
-from rag.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
-from rag.storage._repo.file_object_store import FileObjectStore
-from rag.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
-from rag.storage._search.sqlite_fts_repo import SQLiteFTSRepo
-from rag.storage._search.sqlite_vector_repo import SQLiteVectorRepo
+from rag.storage import StorageConfig
 from rag.storage.doc_status import StatusStore
 from rag.storage.graph_store import GraphStore
 from rag.storage.kv_store import CacheStore, ChunkStore, DocumentStore
 from rag.storage.vector_store import VectorStore
-from rag.utils._contracts import ModelProviderRepo, OcrVisionRepo, VectorRepo, VisualDescriptionRepo, WebFetchRepo
+from rag.utils._contracts import (
+    CacheRepo,
+    FullTextSearchRepo,
+    GraphRepo,
+    MetadataRepo,
+    ModelProviderRepo,
+    ObjectStore,
+    OcrVisionRepo,
+    VectorRepo,
+    VisualDescriptionRepo,
+    WebFetchRepo,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,8 +143,8 @@ class IngestPipeline:
     graph: GraphStore
     status: StatusStore
     cache: CacheStore
-    fts_repo: SQLiteFTSRepo
-    object_store: FileObjectStore | None
+    fts_repo: FullTextSearchRepo
+    object_store: ObjectStore | None
     markdown_parser: MarkdownParserRepo
     pdf_parser: PDFParserRepo
     plain_text_parser: PlainTextParserRepo
@@ -1501,7 +1508,7 @@ class DeletePipeline:
     vectors: VectorStore
     graph: GraphStore
     status: StatusStore
-    fts_repo: SQLiteFTSRepo
+    fts_repo: FullTextSearchRepo
     ingest_pipeline: IngestPipeline
 
     def run(self, request: DeleteRequest) -> DeletePipelineResult:
@@ -1652,7 +1659,7 @@ class RebuildPipelineResult:
 class RebuildPipeline:
     ingest_pipeline: IngestPipeline
     delete_pipeline: DeletePipeline
-    object_store: FileObjectStore | None
+    object_store: ObjectStore | None
 
     def run(self, request: RebuildRequest) -> RebuildPipelineResult:
         delete_request = DeleteRequest(
@@ -1872,11 +1879,12 @@ class IngestService:
     def __init__(
         self,
         *,
-        metadata_repo: SQLiteMetadataRepo,
-        fts_repo: SQLiteFTSRepo,
+        metadata_repo: MetadataRepo,
+        cache_repo: CacheRepo | None,
+        fts_repo: FullTextSearchRepo,
         vector_repo: VectorRepo,
-        graph_repo: SQLiteGraphRepo,
-        object_store: FileObjectStore,
+        graph_repo: GraphRepo,
+        object_store: ObjectStore,
         markdown_parser: MarkdownParserRepo,
         pdf_parser: PDFParserRepo,
         plain_text_parser: PlainTextParserRepo,
@@ -1892,6 +1900,7 @@ class IngestService:
         embedding_bindings: tuple[EmbeddingProviderBinding, ...] = (),
     ) -> None:
         self.metadata_repo = metadata_repo
+        self.cache_repo = cache_repo or cast(CacheRepo, metadata_repo)
         self.fts_repo = fts_repo
         self.vector_repo = vector_repo
         self.graph_repo = graph_repo
@@ -1919,10 +1928,10 @@ class IngestService:
         self.ingest_pipeline = IngestPipeline(
             documents=DocumentStore(metadata_repo=self.metadata_repo),
             chunks=ChunkStore(metadata_repo=self.metadata_repo),
-            vectors=VectorStore(vector_repo=cast(SQLiteVectorRepo, self.vector_repo)),
+            vectors=VectorStore(vector_repo=self.vector_repo),
             graph=GraphStore(graph_repo=self.graph_repo),
             status=StatusStore(metadata_repo=self.metadata_repo),
-            cache=CacheStore(metadata_repo=self.metadata_repo),
+            cache=CacheStore(cache_repo=self.cache_repo),
             fts_repo=self.fts_repo,
             object_store=self.object_store,
             markdown_parser=self.markdown_parser,
@@ -1953,12 +1962,14 @@ class IngestService:
         resolved_web_fetch_repo = web_fetch_repo or HttpWebFetchRepo()
         token_contract = TokenizerContract.from_env(embedding_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL)
         token_accounting = TokenAccountingService(token_contract)
+        stores = StorageConfig(root=root).build()
         return cls(
-            metadata_repo=SQLiteMetadataRepo(root / "metadata.sqlite3"),
-            fts_repo=SQLiteFTSRepo(root / "fts.sqlite3"),
-            vector_repo=cast(VectorRepo, SQLiteVectorRepo(root / "vectors.sqlite3")),
-            graph_repo=SQLiteGraphRepo(root / "graph.sqlite3"),
-            object_store=FileObjectStore(root / "objects"),
+            metadata_repo=stores.metadata_repo,
+            cache_repo=stores.cache_repo,
+            fts_repo=stores.fts_repo,
+            vector_repo=stores.vector_repo,
+            graph_repo=stores.graph_repo,
+            object_store=stores.object_store,
             markdown_parser=MarkdownParserRepo(),
             pdf_parser=PDFParserRepo(),
             plain_text_parser=PlainTextParserRepo(),

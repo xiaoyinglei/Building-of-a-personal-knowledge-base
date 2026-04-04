@@ -56,7 +56,11 @@ class OpenAIProviderRepo(ModelProviderRepo):
         raise RuntimeError(f"OpenAI chat request failed: {last_error}") from last_error
 
     def rerank(self, query: str, candidates: Sequence[str]) -> list[int]:
-        return self._fallback.rerank(query, candidates)
+        del query, candidates
+        raise RuntimeError(
+            "OpenAIProviderRepo does not provide rerank. "
+            "Configure a dedicated reranker via RAG_RERANK_MODEL or a provider with is_rerank_configured=true."
+        )
 
     @property
     def provider_name(self) -> str:
