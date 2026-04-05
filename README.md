@@ -322,10 +322,10 @@ http://127.0.0.1:8765
 
 ### 3. 推荐的网页测试顺序
 
-1. 先切到一个 profile  
+1. 先切到一个 profile
    没配真实模型时先用 `test_minimal`；配了 Gemini 之后优先试 `local_retrieval_cloud_chat`
 
-2. 在左侧选中文档  
+2. 在左侧选中文档
    比如 `chinese_enterprise_rag_practice_guide.md`
 
 3. 在右侧提问
@@ -342,7 +342,7 @@ http://127.0.0.1:8765
 试点阶段的默认 chunk 参数是什么？
 ```
 
-4. 到中间看证据卡  
+4. 到中间看证据卡
    不要只看右侧答案，要确认：
    - 分数是不是合理
    - `citation_anchor` 是否落在对应章节
@@ -585,7 +585,7 @@ export RAG_PROMPT_RESERVED_TOKENS=256
 
 ### 1. 为什么 ingest 后没看到 JSON 文件
 
-因为 CLI 只把 JSON 打到终端，不会自动落盘。  
+因为 CLI 只把 JSON 打到终端，不会自动落盘。
 要保存请用：
 
 ```bash
@@ -594,7 +594,7 @@ uv run rag ingest ... | tee ingest-result.json
 
 ### 2. 为什么目录里只有 sqlite3 文件
 
-这说明索引已经落盘了，不说明“没建图”。  
+这说明索引已经落盘了，不说明“没建图”。
 本地默认模式本来就把图存到 `graph.sqlite3`。
 
 ### 3. 我怎么知道是否真的接上了聊天模型
