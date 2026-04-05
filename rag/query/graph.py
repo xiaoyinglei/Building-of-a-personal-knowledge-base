@@ -4,8 +4,9 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
+from rag.llm.assembly import EmbeddingCapabilityBinding
 from rag.query.context import CandidateLike, EvidenceBundle
 from rag.query.understanding import section_family_aliases, special_target_aliases
 from rag.schema._types.query import QueryUnderstanding
@@ -14,7 +15,6 @@ from rag.schema.chunk import Chunk, ChunkRole
 from rag.schema.document import AccessPolicy, Document, ExecutionLocationPreference
 from rag.storage._search.web_search_repo import DeterministicWebSearchRepo
 from rag.utils._contracts import (
-    EmbeddingProviderBinding,
     FullTextSearchRepo,
     GraphRepo,
     MetadataRepo,
@@ -114,7 +114,7 @@ class MultiProviderBackedVectorRetriever:
         *,
         factory: SearchBackedRetrievalFactory,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         item_kind: str = "chunk",
         candidate_builder: Callable[[str, list[VectorSearchResult], list[str]], list[RetrievedCandidate]] | None = None,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
@@ -158,17 +158,17 @@ class MultiProviderBackedVectorRetriever:
                 binding, query=query, source_scope=source_scope, target_space=binding.space
             )
             if candidates:
-                self.last_provider = self._provider_name(binding.provider)
+                self.last_provider = binding.provider_name
                 return candidates
         for binding in ordered_bindings:
             candidates = self._search_binding(binding, query=query, source_scope=source_scope, target_space="default")
             if candidates:
-                self.last_provider = self._provider_name(binding.provider)
+                self.last_provider = binding.provider_name
                 return candidates
         return []
 
-    def _ordered_bindings(self) -> list[EmbeddingProviderBinding]:
-        ordered: list[EmbeddingProviderBinding] = []
+    def _ordered_bindings(self) -> list[EmbeddingCapabilityBinding]:
+        ordered: list[EmbeddingCapabilityBinding] = []
         remaining = list(self._bindings)
         for location in self._prepared_locations:
             matched = [binding for binding in remaining if binding.location == location]
@@ -179,17 +179,14 @@ class MultiProviderBackedVectorRetriever:
 
     def _search_binding(
         self,
-        binding: EmbeddingProviderBinding,
+        binding: EmbeddingCapabilityBinding,
         *,
         query: str,
         source_scope: list[str],
         target_space: str,
     ) -> list[RetrievedCandidate]:
-        embed = getattr(binding.provider, "embed", None)
-        if not callable(embed):
-            return []
         try:
-            query_vectors = cast(list[list[float]], embed([query]))
+            query_vectors = binding.embed([query])
         except RuntimeError:
             return []
         if not query_vectors:
@@ -206,17 +203,6 @@ class MultiProviderBackedVectorRetriever:
         if not results:
             return []
         return self._candidate_builder(query, list(results), source_scope)
-
-    @staticmethod
-    def _provider_name(provider: object) -> str:
-        explicit_name = getattr(provider, "provider_name", None)
-        if isinstance(explicit_name, str) and explicit_name:
-            return explicit_name
-        fallback_name = getattr(provider, "name", None)
-        if isinstance(fallback_name, str) and fallback_name:
-            return fallback_name
-        normalized = provider.__class__.__name__.removesuffix("ProviderRepo").removesuffix("Repo")
-        return normalized.replace("_", "-").lower() or "unknown"
 
 
 class HybridSpecialRetriever:
@@ -526,7 +512,7 @@ class SearchBackedRetrievalFactory:
     def vector_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         *,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> MultiProviderBackedVectorRetriever:
@@ -537,7 +523,7 @@ class SearchBackedRetrievalFactory:
     def local_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         *,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> MultiProviderBackedVectorRetriever:
@@ -553,7 +539,7 @@ class SearchBackedRetrievalFactory:
     def global_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         *,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> MultiProviderBackedVectorRetriever:
@@ -569,7 +555,7 @@ class SearchBackedRetrievalFactory:
     def special_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         *,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> HybridSpecialRetriever:

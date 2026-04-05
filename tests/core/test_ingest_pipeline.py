@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from rag.engine import RAG
 from rag.ingest._chunking.multimodal_chunk_router import special_type_for_element
 from rag.ingest._chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
 from rag.ingest._chunking.token_chunker import chunk_by_tokens
@@ -9,6 +8,7 @@ from rag.schema._types import DocumentType, SourceType
 from rag.schema._types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
 from rag.storage import StorageConfig
 from rag.utils._contracts import ParsedDocument, ParsedElement, ParsedSection
+from tests.support import make_runtime
 
 
 def test_token_chunker_produces_stable_child_chunks() -> None:
@@ -81,7 +81,7 @@ def test_storage_groups_include_document_chunk_status_graph_cache() -> None:
 
 
 def test_ragcore_insert_persists_document_chunks_entities_relations_and_status() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         result = core.insert(
             location="memory://reliability.md",
@@ -120,7 +120,7 @@ def test_ragcore_insert_persists_document_chunks_entities_relations_and_status()
 
 
 def test_ragcore_merges_graph_and_entity_indexes_across_documents() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         first = core.insert(
             location="memory://alpha.txt",
@@ -168,7 +168,7 @@ def test_ragcore_merges_graph_and_entity_indexes_across_documents() -> None:
 
 
 def test_ragcore_insert_canonicalizes_alias_entities_and_relation_direction() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         core.insert(
             location="memory://alias-graph.txt",
@@ -202,7 +202,7 @@ def test_ragcore_insert_canonicalizes_alias_entities_and_relation_direction() ->
 
 
 def test_ragcore_insert_many_processes_multiple_requests() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         result = core.insert_many(
             [
@@ -231,7 +231,7 @@ def test_ragcore_insert_many_processes_multiple_requests() -> None:
 
 
 def test_ragcore_merges_alias_entities_across_documents_when_alias_is_known() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         first = core.insert(
             location="memory://alpha-alias.txt",
@@ -270,7 +270,7 @@ def test_ragcore_merges_alias_entities_across_documents_when_alias_is_known() ->
 
 
 def test_ragcore_insert_links_multimodal_nodes_into_graph_across_sections() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         parsed = ParsedDocument(
             title="Alpha Metrics",

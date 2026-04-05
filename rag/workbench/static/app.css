@@ -126,6 +126,10 @@ textarea {
   line-height: 1.6;
 }
 
+.right-subtitle {
+  margin-top: 10px;
+}
+
 .toolbar,
 .badge-row,
 .composer-actions,
@@ -134,6 +138,30 @@ textarea {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.profile-card {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel-2);
+}
+
+.profile-meta,
+.profile-status {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.profile-meta {
+  font-size: 13px;
+}
+
+.profile-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .toolbar {

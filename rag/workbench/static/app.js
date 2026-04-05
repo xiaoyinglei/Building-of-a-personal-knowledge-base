@@ -19,6 +19,8 @@ const dom = {
   budgetPanel: document.getElementById("budget-panel"),
   diagnosticsPanel: document.getElementById("diagnostics-panel"),
   activeModel: document.getElementById("active-model"),
+  activeProfileMeta: document.getElementById("active-profile-meta"),
+  activeProfileStatus: document.getElementById("active-profile-status"),
   modeSelect: document.getElementById("mode-select"),
   scopeSelected: document.getElementById("scope-selected"),
   chatLog: document.getElementById("chat-log"),
@@ -33,6 +35,12 @@ const dom = {
   rebuildButton: document.getElementById("rebuild-button"),
   deleteButton: document.getElementById("delete-button"),
 };
+
+function setText(node, value) {
+  if (node) {
+    node.textContent = value;
+  }
+}
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -84,13 +92,31 @@ function renderState(state, { keepSelection = true } = {}) {
 
 function renderProfiles(profiles) {
   if (!profiles.length) {
-    dom.activeModel.textContent = "No configured model";
+    setText(dom.activeModel, "No configured profile");
+    setText(dom.activeProfileMeta, "没有可用的 assembly profile。");
+    setText(dom.activeProfileStatus, "请先配置环境变量，或使用 test_minimal。");
     return;
   }
   const active = profiles.find((profile) => profile.profile_id === appState.activeProfileId) || profiles[0];
   appState.activeProfileId = active.profile_id;
   const suffix = active.compatible_with_index ? "" : " (index mismatch)";
-  dom.activeModel.textContent = `${active.label}${suffix}`;
+  setText(dom.activeModel, `${active.label}${suffix}`);
+  const capabilities = [
+    active.chat_model ? `chat=${active.chat_model}` : "chat=none",
+    active.embedding_model ? `embedding=${active.embedding_model}` : "embedding=none",
+    active.rerank_model ? `rerank=${active.rerank_model}` : "rerank=none",
+  ];
+  setText(dom.activeProfileMeta, [
+    `profile_id: ${active.profile_id}`,
+    active.description || "No description.",
+    capabilities.join(" · "),
+  ].join("\n"));
+  setText(
+    dom.activeProfileStatus,
+    active.compatible_with_index
+      ? "当前 profile 与索引 contract 兼容。"
+      : `当前 profile 与索引不兼容: ${active.compatibility_error || "请重建索引或切换 profile。"}`,
+  );
 }
 
 function renderFiles(files, selectedPath, filterText) {
@@ -318,6 +344,7 @@ function cycleProfile(direction) {
   const next = current < 0 ? 0 : (current + direction + profiles.length) % profiles.length;
   appState.activeProfileId = profiles[next].profile_id;
   renderProfiles(profiles);
+  refreshState({ keepSelection: true, sync: false }).catch(showError);
 }
 
 async function refreshState({ keepSelection = true, sync = true } = {}) {
@@ -467,8 +494,9 @@ dom.fileFilter.addEventListener("input", () => {
 });
 
 async function boot() {
-  const state = await refreshState();
+  const state = await refreshState({ sync: false });
   window.__lastState = state;
+  syncNow().catch(showError);
   setInterval(async () => {
     try {
       const nextState = await refreshState({ keepSelection: true, sync: true });

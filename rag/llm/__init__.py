@@ -1,3 +1,21 @@
-from rag.utils._contracts import EmbeddingProviderBinding
+from rag.llm.assembly import (
+    AssemblyConfig,
+    AssemblyOverrides,
+    AssemblyProfileSpec,
+    AssemblyRequest,
+    CapabilityAssemblyService,
+    CapabilityRequirements,
+    ProviderConfig,
+    TokenizerConfig,
+)
 
-__all__ = ["EmbeddingProviderBinding"]
+__all__ = [
+    "AssemblyConfig",
+    "AssemblyOverrides",
+    "AssemblyProfileSpec",
+    "AssemblyRequest",
+    "CapabilityAssemblyService",
+    "CapabilityRequirements",
+    "ProviderConfig",
+    "TokenizerConfig",
+]

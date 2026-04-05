@@ -78,15 +78,22 @@
       <section class="panel right">
         <div class="panel-head right-head">
           <div>
-            <div class="eyebrow">Chat</div>
-            <h2>模型选择与回答</h2>
+            <div class="eyebrow">Runtime</div>
+            <h2>Profile 选择与回答</h2>
           </div>
           <div class="model-switcher">
             <button class="icon-button" id="prev-model" type="button">◀</button>
-            <div class="model-pill" id="active-model">No model</div>
+            <div class="model-pill" id="active-model">No profile</div>
             <button class="icon-button" id="next-model" type="button">▶</button>
           </div>
         </div>
+        <div class="profile-card" id="profile-card">
+          <div class="profile-meta" id="active-profile-meta">等待装配信息</div>
+          <div class="profile-status" id="active-profile-status">等待索引兼容性检查</div>
+        </div>
+        <p class="subtitle right-subtitle">
+          右侧切换的是 assembly profile，不是临时硬编码模型。聊天、embedding、rerank 和 contract 都由同一条装配链决定。
+        </p>
         <div class="query-controls">
           <label>
             <span>查询模式</span>
@@ -105,7 +112,7 @@
           </label>
         </div>
         <div class="chat-log" id="chat-log">
-          <div class="bubble assistant">右侧只保留用户提问和 LLM 回复，证据和诊断都在中间看。</div>
+          <div class="bubble assistant">右侧只保留用户提问和 LLM 回复。证据、分数、路由和诊断都在中间看。</div>
         </div>
         <form class="composer" id="query-form">
           <textarea id="query-input" rows="4" placeholder="输入问题，按提交开始检索"></textarea>

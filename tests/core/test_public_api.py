@@ -5,15 +5,23 @@ from typing import cast
 
 import pytest
 
-from rag import RAG, StorageComponentConfig, StorageConfig
+from rag import RAGRuntime, StorageComponentConfig, StorageConfig
 from rag.ingest.ingest import DirectContentItem
+from rag.llm.assembly import (
+    AssemblyConfig,
+    AssemblyOverrides,
+    AssemblyRequest,
+    CapabilityAssemblyService,
+    CapabilityRequirements,
+    ProviderConfig,
+)
 from rag.query.query import QueryOptions
 from rag.schema._types.content import GraphEdge, GraphNode
-from rag.utils._contracts import EmbeddingProviderBinding
+from tests.support import make_runtime
 
 
 def test_rag_exposes_insert_query_delete_rebuild() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
 
     assert hasattr(core, "insert")
     assert hasattr(core, "query")
@@ -22,7 +30,7 @@ def test_rag_exposes_insert_query_delete_rebuild() -> None:
 
 
 def test_rag_exposes_batch_ingest_and_custom_kg_operations() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
 
     assert hasattr(core, "insert_many")
     assert hasattr(core, "insert_content_list")
@@ -46,7 +54,7 @@ def test_query_options_accepts_bypass_mode() -> None:
 
 
 def test_rag_bypass_mode_uses_direct_llm_path_without_retrieval() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         result = core.query(
             "直接回答：Alpha Engine 是什么？",
@@ -69,14 +77,14 @@ def test_rag_bypass_mode_uses_direct_llm_path_without_retrieval() -> None:
 def test_storage_config_accepts_string_root(tmp_path: Path) -> None:
     root = tmp_path / ".rag"
 
-    core = RAG(storage=StorageConfig(root=str(root)))
+    core = make_runtime(storage=StorageConfig(root=str(root)))
 
     assert core.stores.root == root
 
 
 def test_storage_config_accepts_component_backends(tmp_path: Path) -> None:
     root = tmp_path / ".rag-components"
-    core = RAG(
+    core = make_runtime(
         storage=StorageConfig(
             root=root,
             metadata=StorageComponentConfig(backend="sqlite"),
@@ -115,7 +123,7 @@ class _FakeEmbedOnlyProvider:
 
 
 def test_rag_custom_kg_operations_round_trip() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         node = GraphNode(node_id="entity-alpha", node_type="entity", label="Alpha Engine")
         edge = GraphEdge(
@@ -152,7 +160,7 @@ def test_rag_custom_kg_operations_round_trip() -> None:
 
 
 def test_rag_insert_content_list_normalizes_mixed_content_inputs(tmp_path: Path) -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         markdown_path = tmp_path / "note.md"
         markdown_path.write_text("# Alpha Note\n\nAlpha Engine supports Beta Service.\n", encoding="utf-8")
@@ -188,22 +196,35 @@ def test_rag_insert_content_list_normalizes_mixed_content_inputs(tmp_path: Path)
         core.stores.close()
 
 
-def test_rag_query_skips_unconfigured_rerank_backends() -> None:
+def test_rag_query_skips_unconfigured_rerank_backends(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = _FakeEmbedOnlyProvider()
-    core = RAG(
+    service = CapabilityAssemblyService(env_path=".env.test-unused")
+    monkeypatch.setattr(service, "_load_env", lambda: None)
+    monkeypatch.setattr(service, "_compatibility_config_from_environment", lambda: (AssemblyConfig(), {}))
+    monkeypatch.setattr(service, "_build_provider", lambda config: provider)
+    runtime = RAGRuntime.from_request(
         storage=StorageConfig.in_memory(),
-        embedding_bindings=(EmbeddingProviderBinding(provider=provider, space="default", location="local"),),
+        request=AssemblyRequest(
+            requirements=CapabilityRequirements(),
+            overrides=AssemblyOverrides(
+                embedding=ProviderConfig(
+                    provider_kind="fake-embed",
+                    embedding_model="fake-embed-model",
+                )
+            ),
+        ),
+        assembly_service=service,
     )
     try:
-        core.insert(
+        runtime.insert(
             source_type="plain_text",
             location="memory://alpha",
             owner="user",
             content_text="Alpha Engine supports Beta Service through graph-aware retrieval.",
         )
-        result = core.query("What does Alpha Engine support?")
+        result = runtime.query("What does Alpha Engine support?")
 
         assert result.retrieval.diagnostics.rerank_provider is None
         assert result.answer.answer_text
     finally:
-        core.stores.close()
+        runtime.close()

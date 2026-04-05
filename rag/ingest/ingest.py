@@ -33,8 +33,11 @@ from rag.ingest.extract import (
     choose_preferred_label,
     normalize_entity_key,
 )
-from rag.llm.embedding import EmbeddingProviderBinding, FallbackEmbeddingRepo
-from rag.schema._types.text import DEFAULT_TOKENIZER_FALLBACK_MODEL, TokenAccountingService, TokenizerContract
+from rag.llm.assembly import (
+    CapabilityBundle,
+    ChatCapabilityBinding,
+    EmbeddingCapabilityBinding,
+)
 from rag.schema.chunk import Chunk, ChunkRole, DocumentProcessingPackage
 from rag.schema.document import (
     AccessPolicy,
@@ -58,7 +61,6 @@ from rag.utils._contracts import (
     FullTextSearchRepo,
     GraphRepo,
     MetadataRepo,
-    ModelProviderRepo,
     ObjectStore,
     OcrVisionRepo,
     VectorRepo,
@@ -156,22 +158,14 @@ class IngestPipeline:
     toc_service: TOCService
     chunking_service: ChunkingService
     document_processing_service: DocumentProcessingService
-    embedding_bindings: tuple[EmbeddingProviderBinding, ...] = ()
+    embedding_capabilities: tuple[EmbeddingCapabilityBinding, ...] = ()
+    chat_capabilities: tuple[ChatCapabilityBinding, ...] = ()
     extractor: EntityRelationExtractor | None = None
     merger: EntityRelationMerger | None = None
 
     def __post_init__(self) -> None:
-        if not self.embedding_bindings:
-            self.embedding_bindings = (EmbeddingProviderBinding(provider=FallbackEmbeddingRepo(), space="default"),)
         if self.extractor is None:
-            provider: ModelProviderRepo | None = next(
-                (
-                    cast(ModelProviderRepo, binding.provider)
-                    for binding in self.embedding_bindings
-                    if callable(getattr(binding.provider, "chat", None))
-                ),
-                None,
-            )
+            provider = self.chat_capabilities[0] if self.chat_capabilities else None
             self.extractor = PromptedEntityRelationExtractor(model_provider=provider)
         if self.merger is None:
             self.merger = EntityRelationMerger()
@@ -830,8 +824,8 @@ class IngestPipeline:
         if not special_chunks:
             return
         texts = [self._multimodal_embedding_text(chunk) for chunk in special_chunks]
-        for binding in self.embedding_bindings:
-            vectors = self._embed_texts(binding.provider, texts)
+        for binding in self.embedding_capabilities:
+            vectors = self._embed_texts(binding, texts)
             if vectors is None:
                 continue
             for chunk, vector, text in zip(special_chunks, vectors, texts, strict=True):
@@ -862,8 +856,8 @@ class IngestPipeline:
         texts = [self._entity_embedding_text(entity) for entity in entities]
         if not texts:
             return
-        for binding in self.embedding_bindings:
-            vectors = self._embed_texts(binding.provider, texts)
+        for binding in self.embedding_capabilities:
+            vectors = self._embed_texts(binding, texts)
             if vectors is None:
                 continue
             for entity, vector, text in zip(entities, vectors, texts, strict=True):
@@ -903,8 +897,8 @@ class IngestPipeline:
         ]
         if not texts:
             return
-        for binding in self.embedding_bindings:
-            vectors = self._embed_texts(binding.provider, texts)
+        for binding in self.embedding_capabilities:
+            vectors = self._embed_texts(binding, texts)
             if vectors is None:
                 continue
             for relation, vector, text in zip(relations, vectors, texts, strict=True):
@@ -959,7 +953,7 @@ class IngestPipeline:
             )
             self._save_section_graph(source=source, document=document, segment=segment, chunks=[chunk])
         repaired = 0
-        for binding in self.embedding_bindings:
+        for binding in self.embedding_capabilities:
             chunk_ids = [chunk.chunk_id for chunk in chunks]
             missing_vector_ids = set(chunk_ids) - self.vectors.existing_chunk_ids(
                 chunk_ids,
@@ -968,7 +962,7 @@ class IngestPipeline:
             if not missing_vector_ids:
                 continue
             missing_chunks = [chunk for chunk in chunks if chunk.chunk_id in missing_vector_ids]
-            vectors = self._embed_texts(binding.provider, [chunk.text for chunk in missing_chunks])
+            vectors = self._embed_texts(binding, [chunk.text for chunk in missing_chunks])
             if vectors is None:
                 continue
             repaired += len(missing_chunks)
@@ -1031,8 +1025,8 @@ class IngestPipeline:
         if not chunks:
             return
         texts = [chunk.text for chunk in chunks]
-        for binding in self.embedding_bindings:
-            vectors = self._embed_texts(binding.provider, texts)
+        for binding in self.embedding_capabilities:
+            vectors = self._embed_texts(binding, texts)
             if vectors is None:
                 continue
             for chunk, vector in zip(chunks, vectors, strict=True):
@@ -1227,12 +1221,9 @@ class IngestPipeline:
         return self.status.save(record)
 
     @staticmethod
-    def _embed_texts(provider: object, texts: list[str]) -> list[list[float]] | None:
-        embed = getattr(provider, "embed", None)
-        if not callable(embed):
-            return None
+    def _embed_texts(binding: EmbeddingCapabilityBinding, texts: list[str]) -> list[list[float]] | None:
         try:
-            vectors = cast(list[list[float]], embed(texts))
+            vectors = binding.embed(texts)
         except RuntimeError:
             return None
         if len(vectors) != len(texts):
@@ -1896,8 +1887,7 @@ class IngestService:
         toc_service: TOCService,
         chunking_service: ChunkingService,
         document_processing_service: DocumentProcessingService,
-        embedding_repo: ModelProviderRepo | None = None,
-        embedding_bindings: tuple[EmbeddingProviderBinding, ...] = (),
+        capability_bundle: CapabilityBundle,
     ) -> None:
         self.metadata_repo = metadata_repo
         self.cache_repo = cache_repo or cast(CacheRepo, metadata_repo)
@@ -1916,15 +1906,9 @@ class IngestService:
         self.toc_service = toc_service
         self.chunking_service = chunking_service
         self.document_processing_service = document_processing_service
-        if embedding_bindings:
-            self.embedding_bindings = tuple(embedding_bindings)
-        else:
-            self.embedding_bindings = (
-                EmbeddingProviderBinding(
-                    provider=embedding_repo or FallbackEmbeddingRepo(),
-                    space="default",
-                ),
-            )
+        self.capability_bundle = capability_bundle
+        self.embedding_capabilities = self.capability_bundle.embedding_bindings
+        self.chat_capabilities = self.capability_bundle.chat_bindings
         self.ingest_pipeline = IngestPipeline(
             documents=DocumentStore(metadata_repo=self.metadata_repo),
             chunks=ChunkStore(metadata_repo=self.metadata_repo),
@@ -1945,7 +1929,8 @@ class IngestService:
             toc_service=self.toc_service,
             chunking_service=self.chunking_service,
             document_processing_service=self.document_processing_service,
-            embedding_bindings=self.embedding_bindings,
+            embedding_capabilities=self.embedding_capabilities,
+            chat_capabilities=self.chat_capabilities,
         )
 
     @classmethod
@@ -1953,6 +1938,7 @@ class IngestService:
         cls,
         root: Path,
         *,
+        capability_bundle: CapabilityBundle,
         ocr_repo: OcrVisionRepo | None = None,
         vlm_repo: VisualDescriptionRepo | None = None,
         web_fetch_repo: WebFetchRepo | None = None,
@@ -1960,8 +1946,8 @@ class IngestService:
         root.mkdir(parents=True, exist_ok=True)
         resolved_ocr_repo = ocr_repo or create_default_ocr_repo()
         resolved_web_fetch_repo = web_fetch_repo or HttpWebFetchRepo()
-        token_contract = TokenizerContract.from_env(embedding_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL)
-        token_accounting = TokenAccountingService(token_contract)
+        token_contract = capability_bundle.token_contract
+        token_accounting = capability_bundle.token_accounting
         stores = StorageConfig(root=root).build()
         return cls(
             metadata_repo=stores.metadata_repo,
@@ -1985,12 +1971,7 @@ class IngestService:
                 token_accounting=token_accounting,
                 tokenizer_contract=token_contract,
             ),
-            embedding_bindings=(
-                EmbeddingProviderBinding(
-                    provider=FallbackEmbeddingRepo(),
-                    space="default",
-                ),
-            ),
+            capability_bundle=capability_bundle,
         )
 
     def ingest_markdown(
@@ -2331,7 +2312,7 @@ class IngestService:
     ) -> int:
         repaired = 0
         chunk_ids = [chunk.chunk_id for chunk in chunks]
-        for binding in self.embedding_bindings:
+        for binding in self.embedding_capabilities:
             missing_vector_ids = set(chunk_ids) - self.vector_repo.existing_item_ids(
                 chunk_ids,
                 embedding_space=binding.space,
@@ -2339,7 +2320,7 @@ class IngestService:
             if not missing_vector_ids:
                 continue
             missing_chunks = [chunk for chunk in chunks if chunk.chunk_id in missing_vector_ids]
-            vectors = self._embed_texts(binding.provider, [chunk.text for chunk in missing_chunks])
+            vectors = self._embed_texts(binding, [chunk.text for chunk in missing_chunks])
             if vectors is None:
                 continue
             repaired += len(missing_chunks)
@@ -2361,12 +2342,9 @@ class IngestService:
         return [chunk for chunk in chunks if chunk.chunk_role is not ChunkRole.PARENT]
 
     @staticmethod
-    def _embed_texts(provider: object, texts: list[str]) -> list[list[float]] | None:
-        embed = getattr(provider, "embed", None)
-        if not callable(embed):
-            return None
+    def _embed_texts(binding: EmbeddingCapabilityBinding, texts: list[str]) -> list[list[float]] | None:
         try:
-            vectors = cast(list[list[float]], embed(texts))
+            vectors = binding.embed(texts)
         except RuntimeError:
             return None
         if len(vectors) != len(texts):

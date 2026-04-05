@@ -86,13 +86,6 @@ class VectorSearchResult(RetrievalRecord):
 
 
 @dataclass(frozen=True)
-class EmbeddingProviderBinding:
-    provider: object
-    space: str
-    location: str = "runtime"
-
-
-@dataclass(frozen=True)
 class StoredVectorEntry:
     item_id: str
     item_kind: str

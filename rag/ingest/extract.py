@@ -12,7 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from rag.schema.chunk import Chunk
 from rag.schema.document import Document
-from rag.utils._contracts import ModelProviderRepo
+
+
+class ChatModelLike(Protocol):
+    def chat(self, prompt: str) -> str: ...
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?。！？])\s+")
 _TITLE_CASE_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b")
@@ -484,7 +487,7 @@ class PromptedEntityRelationExtractor:
     def __init__(
         self,
         *,
-        model_provider: ModelProviderRepo | None = None,
+        model_provider: ChatModelLike | None = None,
         fallback: EntityRelationExtractor | None = None,
     ) -> None:
         self._model_provider = model_provider

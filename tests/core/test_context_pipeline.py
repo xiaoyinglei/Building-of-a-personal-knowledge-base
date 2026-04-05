@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import json
 
-from rag.engine import RAG
+from pytest import MonkeyPatch
+
+from rag import RAGRuntime
 from rag.llm._providers.fallback_embedding_repo import FallbackEmbeddingRepo
+from rag.llm.assembly import (
+    AssemblyConfig,
+    AssemblyOverrides,
+    AssemblyRequest,
+    CapabilityAssemblyService,
+    CapabilityRequirements,
+    ProviderConfig,
+)
 from rag.query.query import QueryOptions
 from rag.schema._types.access import ExecutionLocationPreference
 from rag.storage import StorageConfig
-from rag.utils._contracts import EmbeddingProviderBinding
+from tests.support import make_runtime
 
 
 class FakeGenerationProvider:
@@ -41,7 +51,7 @@ class FakeGenerationProvider:
 
 
 def test_ragcore_query_returns_grounded_answer_retrieval_and_context() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     core.insert(
         source_type="plain_text",
         location="memory://alpha-engine",
@@ -64,13 +74,30 @@ def test_ragcore_query_returns_grounded_answer_retrieval_and_context() -> None:
     assert result.context.grounded_candidate
 
 
-def test_ragcore_query_uses_generation_provider_when_available() -> None:
+def test_ragcore_query_uses_generation_provider_when_available(monkeypatch: MonkeyPatch) -> None:
     provider = FakeGenerationProvider()
-    core = RAG(
+    service = CapabilityAssemblyService(env_path=".env.test-unused")
+    monkeypatch.setattr(service, "_load_env", lambda: None)
+    monkeypatch.setattr(service, "_compatibility_config_from_environment", lambda: (AssemblyConfig(), {}))
+    monkeypatch.setattr(service, "_build_provider", lambda config: provider)
+    runtime = RAGRuntime.from_request(
         storage=StorageConfig.in_memory(),
-        embedding_bindings=(EmbeddingProviderBinding(provider=provider, space="default", location="local"),),
+        request=AssemblyRequest(
+            requirements=CapabilityRequirements(require_chat=True),
+            overrides=AssemblyOverrides(
+                embedding=ProviderConfig(
+                    provider_kind="fake-core",
+                    embedding_model="fake-embed",
+                ),
+                chat=ProviderConfig(
+                    provider_kind="fake-core",
+                    chat_model="fake-chat",
+                ),
+            ),
+        ),
+        assembly_service=service,
     )
-    core.insert(
+    runtime.insert(
         source_type="plain_text",
         location="memory://alpha-beta",
         owner="user",
@@ -79,7 +106,7 @@ def test_ragcore_query_uses_generation_provider_when_available() -> None:
         ),
     )
 
-    result = core.query(
+    result = runtime.query(
         "How is Beta Service related to Alpha Engine?",
         options=QueryOptions(
             mode="hybrid",
@@ -90,10 +117,11 @@ def test_ragcore_query_uses_generation_provider_when_available() -> None:
     assert result.generation_provider == "fake-core"
     assert result.answer.answer_text == "Beta Service depends on Alpha Engine for upstream context."
     assert result.answer.answer_sections
+    runtime.close()
 
 
 def test_ragcore_query_truncates_context_to_budget() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     core.insert(
         source_type="plain_text",
         location="memory://long-context",

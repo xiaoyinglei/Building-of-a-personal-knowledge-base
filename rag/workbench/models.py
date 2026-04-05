@@ -8,6 +8,7 @@ class WorkbenchModelProfile(BaseModel):
 
     profile_id: str
     label: str
+    description: str | None = None
     provider_kind: str
     location: str
     chat_model: str | None = None
