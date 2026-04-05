@@ -7,10 +7,8 @@ from types import SimpleNamespace
 from pytest import MonkeyPatch
 
 from rag.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
-from rag.llm._rerank.evaluation import RerankEvaluator
-from rag.llm._rerank.models import RerankCandidate, RerankEvaluationCase, RerankRequest
+from rag.llm._rerank.models import RerankCandidate, RerankRequest
 from rag.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
-from rag.llm._rerank.training import ExportFormat, TrainingSampleExporter
 from rag.schema._types.query import (
     ConfidenceBand,
     MetadataFilters,
@@ -246,116 +244,6 @@ def test_formal_rerank_pipeline_deduplicates_same_parent_and_preserves_special_d
     assert response.items[0].chunk_id == "table-1"
     assert response.dropped_items[0].chunk_id == "child-a2"
     assert response.dropped_items[0].drop_reason == "same_parent_redundant"
-
-
-def test_rerank_evaluator_compares_stages() -> None:
-    evaluator = RerankEvaluator()
-    cases = [
-        RerankEvaluationCase(
-            query_id="q-1",
-            query="系统架构分为哪几层？",
-            query_type="structure",
-            source_type="markdown",
-            expected_chunk_ids=["chunk-arch"],
-            expected_chunk_type="child",
-        )
-    ]
-
-    summary = evaluator.evaluate(
-        cases=cases,
-        stage_rankings={
-            "retrieval_only": {"q-1": ["chunk-general", "chunk-arch"]},
-            "rerank_final": {"q-1": ["chunk-arch", "chunk-general"]},
-        },
-    )
-
-    assert summary.by_stage["retrieval_only"].hit_at_1 == 0.0
-    assert summary.by_stage["rerank_final"].hit_at_1 == 1.0
-    assert summary.by_stage["rerank_final"].mrr == 1.0
-
-
-def test_training_sample_exporter_outputs_pairwise_samples_with_hard_negatives() -> None:
-    service = FormalRerankService(
-        cross_encoder=FakeCrossEncoder([0.21, 0.88, 0.51]),
-        config=RerankPipelineConfig(top_k=8, top_n=3),
-    )
-    response = service.run(
-        RerankRequest(
-            query="系统架构分为哪几层？",
-            query_analysis=_query_analysis(),
-            candidate_list=[
-                RerankCandidate(
-                    chunk_id="chunk-general",
-                    doc_id="doc-a",
-                    parent_id="parent-a",
-                    text="系统由多个模块组成。",
-                    chunk_type="child",
-                    section_path=["项目介绍"],
-                    heading_text="项目介绍",
-                    page_start=1,
-                    page_end=1,
-                    retrieval_channels=["vector"],
-                    dense_score=0.83,
-                    sparse_score=0.31,
-                    special_score=0.0,
-                    fusion_score=0.58,
-                    rrf_score=0.58,
-                    unified_rank=1,
-                    metadata={"source_type": "markdown"},
-                ),
-                RerankCandidate(
-                    chunk_id="chunk-arch",
-                    doc_id="doc-a",
-                    parent_id="parent-arch",
-                    text="系统架构分为接入层、检索层、生成层。",
-                    chunk_type="child",
-                    section_path=["系统架构"],
-                    heading_text="系统架构",
-                    page_start=3,
-                    page_end=3,
-                    retrieval_channels=["section", "vector"],
-                    dense_score=0.76,
-                    sparse_score=0.4,
-                    special_score=0.0,
-                    fusion_score=0.57,
-                    rrf_score=0.57,
-                    unified_rank=2,
-                    metadata={"source_type": "markdown"},
-                ),
-                RerankCandidate(
-                    chunk_id="chunk-cli",
-                    doc_id="doc-a",
-                    parent_id="parent-cli",
-                    text='uv run rag query --mode fast --query "系统架构分为哪几层？"',
-                    chunk_type="child",
-                    section_path=["查询"],
-                    heading_text="查询",
-                    page_start=5,
-                    page_end=5,
-                    retrieval_channels=["sparse"],
-                    dense_score=0.33,
-                    sparse_score=0.48,
-                    special_score=0.0,
-                    fusion_score=0.42,
-                    rrf_score=0.42,
-                    unified_rank=3,
-                    metadata={"source_type": "markdown"},
-                ),
-            ],
-        )
-    )
-    exporter = TrainingSampleExporter()
-
-    samples = exporter.export(
-        response=response,
-        positive_chunk_ids={"chunk-arch"},
-        export_format=ExportFormat.PAIRWISE,
-    )
-
-    assert len(samples) == 2
-    assert all(sample.query == "系统架构分为哪几层？" for sample in samples)
-    assert all(sample.positive_candidate.chunk_id == "chunk-arch" for sample in samples)
-    assert {sample.hard_negative_candidates[0].chunk_id for sample in samples} == {"chunk-general", "chunk-cli"}
 
 
 def test_provider_backed_cross_encoder_uses_provider_ranking_as_scores(monkeypatch: MonkeyPatch) -> None:

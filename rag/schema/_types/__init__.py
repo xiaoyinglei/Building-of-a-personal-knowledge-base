@@ -32,14 +32,6 @@ from rag.schema._types.diagnostics import (
 )
 from rag.schema._types.envelope import EvidenceItem, ExecutionPolicy, PreservationSuggestion, QueryResponse
 from rag.schema._types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection, GroundedAnswer
-from rag.schema._types.memory import (
-    EpisodicMemory,
-    MemoryEvidenceLink,
-    MemoryKind,
-    ResearchEpisode,
-    UserMemory,
-    UserProfile,
-)
 from rag.schema._types.processing import (
     ChunkingStrategy,
     ChunkRoutingDecision,
@@ -102,8 +94,6 @@ __all__ = [
     "IndexHealth",
     "KnowledgeArtifact",
     "MetadataFilters",
-    "MemoryEvidenceLink",
-    "MemoryKind",
     "ModelDiagnostics",
     "PageRangeConstraint",
     "PreservationSuggestion",
@@ -115,7 +105,6 @@ __all__ = [
     "QueryDiagnostics",
     "QueryResponse",
     "ResearchSubQuestion",
-    "ResearchEpisode",
     "RetrievalDiagnostics",
     "Residency",
     "RoutingHints",
@@ -125,7 +114,4 @@ __all__ = [
     "SourceType",
     "StructureConstraints",
     "TaskType",
-    "UserMemory",
-    "UserProfile",
-    "EpisodicMemory",
 ]

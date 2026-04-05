@@ -454,9 +454,11 @@ class DocumentProcessingService:
         token_accounting: TokenAccountingService | None = None,
         tokenizer_contract: TokenizerContract | None = None,
     ) -> None:
-        contract = tokenizer_contract or TokenizerContract.from_env(
+        contract = tokenizer_contract or TokenizerContract(
             embedding_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
-            default_chunk_token_size=self._DEFAULT_TOKENIZER_MAX_TOKENS,
+            tokenizer_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
+            chunking_tokenizer_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
+            chunk_token_size=self._DEFAULT_TOKENIZER_MAX_TOKENS,
         )
         self._token_accounting = token_accounting or TokenAccountingService(contract)
         self._tokenizer_contract = contract

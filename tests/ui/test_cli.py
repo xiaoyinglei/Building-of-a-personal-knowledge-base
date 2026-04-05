@@ -19,6 +19,8 @@ def test_cli_ingest_query_delete_rebuild_round_trip(tmp_path: Path) -> None:
             "ingest",
             "--storage-root",
             str(storage_root),
+            "--profile",
+            "test_minimal",
             "--source-type",
             "plain_text",
             "--location",
@@ -34,6 +36,8 @@ def test_cli_ingest_query_delete_rebuild_round_trip(tmp_path: Path) -> None:
             "query",
             "--storage-root",
             str(storage_root),
+            "--profile",
+            "test_minimal",
             "--query",
             "What does Alpha Engine handle?",
             "--json",
@@ -47,6 +51,8 @@ def test_cli_ingest_query_delete_rebuild_round_trip(tmp_path: Path) -> None:
             "delete",
             "--storage-root",
             str(storage_root),
+            "--profile",
+            "test_minimal",
             "--location",
             "memory://note-1",
         ],
@@ -58,6 +64,8 @@ def test_cli_ingest_query_delete_rebuild_round_trip(tmp_path: Path) -> None:
             "rebuild",
             "--storage-root",
             str(storage_root),
+            "--profile",
+            "test_minimal",
             "--location",
             "memory://note-1",
         ],
@@ -117,3 +125,18 @@ def test_cli_workbench_help_lists_core_options() -> None:
     assert result.exit_code == 0
     assert "--workspace-root" in result.stdout
     assert "--open-browser" in result.stdout
+
+
+def test_cli_profiles_lists_recommended_runtime_profiles() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "profiles",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    profile_ids = {item["profile_id"] for item in payload}
+    assert {"local_full", "local_retrieval_cloud_chat", "cloud_full", "test_minimal"} <= profile_ids

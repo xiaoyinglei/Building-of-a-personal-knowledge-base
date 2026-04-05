@@ -62,6 +62,8 @@ def test_workbench_state_syncs_workspace_into_index(tmp_path: Path, monkeypatch:
     assert file_entry.sync_state == "indexed"
     assert state.index_summary.active_documents == 1
     assert state.index_summary.chunks >= 1
+    profile_ids = {profile.profile_id for profile in state.model_profiles}
+    assert {"local_full", "local_retrieval_cloud_chat", "cloud_full", "test_minimal"} <= profile_ids
 
 
 def test_workbench_query_returns_evidence_for_selected_document(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

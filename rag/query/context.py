@@ -27,7 +27,13 @@ _RETRIEVAL_FAMILIES: Final[tuple[str, ...]] = ("kg", "vector", "multimodal", "ex
 
 
 def _default_token_accounting() -> TokenAccountingService:
-    return TokenAccountingService(TokenizerContract.from_env(embedding_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL))
+    return TokenAccountingService(
+        TokenizerContract(
+            embedding_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
+            tokenizer_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
+            chunking_tokenizer_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
+        )
+    )
 
 
 class CandidateLike(Protocol):

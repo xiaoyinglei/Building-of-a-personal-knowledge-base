@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -31,8 +30,7 @@ from rag.ingest.ingest import (
     RebuildRequest,
 )
 from rag.llm._generation.answer_generator import AnswerGenerator
-from rag.llm._providers.local_bge_provider_repo import LocalBgeProviderRepo
-from rag.llm.embedding import EmbeddingProviderBinding
+from rag.llm.assembly import CapabilityAssemblyService, CapabilityBundle
 from rag.llm.generation import AnswerGenerationService
 from rag.llm.rerank import ModelBackedRerankService
 from rag.query._artifact.service import ArtifactService
@@ -51,10 +49,8 @@ from rag.query.understanding import QueryUnderstandingService
 from rag.schema._types.diagnostics import ProviderAttempt
 from rag.schema._types.storage import CacheEntry
 from rag.schema._types.text import (
-    DEFAULT_TOKENIZER_FALLBACK_MODEL,
     TokenAccountingService,
     TokenizerContract,
-    load_env_file,
 )
 from rag.schema.graph import GraphEdge, GraphNode
 from rag.storage import StorageBundle, StorageConfig
@@ -101,9 +97,16 @@ class _CoreInstrumentedReranker:
 
 
 @dataclass(slots=True)
-class RAG:
+class _CoreRAG:
+    """Internal core implementation.
+
+    Construct through `RAGRuntime` so assembly remains the only model
+    decision and contract-governance entrypoint.
+    """
+
     storage: StorageConfig
-    embedding_bindings: tuple[EmbeddingProviderBinding, ...] = ()
+    assembly_service: CapabilityAssemblyService = field(repr=False)
+    capability_bundle: CapabilityBundle = field(repr=False)
     telemetry_service: TelemetryService | None = None
     vlm_repo: VisualDescriptionRepo | None = None
     token_contract: TokenizerContract = field(init=False, repr=False)
@@ -118,12 +121,8 @@ class RAG:
     _object_store: ObjectStore = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        resolved_embedding_model = self._resolve_embedding_model_name(self.embedding_bindings)
-        self.token_contract = TokenizerContract.from_env(
-            embedding_model_name=resolved_embedding_model,
-            default_context_tokens=QueryOptions().max_context_tokens,
-        )
-        self.token_accounting = TokenAccountingService(self.token_contract)
+        self.token_contract = self.capability_bundle.token_contract
+        self.token_accounting = self.capability_bundle.token_accounting
         self.stores = self.storage.build()
         self._register_or_validate_runtime_contract()
         ocr_repo = create_default_ocr_repo()
@@ -153,9 +152,9 @@ class RAG:
                 token_accounting=self.token_accounting,
                 tokenizer_contract=self.token_contract,
             ),
-            embedding_bindings=self.embedding_bindings,
+            embedding_capabilities=self.capability_bundle.embedding_bindings,
+            chat_capabilities=self.capability_bundle.chat_bindings,
         )
-        self.embedding_bindings = self.ingest_pipeline.embedding_bindings
         self.delete_pipeline = DeletePipeline(
             documents=self.stores.documents,
             chunks=self.stores.chunks,
@@ -182,7 +181,7 @@ class RAG:
             ),
             answer_generator=AnswerGenerator(
                 answer_generation_service=answer_generation_service,
-                provider_bindings=self.embedding_bindings,
+                chat_bindings=self.capability_bundle.chat_bindings,
             ),
         )
 
@@ -272,6 +271,7 @@ class RAG:
         self.stores.graph.delete_edge(edge_id, include_candidates=include_candidates)
 
     def _build_retrieval_service(self) -> RetrievalService:
+        bundle = self.capability_bundle
         retrieval_factory = SearchBackedRetrievalFactory(
             metadata_repo=self.stores.metadata_repo,
             fts_repo=self._fts_repo,
@@ -283,20 +283,20 @@ class RAG:
             full_text_retriever=retrieval_factory.full_text_retriever,
             vector_retriever=retrieval_factory.vector_retriever_from_repo(
                 self.stores.vector_repo,
-                self.embedding_bindings,
+                bundle.embedding_bindings,
             ),
             local_retriever=retrieval_factory.local_retriever_from_repo(
                 self.stores.vector_repo,
-                self.embedding_bindings,
+                bundle.embedding_bindings,
             ),
             global_retriever=retrieval_factory.global_retriever_from_repo(
                 self.stores.vector_repo,
-                self.embedding_bindings,
+                bundle.embedding_bindings,
             ),
             section_retriever=retrieval_factory.section_retriever,
             special_retriever=retrieval_factory.special_retriever_from_repo(
                 self.stores.vector_repo,
-                self.embedding_bindings,
+                bundle.embedding_bindings,
             ),
             metadata_retriever=retrieval_factory.metadata_retriever,
             graph_expander=retrieval_factory.graph_expander,
@@ -311,40 +311,22 @@ class RAG:
         )
 
     def _build_reranker_service(self) -> object | None:
-        provider = self._default_rerank_provider()
-        if provider is not None:
-            return ModelBackedRerankService(provider=provider)
-        env_rerank_provider = self._env_rerank_provider()
-        if env_rerank_provider is not None:
-            return ModelBackedRerankService(provider=env_rerank_provider)
-        return None
-
-    def _default_rerank_provider(self) -> object | None:
-        return next(
-            (
-                binding.provider
-                for binding in self.embedding_bindings
-                if callable(getattr(binding.provider, "rerank", None))
-                and bool(getattr(binding.provider, "is_rerank_configured", True))
-            ),
-            None,
-        )
-
-    @staticmethod
-    def _env_rerank_provider() -> object | None:
-        rerank_model = os.environ.get("RAG_RERANK_MODEL")
-        rerank_model_path = os.environ.get("RAG_RERANK_MODEL_PATH")
-        if not rerank_model and not rerank_model_path:
+        if not self.capability_bundle.rerank_bindings:
             return None
-        return LocalBgeProviderRepo(
-            rerank_model=rerank_model or "BAAI/bge-reranker-v2-m3",
-            rerank_model_path=rerank_model_path,
-        )
+        binding = self.capability_bundle.rerank_bindings[0]
+        if binding is not None:
+            return ModelBackedRerankService(binding=binding)
+        return None
 
     def _register_or_validate_runtime_contract(self) -> None:
         payload = self._runtime_contract_payload()
         existing = self.stores.cache.get(_RUNTIME_CONTRACT_KEY, namespace=_RUNTIME_CONTRACT_NAMESPACE)
-        if existing is None or not isinstance(existing.payload, dict):
+        stored_payload = existing.payload if existing is not None and isinstance(existing.payload, dict) else None
+        governance = self.assembly_service.govern_runtime_contract(
+            bundle=self.capability_bundle,
+            stored_payload=stored_payload,
+        )
+        if governance.should_persist:
             self.stores.cache.save(
                 CacheEntry(
                     namespace=_RUNTIME_CONTRACT_NAMESPACE,
@@ -353,68 +335,10 @@ class RAG:
                 )
             )
             return
-        mismatches = [
-            key
-            for key in (
-                "embedding_model_name",
-                "tokenizer_model_name",
-                "chunking_tokenizer_model_name",
-                "tokenizer_backend",
-                "chunk_token_size",
-                "chunk_overlap_tokens",
-            )
-            if existing.payload.get(key) != payload.get(key)
-        ]
-        if mismatches:
-            details = ", ".join(
-                f"{key}: current={payload.get(key)!r} stored={existing.payload.get(key)!r}"
-                for key in mismatches
-            )
-            raise RuntimeError(
-                "RAG runtime contract does not match the existing index. "
-                f"Mismatched fields: {details}. Use the same embedding/tokenizer contract or rebuild the index."
-            )
+        governance.raise_for_invalid()
 
     def _runtime_contract_payload(self) -> dict[str, str | int | bool]:
-        tokenizer_backend, _tokenizer_model = self.token_accounting.backend_descriptor()
-        return {
-            "embedding_model_name": self.token_contract.embedding_model_name,
-            "tokenizer_model_name": self.token_contract.tokenizer_model_name,
-            "chunking_tokenizer_model_name": self.token_contract.chunking_tokenizer_model_name,
-            "tokenizer_backend": tokenizer_backend,
-            "chunk_token_size": self.token_contract.chunk_token_size,
-            "chunk_overlap_tokens": self.token_contract.normalized_chunk_overlap_tokens(),
-        }
-
-    @staticmethod
-    def _resolve_embedding_model_name(bindings: tuple[EmbeddingProviderBinding, ...]) -> str:
-        load_env_file()
-        configured = next(
-            (
-                str(model_name)
-                for binding in bindings
-                for model_name in [getattr(binding.provider, "embedding_model_name", None)]
-                if isinstance(model_name, str) and model_name.strip()
-            ),
-            "",
-        )
-        env_locked_model = os.environ.get("RAG_EMBEDDING_MODEL") or os.environ.get("RAG_INDEX_EMBEDDING_MODEL")
-        if env_locked_model and not configured:
-            raise RuntimeError(
-                "RAG_EMBEDDING_MODEL is set, but no embedding-capable provider "
-                "with embedding_model_name was configured."
-            )
-        contract = TokenizerContract.from_env(
-            embedding_model_name=configured or DEFAULT_TOKENIZER_FALLBACK_MODEL
-        )
-        if configured and contract.embedding_model_name and contract.embedding_model_name != configured:
-            raise RuntimeError(
-                "Configured embedding model does not match RAG_EMBEDDING_MODEL/RAG_TOKENIZER contract: "
-                f"{configured!r} != {contract.embedding_model_name!r}"
-            )
-        if configured:
-            return configured
-        return contract.embedding_model_name or DEFAULT_TOKENIZER_FALLBACK_MODEL
+        return dict(self.capability_bundle.runtime_contract_payload)
 
     def _normalize_query_options(self, options: QueryOptions | None) -> QueryOptions:
         if options is None:
@@ -475,4 +399,4 @@ class RAG:
         return RebuildRequest(**kwargs)
 
 
-__all__ = ["RAG"]
+__all__ = ["_CoreRAG"]

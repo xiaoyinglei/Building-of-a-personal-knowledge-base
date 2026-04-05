@@ -4,6 +4,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from rag.llm.assembly import ChatCapabilityBinding
 from rag.llm.generation import AnswerGenerationService
 from rag.schema._types.access import AccessPolicy, ExecutionLocationPreference, RuntimeMode
 from rag.schema._types.diagnostics import ProviderAttempt
@@ -22,7 +23,6 @@ from rag.schema._types.text import (
     search_terms,
     split_sentences,
 )
-from rag.utils._contracts import EmbeddingProviderBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +36,7 @@ class AnswerGenerationResult:
 @dataclass(slots=True)
 class AnswerGenerator:
     answer_generation_service: AnswerGenerationService = field(default_factory=AnswerGenerationService)
-    provider_bindings: tuple[EmbeddingProviderBinding, ...] = ()
+    chat_bindings: tuple[ChatCapabilityBinding, ...] = ()
 
     def grounded_candidate(self, query: str, evidence_pack: Sequence[EvidenceItem]) -> str:
         hits = [item for item in evidence_pack if item.text.strip()]
@@ -100,20 +100,16 @@ class AnswerGenerator:
     ) -> AnswerGenerationResult:
         attempts: list[ProviderAttempt] = []
         for binding in self._ordered_bindings(access_policy, execution_location_preference):
-            provider = binding.provider
-            chat = getattr(provider, "chat", None)
-            if not callable(chat):
-                continue
             attempt = ProviderAttempt(
                 stage="generation",
                 capability="chat",
-                provider=self._provider_name(provider),
+                provider=binding.provider_name,
                 location=binding.location,
-                model=self._provider_model(provider, "chat"),
+                model=binding.model_name,
                 status="success",
             )
             try:
-                output = str(chat(prompt))
+                output = binding.chat(prompt)
                 answer = self.answer_generation_service.answer_from_model_output(
                     query=query,
                     evidence_pack=evidence_pack,
@@ -156,20 +152,16 @@ class AnswerGenerator:
     ) -> AnswerGenerationResult:
         attempts: list[ProviderAttempt] = []
         for binding in self._ordered_bindings(access_policy, execution_location_preference):
-            provider = binding.provider
-            chat = getattr(provider, "chat", None)
-            if not callable(chat):
-                continue
             attempt = ProviderAttempt(
                 stage="generation",
                 capability="chat",
-                provider=self._provider_name(provider),
+                provider=binding.provider_name,
                 location=binding.location,
-                model=self._provider_model(provider, "chat"),
+                model=binding.model_name,
                 status="success",
             )
             try:
-                output = str(chat(prompt)).strip()
+                output = binding.chat(prompt).strip()
             except Exception as exc:
                 attempts.append(attempt.model_copy(update={"status": "failed", "error": str(exc)}))
                 continue
@@ -225,8 +217,8 @@ class AnswerGenerator:
         self,
         access_policy: AccessPolicy,
         execution_location_preference: ExecutionLocationPreference,
-    ) -> list[EmbeddingProviderBinding]:
-        if not self.provider_bindings:
+    ) -> list[ChatCapabilityBinding]:
+        if not self.chat_bindings:
             return []
         preferred_locations: tuple[str, ...]
         if access_policy.local_only or execution_location_preference is ExecutionLocationPreference.LOCAL_ONLY:
@@ -236,8 +228,8 @@ class AnswerGenerator:
         else:
             preferred_locations = ("cloud", "local")
 
-        ordered: list[EmbeddingProviderBinding] = []
-        remaining = list(self.provider_bindings)
+        ordered: list[ChatCapabilityBinding] = []
+        remaining = list(self.chat_bindings)
         for location in preferred_locations:
             matched = [binding for binding in remaining if binding.location == location]
             ordered.extend(self._dedupe_providers(matched))
@@ -247,41 +239,17 @@ class AnswerGenerator:
 
     @staticmethod
     def _dedupe_providers(
-        bindings: Sequence[EmbeddingProviderBinding],
-    ) -> list[EmbeddingProviderBinding]:
+        bindings: Sequence[ChatCapabilityBinding],
+    ) -> list[ChatCapabilityBinding]:
         seen: set[int] = set()
-        ordered: list[EmbeddingProviderBinding] = []
+        ordered: list[ChatCapabilityBinding] = []
         for binding in bindings:
-            identity = id(binding.provider)
+            identity = id(binding.backend)
             if identity in seen:
                 continue
             seen.add(identity)
             ordered.append(binding)
         return ordered
-
-    @staticmethod
-    def _provider_name(provider: object) -> str:
-        explicit_name = getattr(provider, "provider_name", None)
-        if isinstance(explicit_name, str) and explicit_name:
-            return explicit_name
-        fallback_name = getattr(provider, "name", None)
-        if isinstance(fallback_name, str) and fallback_name:
-            return fallback_name
-        class_name = provider.__class__.__name__
-        normalized = class_name.removesuffix("ProviderRepo").removesuffix("Repo")
-        return normalized.replace("_", "-").lower() or "unknown"
-
-    @staticmethod
-    def _provider_model(provider: object, capability: str) -> str | None:
-        attribute_names = {
-            "chat": ("chat_model_name", "_chat_model", "_model"),
-            "embed": ("embedding_model_name", "_embedding_model"),
-        }.get(capability, ())
-        for attribute_name in attribute_names:
-            value = getattr(provider, attribute_name, None)
-            if isinstance(value, str) and value:
-                return value
-        return None
 
     @staticmethod
     def _operation_aware_conclusion(query: str, hits: Sequence[EvidenceItem]) -> str | None:

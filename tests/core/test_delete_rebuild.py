@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from rag.engine import RAG
 from rag.schema._types.storage import DocumentProcessingStatus
-from rag.storage import StorageConfig
+from tests.support import make_runtime
 
 
 def test_ragcore_delete_removes_retrieval_indexes_and_marks_document_deleted() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         inserted = core.insert(
             source_type="plain_text",
@@ -35,7 +34,7 @@ def test_ragcore_delete_removes_retrieval_indexes_and_marks_document_deleted() -
 
 
 def test_ragcore_rebuild_restores_deleted_document_from_stored_source() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         inserted = core.insert(
             source_type="plain_text",
@@ -60,7 +59,7 @@ def test_ragcore_rebuild_restores_deleted_document_from_stored_source() -> None:
 
 
 def test_ragcore_rebuild_marks_status_failed_when_source_payload_is_missing() -> None:
-    core = RAG(storage=StorageConfig.in_memory())
+    core = make_runtime()
     try:
         inserted = core.insert(
             source_type="plain_text",
@@ -72,7 +71,7 @@ def test_ragcore_rebuild_marks_status_failed_when_source_payload_is_missing() ->
         object_key = source.metadata.get("object_key")
         assert object_key is not None
         core.delete(location="memory://broken-rebuild")
-        core._object_store.path_for_key(object_key).unlink()
+        core.stores.object_store.path_for_key(object_key).unlink()
 
         try:
             core.rebuild(location="memory://broken-rebuild")
