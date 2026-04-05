@@ -7,8 +7,8 @@ from typing import cast
 import pytest
 from PIL import Image, ImageDraw
 
-from rag.ingest.ingest import IngestService
 from rag.utils._contracts import OcrResult, ParsedDocument
+from tests.support import make_ingest_service
 
 
 class FakeOcrVisionRepo:
@@ -33,7 +33,7 @@ def test_image_ingest_stores_visible_text_and_visual_semantics(tmp_path: Path) -
     image = Image.new("RGB", (120, 80), color="white")
     image.save(image_path)
 
-    service = IngestService.create_in_memory(tmp_path, ocr_repo=FakeOcrVisionRepo())
+    service = make_ingest_service(tmp_path, ocr_repo=FakeOcrVisionRepo())
     result = service.ingest_image(location=str(image_path), image_path=image_path, owner="user")
 
     assert result.segments[0].visible_text == "diagram label"
@@ -47,7 +47,7 @@ def test_default_image_ingest_uses_real_ocr_text(tmp_path: Path) -> None:
     image_path = tmp_path / "chart.png"
     _write_text_image(image_path)
 
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
     result = service.ingest_image(location=str(image_path), image_path=image_path, owner="user")
 
     assert "Quarterly" in result.visible_text
@@ -62,7 +62,7 @@ def test_image_ingest_falls_back_to_ocr_parser_when_docling_image_parse_fails(tm
     image = Image.new("RGB", (120, 80), color="white")
     image.save(image_path)
 
-    service = IngestService.create_in_memory(tmp_path, ocr_repo=FakeOcrVisionRepo())
+    service = make_ingest_service(tmp_path, ocr_repo=FakeOcrVisionRepo())
 
     def fail_parse(*args: object, **kwargs: object) -> ParsedDocument:
         raise ValueError("Docling failed")

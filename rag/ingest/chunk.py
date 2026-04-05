@@ -22,7 +22,14 @@ from rag.schema._types.processing import (
     DocumentFeatures,
     DocumentProcessingPackage,
 )
-from rag.schema._types.text import text_unit_count
+from rag.schema._types.text import (
+    DEFAULT_TOKENIZER_FALLBACK_MODEL,
+    TokenAccountingService,
+    TokenizerContract,
+    looks_code_like,
+    split_sentences,
+    text_unit_count,
+)
 from rag.schema.document import AccessPolicy
 from rag.utils._contracts import ParsedDocument
 
@@ -188,8 +195,9 @@ class PostprocessedChunks:
 
 
 class ChunkPostprocessingService:
-    def __init__(self, *, min_words: int = 24) -> None:
+    def __init__(self, *, min_words: int = 24, token_accounting: TokenAccountingService | None = None) -> None:
         self._min_words = min_words
+        self._token_accounting = token_accounting
 
     def postprocess(
         self,
@@ -229,7 +237,7 @@ class ChunkPostprocessingService:
         index = 0
         while index < len(chunks):
             current = chunks[index]
-            word_count = text_unit_count(current.text)
+            word_count = self._count_tokens(current.text)
             if word_count >= self._min_words:
                 merged.append(current)
                 index += 1
@@ -242,7 +250,7 @@ class ChunkPostprocessingService:
                     next_chunk.model_copy(
                         update={
                             "text": merged_text,
-                            "token_count": text_unit_count(merged_text),
+                            "token_count": self._count_tokens(merged_text),
                             "citation_span": (0, len(merged_text)),
                             "order_index": current.order_index,
                         }
@@ -258,7 +266,7 @@ class ChunkPostprocessingService:
                 merged[-1] = previous.model_copy(
                     update={
                         "text": merged_text,
-                        "token_count": text_unit_count(merged_text),
+                        "token_count": self._count_tokens(merged_text),
                         "citation_span": (0, len(merged_text)),
                     }
                 )
@@ -306,21 +314,31 @@ class ChunkPostprocessingService:
             results.append(chunk.model_copy(update={"content_hash": content_hash}))
         return results
 
-    @staticmethod
-    def _clean_chunk(chunk: Chunk) -> Chunk:
+    def _clean_chunk(self, chunk: Chunk) -> Chunk:
         cleaned = normalize_whitespace(chunk.text)
         return chunk.model_copy(
             update={
                 "text": cleaned,
-                "token_count": text_unit_count(cleaned),
+                "token_count": self._count_tokens(cleaned),
                 "citation_span": (0, len(cleaned)),
             }
         )
 
+    def _count_tokens(self, text: str) -> int:
+        if self._token_accounting is not None:
+            return self._token_accounting.count(text)
+        return text_unit_count(text)
+
 
 class ChunkingService:
-    def __init__(self, *, max_words: int = 160) -> None:
+    def __init__(
+        self,
+        *,
+        max_words: int = 160,
+        token_accounting: TokenAccountingService | None = None,
+    ) -> None:
         self._max_words = max_words
+        self._token_accounting = token_accounting
 
     def chunk_section(
         self,
@@ -335,13 +353,15 @@ class ChunkingService:
         if not normalized:
             return []
 
-        words = normalized.split(" ")
-        if len(words) <= self._max_words:
+        effective_size = self._max_chunk_tokens()
+        effective_overlap = self._chunk_overlap_tokens(text=normalized)
+        chunks = self._chunk_text(
+            normalized,
+            chunk_token_size=effective_size,
+            chunk_overlap_tokens=effective_overlap,
+        )
+        if not chunks:
             chunks = [normalized]
-        else:
-            chunks = []
-            for start in range(0, len(words), self._max_words):
-                chunks.append(" ".join(words[start : start + self._max_words]))
 
         results: list[Chunk] = []
         cursor = 0
@@ -358,7 +378,7 @@ class ChunkingService:
                     segment_id=segment.segment_id,
                     doc_id=doc_id,
                     text=chunk_text,
-                    token_count=len(chunk_text.split()),
+                    token_count=self._count_tokens(chunk_text),
                     citation_anchor=segment.anchor or segment.segment_id,
                     citation_span=(span_start, span_end),
                     effective_access_policy=access_policy,
@@ -375,6 +395,41 @@ class ChunkingService:
         digest = sha256(f"{location}|{anchor}|{index}".encode()).hexdigest()
         return f"chunk-{digest[:16]}"
 
+    def _count_tokens(self, text: str) -> int:
+        if self._token_accounting is not None:
+            return self._token_accounting.count(text)
+        return text_unit_count(text)
+
+    def _chunk_text(
+        self,
+        text: str,
+        *,
+        chunk_token_size: int,
+        chunk_overlap_tokens: int,
+    ) -> list[str]:
+        if self._token_accounting is not None:
+            return self._token_accounting.chunk_text(
+                text,
+                chunk_token_size=chunk_token_size,
+                chunk_overlap_tokens=chunk_overlap_tokens,
+            )
+        windows = chunk_by_tokens(
+            text,
+            chunk_token_size=chunk_token_size,
+            chunk_overlap_token_size=chunk_overlap_tokens,
+        )
+        return [window.text for window in windows]
+
+    def _max_chunk_tokens(self) -> int:
+        if self._token_accounting is not None:
+            return self._token_accounting.contract.chunk_token_size
+        return self._max_words
+
+    def _chunk_overlap_tokens(self, *, text: str) -> int:
+        if self._token_accounting is None or looks_code_like(text):
+            return 0
+        return self._token_accounting.contract.normalized_chunk_overlap_tokens()
+
 
 @dataclass(frozen=True)
 class PreparedDocumentProcessing:
@@ -386,7 +441,7 @@ class PreparedDocumentProcessing:
 
 class DocumentProcessingService:
     _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s*")
-    _DEFAULT_TOKENIZER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+    _DEFAULT_TOKENIZER_MODEL = DEFAULT_TOKENIZER_FALLBACK_MODEL
     _DEFAULT_TOKENIZER_MAX_TOKENS = 512
 
     def __init__(
@@ -396,18 +451,28 @@ class DocumentProcessingService:
         feature_service: DocumentFeatureService | None = None,
         routing_service: ChunkRoutingService | None = None,
         postprocessing_service: ChunkPostprocessingService | None = None,
+        token_accounting: TokenAccountingService | None = None,
+        tokenizer_contract: TokenizerContract | None = None,
     ) -> None:
+        contract = tokenizer_contract or TokenizerContract(
+            embedding_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
+            tokenizer_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
+            chunking_tokenizer_model_name=DEFAULT_TOKENIZER_FALLBACK_MODEL,
+            chunk_token_size=self._DEFAULT_TOKENIZER_MAX_TOKENS,
+        )
+        self._token_accounting = token_accounting or TokenAccountingService(contract)
+        self._tokenizer_contract = contract
         self._toc_service = toc_service
         self._feature_service = feature_service or DocumentFeatureService()
         self._routing_service = routing_service or ChunkRoutingService()
-        self._postprocessing_service = postprocessing_service or ChunkPostprocessingService()
-        self._hierarchical_chunker = HierarchicalChunker()
-        self._hybrid_chunker = build_cached_hybrid_chunker(
-            tokenizer_cls=HuggingFaceTokenizer,
-            hybrid_chunker_cls=HybridChunker,
-            model_name=self._DEFAULT_TOKENIZER_MODEL,
-            max_tokens=self._DEFAULT_TOKENIZER_MAX_TOKENS,
+        self._postprocessing_service = postprocessing_service or ChunkPostprocessingService(
+            token_accounting=self._token_accounting
         )
+        self._hierarchical_chunker = HierarchicalChunker()
+        self._resolved_chunking_tokenizer_model = (
+            contract.chunking_tokenizer_model_name or self._DEFAULT_TOKENIZER_MODEL
+        )
+        self._hybrid_chunker = self._build_hybrid_chunker(contract)
 
     def build(
         self,
@@ -447,6 +512,11 @@ class DocumentProcessingService:
             "special_chunk_mode": routing.special_chunk_mode,
             "local_refine": routing.local_refine,
             "fallback": routing.fallback,
+            "tokenizer_backend": self._token_accounting.backend_descriptor()[0],
+            "tokenizer_model": self._tokenizer_contract.tokenizer_model_name,
+            "chunking_tokenizer_model": self._resolved_chunking_tokenizer_model,
+            "chunk_token_size": self._tokenizer_contract.chunk_token_size,
+            "chunk_overlap_tokens": self._tokenizer_contract.normalized_chunk_overlap_tokens(),
         }
         package = DocumentProcessingPackage(
             source=source,
@@ -472,6 +542,29 @@ class DocumentProcessingService:
             indexed_chunks=[*processed.child_chunks, *processed.special_chunks],
             package=package,
         )
+
+    def _build_hybrid_chunker(self, contract: TokenizerContract) -> Any:
+        attempted: list[tuple[str, bool]] = []
+        for model_name, local_files_only in (
+            (self._resolved_chunking_tokenizer_model, contract.local_files_only),
+            (self._DEFAULT_TOKENIZER_MODEL, contract.local_files_only),
+            (self._DEFAULT_TOKENIZER_MODEL, False),
+        ):
+            if (model_name, local_files_only) in attempted:
+                continue
+            attempted.append((model_name, local_files_only))
+            try:
+                self._resolved_chunking_tokenizer_model = model_name
+                return build_cached_hybrid_chunker(
+                    tokenizer_cls=HuggingFaceTokenizer,
+                    hybrid_chunker_cls=HybridChunker,
+                    model_name=model_name,
+                    max_tokens=contract.chunk_token_size,
+                    local_files_only=local_files_only,
+                )
+            except Exception:
+                continue
+        raise RuntimeError("Unable to initialize Docling chunk tokenizer for the current tokenizer contract")
 
     def _build_primary_chunks(
         self,
@@ -540,6 +633,7 @@ class DocumentProcessingService:
                 for chunk in filtered_chunks
             ],
             source_type=parsed.source_type.value,
+            unit_counter=self._token_accounting.count,
         )
 
         segments: list[Segment] = []
@@ -700,7 +794,7 @@ class DocumentProcessingService:
             parent_chunk=parent_chunk.model_copy(
                 update={
                     "text": child_source_text,
-                    "token_count": text_unit_count(child_source_text),
+                    "token_count": self._count_tokens(child_source_text),
                 }
             ),
             access_policy=access_policy,
@@ -738,7 +832,8 @@ class DocumentProcessingService:
         text = normalize_whitespace(parent_chunk.text)
         if not text:
             return []
-        if not local_refine and text_unit_count(text) <= 140:
+        max_tokens = self._max_chunk_tokens(local_refine=local_refine)
+        if not local_refine and self._count_tokens(text) <= max_tokens:
             return [
                 parent_chunk.model_copy(
                     update={
@@ -751,33 +846,21 @@ class DocumentProcessingService:
                 )
             ]
 
-        sentences = [
-            normalize_whitespace(part) for part in self._SENTENCE_SPLIT_RE.split(text) if normalize_whitespace(part)
-        ]
-        if not sentences:
-            sentences = [text]
-        groups: list[str] = []
-        buffer: list[str] = []
-        max_words = 90 if local_refine else 130
-        max_sentences = 3 if local_refine else 5
-        for sentence in sentences:
-            candidate = normalize_whitespace(" ".join([*buffer, sentence]))
-            should_flush = bool(buffer) and (text_unit_count(candidate) > max_words or len(buffer) >= max_sentences)
-            if should_flush:
-                groups.append(normalize_whitespace(" ".join(buffer)))
-                buffer = [sentence]
-            else:
-                buffer.append(sentence)
-        if buffer:
-            groups.append(normalize_whitespace(" ".join(buffer)))
+        overlap_tokens = self._overlap_tokens(text=text)
+        groups = self._coarse_to_fine_groups(
+            text,
+            max_tokens=max_tokens,
+            overlap_tokens=overlap_tokens,
+        )
         refined: list[Chunk] = []
         cursor = 0
         for index, group in enumerate(groups):
-            span_start = text.find(group, cursor)
+            search_start = max(0, cursor - len(group))
+            span_start = text.find(group, search_start)
             if span_start < 0:
                 span_start = cursor
             span_end = span_start + len(group)
-            cursor = span_end
+            cursor = max(cursor, span_end)
             chunk_id = self._deterministic_id(parent_chunk.chunk_id, str(index), "chunk")
             refined.append(
                 Chunk(
@@ -785,7 +868,7 @@ class DocumentProcessingService:
                     segment_id=parent_chunk.segment_id,
                     doc_id=parent_chunk.doc_id,
                     text=group,
-                    token_count=text_unit_count(group),
+                    token_count=self._count_tokens(group),
                     citation_anchor=parent_chunk.citation_anchor,
                     citation_span=(span_start, span_end),
                     effective_access_policy=access_policy,
@@ -829,7 +912,7 @@ class DocumentProcessingService:
             segment_id=segment.segment_id,
             doc_id=document.doc_id,
             text=normalized,
-            token_count=text_unit_count(normalized),
+            token_count=self._count_tokens(normalized),
             citation_anchor=segment.anchor or segment.segment_id,
             citation_span=(0, len(normalized)),
             effective_access_policy=access_policy,
@@ -846,6 +929,80 @@ class DocumentProcessingService:
                 **(metadata or {}),
             },
         )
+
+    def _coarse_to_fine_groups(
+        self,
+        text: str,
+        *,
+        max_tokens: int,
+        overlap_tokens: int,
+    ) -> list[str]:
+        units = [normalize_whitespace(part) for part in split_sentences(text) if normalize_whitespace(part)]
+        if not units:
+            units = [text]
+        groups: list[str] = []
+        buffer = ""
+        allow_overlap = overlap_tokens > 0 and not looks_code_like(text)
+        for unit in units:
+            unit_tokens = self._count_tokens(unit)
+            if unit_tokens > max_tokens:
+                if buffer:
+                    groups.append(buffer)
+                    buffer = ""
+                groups.extend(
+                    self._chunk_text(
+                        unit,
+                        chunk_token_size=max_tokens,
+                        chunk_overlap_tokens=overlap_tokens if allow_overlap else 0,
+                    )
+                )
+                continue
+            candidate = normalize_whitespace(f"{buffer} {unit}") if buffer else unit
+            if buffer and self._count_tokens(candidate) > max_tokens:
+                groups.append(buffer)
+                overlap_seed = self._tail_text(buffer, overlap_tokens) if allow_overlap else ""
+                candidate = normalize_whitespace(f"{overlap_seed} {unit}") if overlap_seed else unit
+                if overlap_seed and self._count_tokens(candidate) > max_tokens:
+                    candidate = unit
+                buffer = candidate
+            else:
+                buffer = candidate
+        if buffer:
+            groups.append(buffer)
+        return groups or [text]
+
+    def _count_tokens(self, text: str) -> int:
+        return self._token_accounting.count(text)
+
+    def _chunk_text(
+        self,
+        text: str,
+        *,
+        chunk_token_size: int,
+        chunk_overlap_tokens: int,
+    ) -> list[str]:
+        chunks = self._token_accounting.chunk_text(
+            text,
+            chunk_token_size=chunk_token_size,
+            chunk_overlap_tokens=chunk_overlap_tokens,
+        )
+        return chunks or [text]
+
+    def _tail_text(self, text: str, token_budget: int) -> str:
+        if token_budget <= 0:
+            return ""
+        return self._token_accounting.tail(text, token_budget)
+
+    def _overlap_tokens(self, *, text: str) -> int:
+        if looks_code_like(text):
+            return 0
+        return self._tokenizer_contract.normalized_chunk_overlap_tokens()
+
+    def _max_chunk_tokens(self, *, local_refine: bool) -> int:
+        base = max(self._tokenizer_contract.chunk_token_size, 32)
+        if not local_refine:
+            return base
+        return max(int(base * 0.72), 64)
 
     @staticmethod
     def _page_numbers(chunk: Any) -> list[int]:

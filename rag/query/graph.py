@@ -4,17 +4,22 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
-from rag.query.context import CandidateLike, EvidenceBundle, QueryUnderstandingService
+from rag.llm.assembly import EmbeddingCapabilityBinding
+from rag.query.context import CandidateLike, EvidenceBundle
+from rag.query.understanding import section_family_aliases, special_target_aliases
+from rag.schema._types.query import QueryUnderstanding
 from rag.schema._types.text import keyword_overlap, search_terms
 from rag.schema.chunk import Chunk, ChunkRole
 from rag.schema.document import AccessPolicy, Document, ExecutionLocationPreference
-from rag.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
-from rag.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
-from rag.storage._search.sqlite_fts_repo import SQLiteFTSRepo
 from rag.storage._search.web_search_repo import DeterministicWebSearchRepo
-from rag.utils._contracts import EmbeddingProviderBinding, VectorSearchResult
+from rag.utils._contracts import (
+    FullTextSearchRepo,
+    GraphRepo,
+    MetadataRepo,
+    VectorSearchResult,
+)
 
 _GRAPH_RELATION_WEIGHTS = {
     "depends_on": 1.18,
@@ -78,6 +83,10 @@ class RetrievedCandidate(CandidateLike):
     chunk_type: str | None = None
     source_type: str | None = None
 
+    @property
+    def item_id(self) -> str:
+        return self.chunk_id
+
 
 class VectorSearchRepoProtocol(Protocol):
     def search(
@@ -105,7 +114,7 @@ class MultiProviderBackedVectorRetriever:
         *,
         factory: SearchBackedRetrievalFactory,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         item_kind: str = "chunk",
         candidate_builder: Callable[[str, list[VectorSearchResult], list[str]], list[RetrievedCandidate]] | None = None,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
@@ -134,7 +143,13 @@ class MultiProviderBackedVectorRetriever:
             ("local", "cloud") if preference is ExecutionLocationPreference.LOCAL_FIRST else ("cloud", "local")
         )
 
-    def __call__(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
+    def __call__(
+        self,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> list[RetrievedCandidate]:
+        del query_understanding
         self.last_provider = None
         self.last_attempts = []
         ordered_bindings = self._ordered_bindings()
@@ -143,17 +158,17 @@ class MultiProviderBackedVectorRetriever:
                 binding, query=query, source_scope=source_scope, target_space=binding.space
             )
             if candidates:
-                self.last_provider = self._provider_name(binding.provider)
+                self.last_provider = binding.provider_name
                 return candidates
         for binding in ordered_bindings:
             candidates = self._search_binding(binding, query=query, source_scope=source_scope, target_space="default")
             if candidates:
-                self.last_provider = self._provider_name(binding.provider)
+                self.last_provider = binding.provider_name
                 return candidates
         return []
 
-    def _ordered_bindings(self) -> list[EmbeddingProviderBinding]:
-        ordered: list[EmbeddingProviderBinding] = []
+    def _ordered_bindings(self) -> list[EmbeddingCapabilityBinding]:
+        ordered: list[EmbeddingCapabilityBinding] = []
         remaining = list(self._bindings)
         for location in self._prepared_locations:
             matched = [binding for binding in remaining if binding.location == location]
@@ -164,17 +179,14 @@ class MultiProviderBackedVectorRetriever:
 
     def _search_binding(
         self,
-        binding: EmbeddingProviderBinding,
+        binding: EmbeddingCapabilityBinding,
         *,
         query: str,
         source_scope: list[str],
         target_space: str,
     ) -> list[RetrievedCandidate]:
-        embed = getattr(binding.provider, "embed", None)
-        if not callable(embed):
-            return []
         try:
-            query_vectors = cast(list[list[float]], embed([query]))
+            query_vectors = binding.embed([query])
         except RuntimeError:
             return []
         if not query_vectors:
@@ -192,23 +204,12 @@ class MultiProviderBackedVectorRetriever:
             return []
         return self._candidate_builder(query, list(results), source_scope)
 
-    @staticmethod
-    def _provider_name(provider: object) -> str:
-        explicit_name = getattr(provider, "provider_name", None)
-        if isinstance(explicit_name, str) and explicit_name:
-            return explicit_name
-        fallback_name = getattr(provider, "name", None)
-        if isinstance(fallback_name, str) and fallback_name:
-            return fallback_name
-        normalized = provider.__class__.__name__.removesuffix("ProviderRepo").removesuffix("Repo")
-        return normalized.replace("_", "-").lower() or "unknown"
-
 
 class HybridSpecialRetriever:
     def __init__(
         self,
         *,
-        lexical_retriever: Callable[[str, list[str]], list[RetrievedCandidate]],
+        lexical_retriever: Callable[[str, list[str], QueryUnderstanding], list[RetrievedCandidate]],
         vector_retriever: MultiProviderBackedVectorRetriever,
     ) -> None:
         self._lexical_retriever = lexical_retriever
@@ -227,9 +228,14 @@ class HybridSpecialRetriever:
             execution_location_preference=execution_location_preference,
         )
 
-    def __call__(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
-        lexical_candidates = self._lexical_retriever(query, source_scope)
-        vector_candidates = self._vector_retriever(query, source_scope)
+    def __call__(
+        self,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> list[RetrievedCandidate]:
+        lexical_candidates = self._lexical_retriever(query, source_scope, query_understanding)
+        vector_candidates = self._vector_retriever(query, source_scope, query_understanding)
         self.last_provider = self._vector_retriever.last_provider
         self.last_attempts = list(self._vector_retriever.last_attempts)
         if not vector_candidates:
@@ -263,23 +269,43 @@ class SearchBackedRetrievalFactory:
     def __init__(
         self,
         *,
-        metadata_repo: SQLiteMetadataRepo,
-        fts_repo: SQLiteFTSRepo,
-        graph_repo: SQLiteGraphRepo,
+        metadata_repo: MetadataRepo,
+        fts_repo: FullTextSearchRepo,
+        graph_repo: GraphRepo,
     ) -> None:
         self._metadata_repo = metadata_repo
         self._fts_repo = fts_repo
         self._graph_repo = graph_repo
-        self._query_understanding = QueryUnderstandingService()
 
-    def full_text_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
+    def full_text_retriever(
+        self,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> list[RetrievedCandidate]:
+        del query_understanding
         return self._build_candidates_from_chunk_ids(
             [result.chunk_id for result in self._fts_repo.search(query, limit=12, doc_ids=source_scope or None)],
             source_kind="internal",
         )
 
-    def section_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
+    def section_retriever(
+        self,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> list[RetrievedCandidate]:
         query_terms = search_terms(query)
+        constraints = query_understanding.structure_constraints
+        preferred_sections = set(query_understanding.preferred_section_terms)
+        semantic_aliases = {
+            alias
+            for family in constraints.semantic_section_families
+            for alias in section_family_aliases(family)
+        }
+        heading_hints = set(constraints.heading_hints) | set(constraints.title_hints)
+        if not (preferred_sections or semantic_aliases or heading_hints or constraints.locator_terms):
+            return []
         candidates: list[RetrievedCandidate] = []
         for document in self._iter_documents(source_scope):
             source = self._metadata_repo.get_source(document.source_id)
@@ -287,8 +313,15 @@ class SearchBackedRetrievalFactory:
                 segment = self._metadata_repo.get_segment(chunk.segment_id)
                 if segment is None:
                     continue
-                overlap = keyword_overlap(query_terms, " ".join(segment.toc_path))
-                if overlap == 0:
+                section_text = " ".join(segment.toc_path)
+                heading_score = sum(1.4 for hint in heading_hints if hint and hint in section_text)
+                preferred_score = sum(1.2 for term in preferred_sections if term and term in section_text)
+                semantic_score = sum(0.8 for alias in semantic_aliases if alias and alias in section_text.lower())
+                lexical_score = keyword_overlap(query_terms, section_text)
+                score = heading_score + preferred_score + semantic_score + lexical_score * 0.2
+                if constraints.prefer_heading_match and heading_score <= 0 and preferred_score <= 0:
+                    continue
+                if score <= 0.0:
                     continue
                 candidates.append(
                     RetrievedCandidate(
@@ -297,7 +330,7 @@ class SearchBackedRetrievalFactory:
                         source_id=document.source_id,
                         text=chunk.text,
                         citation_anchor=chunk.citation_anchor,
-                        score=float(overlap),
+                        score=round(float(score), 6),
                         rank=1,
                         section_path=tuple(segment.toc_path),
                         effective_access_policy=chunk.effective_access_policy,
@@ -315,28 +348,32 @@ class SearchBackedRetrievalFactory:
         candidates.sort(key=lambda item: (-item.score, item.chunk_id))
         return candidates[:12]
 
-    def special_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
+    def special_retriever(
+        self,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> list[RetrievedCandidate]:
         query_terms = search_terms(query)
         lowered = query.lower()
+        target_aliases = {
+            target: set(special_target_aliases(target))
+            for target in query_understanding.special_targets
+        }
+        if not target_aliases:
+            return []
         candidates: list[RetrievedCandidate] = []
         for document in self._iter_documents(source_scope):
             for chunk in self._metadata_repo.list_chunks(document.doc_id):
                 if chunk.chunk_role is not ChunkRole.SPECIAL:
                     continue
-                score = keyword_overlap(query_terms, chunk.text)
+                score = float(keyword_overlap(query_terms, chunk.text))
                 special_type = chunk.special_chunk_type or ""
-                if special_type and special_type in lowered:
-                    score += 2
-                if special_type == "table" and any(term in lowered for term in ("表格", "表", "指标", "数值")):
-                    score += 2
-                if special_type == "ocr_region" and any(term in lowered for term in ("ocr", "识别", "图片文字")):
-                    score += 2
-                if special_type == "image_summary" and any(term in lowered for term in ("图片", "图像", "画面")):
-                    score += 1
-                if special_type == "formula" and any(
-                    term in lowered for term in ("公式", "equation", "formula", "latex")
-                ):
-                    score += 2
+                aliases = target_aliases.get(special_type, set())
+                if special_type and special_type in target_aliases:
+                    score += 2.4
+                if aliases and any(alias in lowered for alias in aliases):
+                    score += 1.6
                 if score <= 0:
                     continue
                 candidates.extend(
@@ -348,17 +385,34 @@ class SearchBackedRetrievalFactory:
         candidates.sort(key=lambda item: (-item.score, item.chunk_id))
         return candidates[:12]
 
-    def metadata_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
-        understanding = self._query_understanding.analyze(query)
-        page_numbers = set(self._as_str_list(understanding.metadata_filters.get("page_numbers")))
-        source_types = set(self._as_str_list(understanding.metadata_filters.get("source_types")))
-        preferred_sections = set(self._as_str_list(understanding.structure_constraints.get("preferred_section_terms")))
-        if not (page_numbers or source_types or preferred_sections or understanding.special_targets):
+    def metadata_retriever(
+        self,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> list[RetrievedCandidate]:
+        del query
+        page_numbers = set(query_understanding.metadata_filters.page_numbers)
+        page_ranges = list(query_understanding.metadata_filters.page_ranges)
+        source_types = set(query_understanding.metadata_filters.source_types)
+        preferred_sections = set(query_understanding.preferred_section_terms)
+        document_titles = set(query_understanding.metadata_filters.document_titles)
+        file_names = set(query_understanding.metadata_filters.file_names)
+        if not (
+            page_numbers
+            or page_ranges
+            or source_types
+            or preferred_sections
+            or document_titles
+            or file_names
+            or query_understanding.special_targets
+        ):
             return []
         candidates: list[RetrievedCandidate] = []
         for document in self._iter_documents(source_scope):
             source = self._metadata_repo.get_source(document.source_id)
             source_type = "" if source is None else source.source_type.value
+            file_name = self._resolve_file_name(document.title, None if source is None else source.location)
             for chunk in self._metadata_repo.list_chunks(document.doc_id):
                 if chunk.chunk_role is ChunkRole.PARENT:
                     continue
@@ -367,17 +421,28 @@ class SearchBackedRetrievalFactory:
                 score = 0.0
                 if source_types and source_type in source_types:
                     score += 3.0
+                if document_titles and document.title in document_titles:
+                    score += 2.2
+                if file_names and file_name in file_names:
+                    score += 2.2
                 if preferred_sections and any(term in section_text for term in preferred_sections):
                     score += 3.5
                 if page_numbers:
                     page_no = chunk.metadata.get("page_no", "")
-                    if page_no in page_numbers:
+                    if page_no.isdigit() and int(page_no) in page_numbers:
                         score += 4.0
                     elif segment is not None and segment.page_range is not None:
                         start, end = segment.page_range
-                        if any(start <= int(page) <= end for page in page_numbers):
+                        if any(start <= page <= end for page in page_numbers):
                             score += 2.5
-                if understanding.special_targets and chunk.special_chunk_type in understanding.special_targets:
+                if page_ranges and segment is not None and segment.page_range is not None:
+                    start, end = segment.page_range
+                    if any(not (page_range.end < start or page_range.start > end) for page_range in page_ranges):
+                        score += 3.0
+                if (
+                    query_understanding.special_targets
+                    and chunk.special_chunk_type in query_understanding.special_targets
+                ):
                     score += 2.0
                 if score <= 0:
                     continue
@@ -420,8 +485,13 @@ class SearchBackedRetrievalFactory:
             source_kind="graph",
         )
 
-    def web_retriever(self, query: str, source_scope: list[str]) -> list[RetrievedCandidate]:
-        del source_scope
+    def web_retriever(
+        self,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> list[RetrievedCandidate]:
+        del source_scope, query_understanding
         return [
             RetrievedCandidate(
                 chunk_id=f"web-{index}",
@@ -442,7 +512,7 @@ class SearchBackedRetrievalFactory:
     def vector_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         *,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> MultiProviderBackedVectorRetriever:
@@ -453,7 +523,7 @@ class SearchBackedRetrievalFactory:
     def local_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         *,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> MultiProviderBackedVectorRetriever:
@@ -469,7 +539,7 @@ class SearchBackedRetrievalFactory:
     def global_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         *,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> MultiProviderBackedVectorRetriever:
@@ -485,7 +555,7 @@ class SearchBackedRetrievalFactory:
     def special_retriever_from_repo(
         self,
         vector_repo: VectorSearchRepoProtocol,
-        bindings: Sequence[EmbeddingProviderBinding],
+        bindings: Sequence[EmbeddingCapabilityBinding],
         *,
         default_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> HybridSpecialRetriever:
@@ -596,14 +666,6 @@ class SearchBackedRetrievalFactory:
             return documents
         allowed = set(source_scope)
         return [document for document in documents if {document.doc_id, document.source_id} & allowed]
-
-    @staticmethod
-    def _as_str_list(value: list[str] | str | bool | None) -> list[str]:
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, str)]
-        if isinstance(value, str):
-            return [value]
-        return []
 
     @staticmethod
     def _resolve_file_name(title: str, location: str | None) -> str | None:

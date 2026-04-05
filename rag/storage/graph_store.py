@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rag.schema._types.content import GraphEdge, GraphNode
-from rag.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
+from rag.utils._contracts import GraphRepo
 
 
 @dataclass(slots=True)
 class GraphStore:
-    graph_repo: SQLiteGraphRepo
+    graph_repo: GraphRepo
 
     def save_node(self, node: GraphNode, *, evidence_chunk_ids: list[str] | None = None) -> None:
         self.graph_repo.save_node(node)

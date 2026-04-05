@@ -10,9 +10,6 @@ from rag.llm._rerank.models import RerankCandidate
 from rag.llm.model_paths import resolve_local_model_reference
 from rag.schema._types.text import (
     keyword_overlap,
-    looks_command_like,
-    looks_definition_query,
-    looks_definition_text,
     search_terms,
     split_sentences,
     text_unit_count,
@@ -41,25 +38,27 @@ class ProviderBackedCrossEncoder:
         self._provider = provider
         self._config = config or CrossEncoderConfig()
         self._backend: object | None = None
-        self.backend_name = "deterministic_fallback"
+        self.backend_name = "unconfigured"
         self.model_name = self._config.model_name
         self.device = "cpu"
 
     def load(self) -> None:
         if self._backend is not None:
             return
+        backend = self._try_provider_backend()
+        if backend is not None:
+            self._backend = backend
+            self.backend_name = "provider_rerank"
+            return
         backend = self._try_flag_embedding_backend()
         if backend is not None:
             self._backend = backend
             self.backend_name = "bge_local"
             return
-        rerank = getattr(self._provider, "rerank", None)
-        if callable(rerank):
-            self._backend = rerank
-            self.backend_name = "provider_rerank"
-            return
-        self._backend = None
-        self.backend_name = "deterministic_fallback"
+        raise RuntimeError(
+            "No model-backed reranker is configured. "
+            "Configure RAG_RERANK_MODEL/RAG_RERANK_MODEL_PATH or provide a provider with is_rerank_configured=true."
+        )
 
     def release(self) -> None:
         self._backend = None
@@ -81,7 +80,7 @@ class ProviderBackedCrossEncoder:
             return self._score_with_local_backend(query, prepared_candidates, resolved)
         if self.backend_name == "provider_rerank" and callable(self._backend):
             return self._score_with_provider(query, prepared_candidates)
-        return [self._fallback_score(query, candidate.text) for candidate in prepared_candidates]
+        raise RuntimeError("Cross encoder backend was not initialized")
 
     def _score_with_provider(self, query: str, candidates: list[RerankCandidate]) -> list[float]:
         rerank = cast(Any, self._backend)
@@ -109,7 +108,18 @@ class ProviderBackedCrossEncoder:
                 max_length=config.max_length,
             )
             return [float(score) for score in scores]
-        return [self._fallback_score(query, candidate.text) for candidate in candidates]
+        raise RuntimeError("Local rerank backend does not expose compute_score")
+
+    def _try_provider_backend(self) -> object | None:
+        rerank = getattr(self._provider, "rerank", None)
+        if not callable(rerank):
+            return None
+        if not bool(getattr(self._provider, "is_rerank_configured", True)):
+            return None
+        model_name = getattr(self._provider, "rerank_model_name", None)
+        if isinstance(model_name, str) and model_name:
+            self.model_name = model_name
+        return cast(object, rerank)
 
     def _try_flag_embedding_backend(self) -> object | None:
         if not self._config.model_path:
@@ -162,15 +172,3 @@ class ProviderBackedCrossEncoder:
         if not selected:
             return text[: config.max_length]
         return " ".join(selected)
-
-    @staticmethod
-    def _fallback_score(query: str, text: str) -> float:
-        query_terms = search_terms(query)
-        overlap = keyword_overlap(query_terms, text)
-        exact_phrase = 1.0 if query.strip().lower() in text.lower() else 0.0
-        score = 0.15 + overlap * 0.1 + exact_phrase * 0.4
-        if not looks_command_like(query) and looks_command_like(text):
-            score -= 0.55
-        if looks_definition_query(query) and looks_definition_text(text):
-            score += 0.22
-        return round(max(0.0, min(1.0, score)), 6)

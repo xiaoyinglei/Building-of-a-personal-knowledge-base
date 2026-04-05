@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from rag.ingest.ingest import IngestService
 from rag.schema._types.access import (
     AccessPolicy,
     ExecutionLocation,
@@ -9,10 +8,11 @@ from rag.schema._types.access import (
     RuntimeMode,
 )
 from rag.schema._types.content import SourceType
+from tests.support import make_ingest_service
 
 
 def test_plain_text_ingest_infers_root_toc_and_inherits_policy(tmp_path: Path) -> None:
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
     policy = AccessPolicy(
         residency=Residency.LOCAL_REQUIRED,
         external_retrieval=ExternalRetrievalPolicy.DENY,
@@ -34,7 +34,7 @@ def test_plain_text_ingest_infers_root_toc_and_inherits_policy(tmp_path: Path) -
 
 
 def test_pasted_text_ingest_preserves_source_type_and_inline_title(tmp_path: Path) -> None:
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
 
     result = service.ingest_plain_text(
         location="inline://pasted/1",

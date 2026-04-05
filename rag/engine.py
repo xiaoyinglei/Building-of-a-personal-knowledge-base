@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -30,9 +30,9 @@ from rag.ingest.ingest import (
     RebuildRequest,
 )
 from rag.llm._generation.answer_generator import AnswerGenerator
-from rag.llm.embedding import EmbeddingProviderBinding
+from rag.llm.assembly import CapabilityAssemblyService, CapabilityBundle
 from rag.llm.generation import AnswerGenerationService
-from rag.llm.rerank import HeuristicRerankService
+from rag.llm.rerank import ModelBackedRerankService
 from rag.query._artifact.service import ArtifactService
 from rag.query.context import (
     CandidateLike,
@@ -40,26 +40,32 @@ from rag.query.context import (
     ContextPromptBuilder,
     EvidenceService,
     EvidenceTruncator,
-    QueryUnderstandingService,
-    RoutingService,
 )
 from rag.query.graph import GraphExpansionService, SearchBackedRetrievalFactory
 from rag.query.query import QueryOptions, RAGQueryResult
 from rag.query.retrieve import RAGQueryPipeline, RetrievalService
+from rag.query.routing import RoutingService
+from rag.query.understanding import QueryUnderstandingService
 from rag.schema._types.diagnostics import ProviderAttempt
+from rag.schema._types.storage import CacheEntry
+from rag.schema._types.text import (
+    TokenAccountingService,
+    TokenizerContract,
+)
 from rag.schema.graph import GraphEdge, GraphNode
 from rag.storage import StorageBundle, StorageConfig
-from rag.storage._repo.file_object_store import FileObjectStore
-from rag.storage._search.sqlite_fts_repo import SQLiteFTSRepo
-from rag.utils._contracts import VisualDescriptionRepo
+from rag.utils._contracts import FullTextSearchRepo, ObjectStore, VisualDescriptionRepo
 from rag.utils._telemetry import TelemetryService
+
+_RUNTIME_CONTRACT_NAMESPACE = "rag_runtime"
+_RUNTIME_CONTRACT_KEY = "core_contract_v1"
 
 
 class _CoreInstrumentedReranker:
     def __init__(self, rerank_service: object) -> None:
         self._rerank_service = rerank_service
-        self.provider_name = getattr(rerank_service, "provider_name", "heuristic")
-        self.rerank_model_name = getattr(rerank_service, "rerank_model_name", "heuristic")
+        self.provider_name = getattr(rerank_service, "provider_name", "formal-rerank")
+        self.rerank_model_name = getattr(rerank_service, "rerank_model_name", "unconfigured-reranker")
         self.last_provider: str | None = self.provider_name
         self.last_attempts: list[ProviderAttempt] = []
 
@@ -91,25 +97,37 @@ class _CoreInstrumentedReranker:
 
 
 @dataclass(slots=True)
-class RAG:
+class _CoreRAG:
+    """Internal core implementation.
+
+    Construct through `RAGRuntime` so assembly remains the only model
+    decision and contract-governance entrypoint.
+    """
+
     storage: StorageConfig
-    embedding_bindings: tuple[EmbeddingProviderBinding, ...] = ()
+    assembly_service: CapabilityAssemblyService = field(repr=False)
+    capability_bundle: CapabilityBundle = field(repr=False)
     telemetry_service: TelemetryService | None = None
     vlm_repo: VisualDescriptionRepo | None = None
+    token_contract: TokenizerContract = field(init=False, repr=False)
+    token_accounting: TokenAccountingService = field(init=False, repr=False)
     stores: StorageBundle = field(init=False)
     ingest_pipeline: IngestPipeline = field(init=False)
     delete_pipeline: DeletePipeline = field(init=False, repr=False)
     rebuild_pipeline: RebuildPipeline = field(init=False, repr=False)
     retrieval_service: RetrievalService = field(init=False, repr=False)
     query_pipeline: RAGQueryPipeline = field(init=False, repr=False)
-    _fts_repo: SQLiteFTSRepo = field(init=False, repr=False)
-    _object_store: FileObjectStore = field(init=False, repr=False)
+    _fts_repo: FullTextSearchRepo = field(init=False, repr=False)
+    _object_store: ObjectStore = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.token_contract = self.capability_bundle.token_contract
+        self.token_accounting = self.capability_bundle.token_accounting
         self.stores = self.storage.build()
+        self._register_or_validate_runtime_contract()
         ocr_repo = create_default_ocr_repo()
-        self._fts_repo = SQLiteFTSRepo(self.stores.root / "fts.sqlite3")
-        self._object_store = FileObjectStore(self.stores.root / "objects")
+        self._fts_repo = self.stores.fts_repo
+        self._object_store = self.stores.object_store
         self.ingest_pipeline = IngestPipeline(
             documents=self.stores.documents,
             chunks=self.stores.chunks,
@@ -128,11 +146,15 @@ class RAG:
             docling_parser=DoclingParserRepo(ocr_repo, self.vlm_repo),
             policy_resolution_service=PolicyResolutionService(),
             toc_service=TOCService(),
-            chunking_service=ChunkingService(),
-            document_processing_service=DocumentProcessingService(toc_service=TOCService()),
-            embedding_bindings=self.embedding_bindings,
+            chunking_service=ChunkingService(token_accounting=self.token_accounting),
+            document_processing_service=DocumentProcessingService(
+                toc_service=TOCService(),
+                token_accounting=self.token_accounting,
+                tokenizer_contract=self.token_contract,
+            ),
+            embedding_capabilities=self.capability_bundle.embedding_bindings,
+            chat_capabilities=self.capability_bundle.chat_bindings,
         )
-        self.embedding_bindings = self.ingest_pipeline.embedding_bindings
         self.delete_pipeline = DeletePipeline(
             documents=self.stores.documents,
             chunks=self.stores.chunks,
@@ -152,17 +174,19 @@ class RAG:
         self.query_pipeline = RAGQueryPipeline(
             retrieval=self.retrieval_service,
             context_merger=ContextEvidenceMerger(),
-            truncator=EvidenceTruncator(),
+            truncator=EvidenceTruncator(token_accounting=self.token_accounting),
             prompt_builder=ContextPromptBuilder(
                 answer_generation_service=answer_generation_service,
+                token_accounting=self.token_accounting,
             ),
             answer_generator=AnswerGenerator(
                 answer_generation_service=answer_generation_service,
-                provider_bindings=self.embedding_bindings,
+                chat_bindings=self.capability_bundle.chat_bindings,
             ),
         )
 
     def insert(self, request: IngestRequest | None = None, /, **kwargs: Any) -> IngestPipelineResult:
+        self._register_or_validate_runtime_contract()
         return self.ingest_pipeline.run(self._coerce_ingest_request(request, **kwargs))
 
     def insert_many(
@@ -171,6 +195,7 @@ class RAG:
         *,
         continue_on_error: bool = False,
     ) -> BatchIngestResult:
+        self._register_or_validate_runtime_contract()
         return self.ingest_pipeline.run_many(requests, continue_on_error=continue_on_error)
 
     def insert_content_list(
@@ -179,6 +204,7 @@ class RAG:
         *,
         continue_on_error: bool = False,
     ) -> BatchIngestResult:
+        self._register_or_validate_runtime_contract()
         return self.ingest_pipeline.run_content_list(items, continue_on_error=continue_on_error)
 
     def query(
@@ -188,13 +214,15 @@ class RAG:
         **kwargs: Any,
     ) -> RAGQueryResult:
         query_text = self._coerce_query_text(*args, **kwargs)
-        return self.query_pipeline.run(query_text, options=options or QueryOptions())
+        self._register_or_validate_runtime_contract()
+        return self.query_pipeline.run(query_text, options=self._normalize_query_options(options))
 
     def delete(self, *args: Any, **kwargs: Any) -> DeletePipelineResult:
         request = self._coerce_delete_request(*args, **kwargs)
         return self.delete_pipeline.run(request)
 
     def rebuild(self, *args: Any, **kwargs: Any) -> RebuildPipelineResult:
+        self._register_or_validate_runtime_contract()
         request = self._coerce_rebuild_request(*args, **kwargs)
         return self.rebuild_pipeline.run(request)
 
@@ -243,32 +271,32 @@ class RAG:
         self.stores.graph.delete_edge(edge_id, include_candidates=include_candidates)
 
     def _build_retrieval_service(self) -> RetrievalService:
+        bundle = self.capability_bundle
         retrieval_factory = SearchBackedRetrievalFactory(
             metadata_repo=self.stores.metadata_repo,
             fts_repo=self._fts_repo,
             graph_repo=self.stores.graph_repo,
         )
-        instrumented_reranker = _CoreInstrumentedReranker(
-            HeuristicRerankService(provider=self._default_rerank_provider()),
-        )
+        reranker_service = self._build_reranker_service()
+        instrumented_reranker = None if reranker_service is None else _CoreInstrumentedReranker(reranker_service)
         return RetrievalService(
             full_text_retriever=retrieval_factory.full_text_retriever,
             vector_retriever=retrieval_factory.vector_retriever_from_repo(
                 self.stores.vector_repo,
-                self.embedding_bindings,
+                bundle.embedding_bindings,
             ),
             local_retriever=retrieval_factory.local_retriever_from_repo(
                 self.stores.vector_repo,
-                self.embedding_bindings,
+                bundle.embedding_bindings,
             ),
             global_retriever=retrieval_factory.global_retriever_from_repo(
                 self.stores.vector_repo,
-                self.embedding_bindings,
+                bundle.embedding_bindings,
             ),
             section_retriever=retrieval_factory.section_retriever,
             special_retriever=retrieval_factory.special_retriever_from_repo(
                 self.stores.vector_repo,
-                self.embedding_bindings,
+                bundle.embedding_bindings,
             ),
             metadata_retriever=retrieval_factory.metadata_retriever,
             graph_expander=retrieval_factory.graph_expander,
@@ -282,15 +310,45 @@ class RAG:
             telemetry_service=self.telemetry_service,
         )
 
-    def _default_rerank_provider(self) -> object | None:
-        return next(
-            (
-                binding.provider
-                for binding in self.embedding_bindings
-                if callable(getattr(binding.provider, "rerank", None))
-            ),
-            None,
+    def _build_reranker_service(self) -> object | None:
+        if not self.capability_bundle.rerank_bindings:
+            return None
+        binding = self.capability_bundle.rerank_bindings[0]
+        if binding is not None:
+            return ModelBackedRerankService(binding=binding)
+        return None
+
+    def _register_or_validate_runtime_contract(self) -> None:
+        payload = self._runtime_contract_payload()
+        existing = self.stores.cache.get(_RUNTIME_CONTRACT_KEY, namespace=_RUNTIME_CONTRACT_NAMESPACE)
+        stored_payload = existing.payload if existing is not None and isinstance(existing.payload, dict) else None
+        governance = self.assembly_service.govern_runtime_contract(
+            bundle=self.capability_bundle,
+            stored_payload=stored_payload,
         )
+        if governance.should_persist:
+            self.stores.cache.save(
+                CacheEntry(
+                    namespace=_RUNTIME_CONTRACT_NAMESPACE,
+                    cache_key=_RUNTIME_CONTRACT_KEY,
+                    payload=payload,
+                )
+            )
+            return
+        governance.raise_for_invalid()
+
+    def _runtime_contract_payload(self) -> dict[str, str | int | bool]:
+        return dict(self.capability_bundle.runtime_contract_payload)
+
+    def _normalize_query_options(self, options: QueryOptions | None) -> QueryOptions:
+        if options is None:
+            return QueryOptions(max_context_tokens=self.token_contract.max_context_tokens)
+        if (
+            options.max_context_tokens == QueryOptions().max_context_tokens
+            and self.token_contract.max_context_tokens != QueryOptions().max_context_tokens
+        ):
+            return replace(options, max_context_tokens=self.token_contract.max_context_tokens)
+        return options
 
     @staticmethod
     def _coerce_query_text(*args: Any, **kwargs: Any) -> str:
@@ -341,4 +399,4 @@ class RAG:
         return RebuildRequest(**kwargs)
 
 
-__all__ = ["RAG"]
+__all__ = ["_CoreRAG"]

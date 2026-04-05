@@ -12,10 +12,10 @@ from pptx.util import Inches
 
 from rag.ingest import chunk as document_processing_module
 from rag.ingest.chunk import TOCService
-from rag.ingest.ingest import IngestService
 from rag.schema._types.content import SourceType
 from rag.schema._types.processing import ChunkingStrategy, ChunkRole
 from rag.utils._contracts import OcrRegion, OcrResult
+from tests.support import make_ingest_service
 
 
 class FakeOcrVisionRepo:
@@ -142,7 +142,7 @@ def test_ingest_file_builds_uniform_processing_package(
 ) -> None:
     path = tmp_path / filename
     writer(path)
-    service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
+    service = make_ingest_service(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
 
     result = service.ingest_file(location=str(path), file_path=path, owner="user")
 
@@ -162,7 +162,7 @@ def test_ingest_file_builds_uniform_processing_package(
 def test_docx_secondary_route_uses_hybrid_when_heading_quality_is_low(tmp_path: Path) -> None:
     path = tmp_path / "low-quality.docx"
     _write_docx(path, with_headings=False)
-    service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
+    service = make_ingest_service(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
 
     result = service.ingest_file(location=str(path), file_path=path, owner="user")
 
@@ -174,7 +174,7 @@ def test_docx_secondary_route_uses_hybrid_when_heading_quality_is_low(tmp_path: 
 def test_image_pipeline_produces_special_chunks_and_parent_child_links(tmp_path: Path) -> None:
     path = tmp_path / "chart.png"
     _write_image(path)
-    service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
+    service = make_ingest_service(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
 
     result = service.ingest_file(location=str(path), file_path=path, owner="user")
 
@@ -191,7 +191,7 @@ def test_image_pipeline_produces_special_chunks_and_parent_child_links(tmp_path:
 def test_ingest_file_supports_pptx_content(tmp_path: Path) -> None:
     path = tmp_path / "quarterly.pptx"
     _write_pptx(path)
-    service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
+    service = make_ingest_service(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
 
     result = service.ingest_file(location=str(path), file_path=path, owner="user")
 
@@ -204,7 +204,7 @@ def test_ingest_file_supports_pptx_content(tmp_path: Path) -> None:
 def test_ingest_file_supports_xlsx_content(tmp_path: Path) -> None:
     path = tmp_path / "quarterly.xlsx"
     _write_xlsx(path)
-    service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
+    service = make_ingest_service(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
 
     result = service.ingest_file(location=str(path), file_path=path, owner="user")
 
@@ -218,7 +218,7 @@ def test_ingest_file_enriches_embedded_figure_with_optional_vlm_description(tmp_
     path = tmp_path / "visual-slide.pptx"
     _write_pptx_with_image(path)
     vlm_repo = FakeVlmRepo()
-    service = IngestService.create_in_memory(
+    service = make_ingest_service(
         tmp_path / "runtime",
         ocr_repo=FakeOcrVisionRepo(),
         vlm_repo=vlm_repo,
@@ -234,7 +234,7 @@ def test_ingest_file_enriches_embedded_figure_with_optional_vlm_description(tmp_
 def test_pipeline_reports_clear_error_for_unsupported_file_types(tmp_path: Path) -> None:
     path = tmp_path / "notes.bin"
     path.write_text("not supported", encoding="utf-8")
-    service = IngestService.create_in_memory(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
+    service = make_ingest_service(tmp_path / "runtime", ocr_repo=FakeOcrVisionRepo())
 
     with pytest.raises(ValueError, match="Unsupported file type"):
         service.ingest_file(location=str(path), file_path=path, owner="user")
@@ -268,7 +268,7 @@ def test_document_processing_service_uses_cached_tokenizer_configuration(monkeyp
 
     document_processing_module.DocumentProcessingService(toc_service=TOCService())
 
-    assert captured["model_name"] == "sentence-transformers/all-MiniLM-L6-v2"
+    assert captured["model_name"] == "BAAI/bge-m3"
     assert captured["max_tokens"] == 512
     assert captured["local_files_only"] is True
     assert captured["tokenizer"] is not None

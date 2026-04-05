@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from rag.ingest.ingest import IngestService
+from tests.support import make_ingest_service
 
 
 def test_markdown_ingest_builds_toc_paths_and_stable_anchors(tmp_path: Path) -> None:
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
 
     first = service.ingest_markdown(
         location="notes/topic.md",

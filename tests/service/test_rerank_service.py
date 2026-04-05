@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from typing import Any, cast
 
-from rag.llm.rerank import HeuristicRerankService
+import pytest
+
+from rag.llm.rerank import ModelBackedRerankService
 
 
 @dataclass(frozen=True)
@@ -15,8 +17,34 @@ class Candidate:
     metadata: dict[str, str] | None = None
 
 
-def test_rerank_service_prefers_explanatory_text_over_command_snippets_for_natural_language_queries() -> None:
-    service = HeuristicRerankService()
+class _FakeModelRerankProvider:
+    provider_name = "fake-model-rerank"
+    rerank_model_name = "fake-cross-encoder"
+    is_rerank_configured = True
+
+    def rerank(self, query: str, candidates: list[str]) -> list[int]:
+        lowered = query.lower()
+        preferred: tuple[str, ...]
+        if "表格" in query or "数值" in query:
+            preferred = ("table", "指标")
+        elif "架构" in query or "哪几层" in query:
+            preferred = ("架构", "system architecture")
+        else:
+            preferred = ("个人知识平台", "可靠性", "supports beta service")
+        ranked = sorted(
+            range(len(candidates)),
+            key=lambda index: (
+                0 if any(token.lower() in candidates[index].lower() for token in preferred) else 1,
+                -len(candidates[index]),
+            ),
+        )
+        if "项目做什么" in lowered:
+            return ranked
+        return ranked
+
+
+def test_model_backed_rerank_service_uses_provider_ranking() -> None:
+    service = ModelBackedRerankService(provider=_FakeModelRerankProvider())
     candidates = [
         Candidate(
             chunk_id="chunk-cli",
@@ -37,8 +65,8 @@ def test_rerank_service_prefers_explanatory_text_over_command_snippets_for_natur
     assert [candidate.chunk_id for candidate in reranked][:2] == ["chunk-desc", "chunk-cli"]
 
 
-def test_rerank_service_penalizes_readme_cli_examples_for_definition_queries() -> None:
-    service = HeuristicRerankService()
+def test_model_backed_rerank_service_ranks_definition_chunks_ahead_of_cli_examples() -> None:
+    service = ModelBackedRerankService(provider=_FakeModelRerankProvider())
     candidates = [
         Candidate(
             chunk_id="chunk-cli",
@@ -60,8 +88,8 @@ def test_rerank_service_penalizes_readme_cli_examples_for_definition_queries() -
     assert [candidate.chunk_id for candidate in reranked][:2] == ["chunk-desc", "chunk-cli"]
 
 
-def test_rerank_service_prefers_table_special_chunks_for_table_queries() -> None:
-    service = HeuristicRerankService()
+def test_model_backed_rerank_service_prefers_table_chunks_when_provider_scores_them_higher() -> None:
+    service = ModelBackedRerankService(provider=_FakeModelRerankProvider())
     candidates = [
         Candidate(
             chunk_id="chunk-figure",
@@ -86,8 +114,8 @@ def test_rerank_service_prefers_table_special_chunks_for_table_queries() -> None
     assert [candidate.chunk_id for candidate in reranked][:2] == ["chunk-table", "chunk-figure"]
 
 
-def test_rerank_service_prefers_exact_structure_path_matches_for_heading_queries() -> None:
-    service = HeuristicRerankService()
+def test_model_backed_rerank_service_prefers_structure_chunks_when_provider_scores_them_higher() -> None:
+    service = ModelBackedRerankService(provider=_FakeModelRerankProvider())
     candidates = [
         Candidate(
             chunk_id="chunk-general",
@@ -106,3 +134,22 @@ def test_rerank_service_prefers_exact_structure_path_matches_for_heading_queries
     reranked = service.rerank("系统架构分为哪几层？", cast(Any, candidates))
 
     assert [candidate.chunk_id for candidate in reranked][:2] == ["chunk-arch", "chunk-general"]
+
+
+def test_model_backed_rerank_service_requires_real_rerank_backend() -> None:
+    service = ModelBackedRerankService()
+
+    with pytest.raises(RuntimeError, match="No model-backed reranker is configured"):
+        service.rerank(
+            "这个项目做什么？",
+            cast(
+                Any,
+                [
+                    Candidate(
+                        chunk_id="chunk-desc",
+                        text="一个以可靠性为优先的个人知识平台。",
+                        score=1.0,
+                    )
+                ],
+            ),
+        )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from rag.llm._generation.answer_generator import AnswerGenerator
 from rag.query._artifact.service import ArtifactService
@@ -14,20 +14,21 @@ from rag.query.context import (
     CandidateLike,
     ContextEvidenceMerger,
     ContextPromptBuilder,
+    ContextPromptBuildResult,
+    ContextTruncationResult,
     EvidenceBundle,
     EvidenceService,
     EvidenceTruncator,
-    QueryUnderstandingService,
-    RoutingDecision,
-    RoutingService,
     SelfCheckResult,
 )
 from rag.query.graph import GraphExpansionService
 from rag.query.policies import RoutingThresholds
 from rag.query.query import BuiltContext, QueryMode, QueryOptions, RAGQueryResult, normalize_query_mode
+from rag.query.routing import RoutingDecision, RoutingService
+from rag.query.understanding import QueryUnderstandingService
 from rag.schema._types.diagnostics import ProviderAttempt, RetrievalDiagnostics
+from rag.schema._types.envelope import EvidenceItem
 from rag.schema._types.query import QueryUnderstanding
-from rag.schema._types.text import text_unit_count
 from rag.schema.document import AccessPolicy, ExecutionLocationPreference
 from rag.schema.query import RetrievalResult
 from rag.utils._telemetry import TelemetryService
@@ -87,14 +88,20 @@ class QueryPipeline:
         query_options: QueryOptions | None = None,
     ) -> RetrievalResult:
         scope = list(source_scope)
-        decision = self.routing_service.route(query, source_scope=scope, access_policy=access_policy)
         resolved_mode = normalize_query_mode(query_options.mode if query_options is not None else query_mode)
+        query_understanding = self.query_understanding_service.analyze(query)
+        decision = self.routing_service.route(
+            query,
+            query_understanding=query_understanding,
+            source_scope=scope,
+            access_policy=access_policy,
+        )
         if resolved_mode is QueryMode.BYPASS:
             return self._run_bypass_mode(
                 query=query,
                 decision=decision,
+                query_understanding=query_understanding,
             )
-        query_understanding = self.query_understanding_service.analyze(query)
         if resolved_mode is QueryMode.NAIVE:
             return self._run_naive_mode(
                 query=query,
@@ -178,7 +185,7 @@ class QueryPipeline:
         query_options: QueryOptions | None,
     ) -> RetrievalResult:
         retrieval_limit = self._requested_retrieval_limit(query_options)
-        aux_branches = self._multimodal_branch_specs(query_understanding, retrieval_limit)
+        aux_branches = self._auxiliary_branch_specs(query_understanding, retrieval_limit)
         return self._execute_mode(
             query=query,
             source_scope=source_scope,
@@ -208,7 +215,7 @@ class QueryPipeline:
         query_options: QueryOptions | None,
     ) -> RetrievalResult:
         retrieval_limit = self._requested_retrieval_limit(query_options)
-        aux_branches = self._multimodal_branch_specs(query_understanding, retrieval_limit)
+        aux_branches = self._auxiliary_branch_specs(query_understanding, retrieval_limit)
         return self._execute_mode(
             query=query,
             source_scope=source_scope,
@@ -238,7 +245,7 @@ class QueryPipeline:
         query_options: QueryOptions | None,
     ) -> RetrievalResult:
         retrieval_limit = self._requested_retrieval_limit(query_options)
-        aux_branches = self._multimodal_branch_specs(query_understanding, retrieval_limit)
+        aux_branches = self._auxiliary_branch_specs(query_understanding, retrieval_limit)
         return self._execute_mode(
             query=query,
             source_scope=source_scope,
@@ -272,7 +279,8 @@ class QueryPipeline:
         query_options: QueryOptions | None,
     ) -> RetrievalResult:
         retrieval_limit = self._requested_retrieval_limit(query_options)
-        aux_branches = self._multimodal_branch_specs(query_understanding, retrieval_limit)
+        aux_branches = self._auxiliary_branch_specs(query_understanding, retrieval_limit)
+        text_branches = self._mix_text_branches(query_understanding, retrieval_limit)
         kg_limit = max(2, retrieval_limit - 1)
         return self._execute_mode(
             query=query,
@@ -287,8 +295,7 @@ class QueryPipeline:
                 internal_branches=(
                     BranchExecutionSpec("local", kg_limit),
                     BranchExecutionSpec("global", kg_limit),
-                    BranchExecutionSpec("vector", retrieval_limit),
-                    BranchExecutionSpec("full_text", retrieval_limit),
+                    *text_branches,
                     *aux_branches,
                 ),
                 allow_web=True,
@@ -315,12 +322,14 @@ class QueryPipeline:
             source_scope=source_scope,
             access_policy=access_policy,
             decision=decision,
+            query_understanding=query_understanding,
         )
         reranked_candidates, candidate_count, parent_backfilled_count, collapsed_candidate_count = self._rank_branches(
             query=query,
             mode=spec.mode,
             branches=internal_branches,
             query_options=query_options,
+            rerank_required=decision.rerank_required,
         )
         evidence = self.evidence_service.assemble_bundle(reranked_candidates)
         self_check = self.evidence_service.evaluate_self_check(
@@ -343,6 +352,7 @@ class QueryPipeline:
                 access_policy=access_policy,
                 decision=decision,
                 limit=spec.web_limit,
+                query_understanding=query_understanding,
             )
             branch_hits["web"] = len(web_candidates)
             branch_limits["web"] = spec.web_limit
@@ -353,6 +363,7 @@ class QueryPipeline:
                         mode=spec.mode,
                         branches=[*internal_branches, ("web", web_candidates)],
                         query_options=query_options,
+                        rerank_required=decision.rerank_required,
                     )
                 )
                 evidence = self.evidence_service.assemble_bundle(reranked_candidates)
@@ -433,6 +444,7 @@ class QueryPipeline:
         *,
         query: str,
         decision: RoutingDecision,
+        query_understanding: QueryUnderstanding,
     ) -> RetrievalResult:
         del query
         return RetrievalResult(
@@ -459,6 +471,7 @@ class QueryPipeline:
                 fusion_input_count=0,
                 fused_count=0,
                 graph_expanded=False,
+                query_understanding=query_understanding,
                 parent_backfilled_count=0,
                 collapsed_candidate_count=0,
             ),
@@ -472,12 +485,20 @@ class QueryPipeline:
         source_scope: list[str],
         access_policy: AccessPolicy,
         decision: RoutingDecision,
+        query_understanding: QueryUnderstanding,
     ) -> tuple[list[tuple[str, list[CandidateLike]]], dict[str, int], dict[str, int]]:
         internal_branches: list[tuple[str, list[CandidateLike]]] = []
         branch_hits: dict[str, int] = {}
         branch_limits = {branch_spec.branch: branch_spec.limit for branch_spec in spec.internal_branches}
         for branch_spec in spec.internal_branches:
-            candidates = list(self._call_branch(branch_spec.branch, query=query, source_scope=source_scope))
+            candidates = list(
+                self._call_branch(
+                    branch_spec.branch,
+                    query=query,
+                    source_scope=source_scope,
+                    query_understanding=query_understanding,
+                )
+            )
             filtered = self.evidence_service.filter_candidates(
                 candidates,
                 source_scope=source_scope,
@@ -504,9 +525,14 @@ class QueryPipeline:
         access_policy: AccessPolicy,
         decision: RoutingDecision,
         limit: int,
+        query_understanding: QueryUnderstanding,
     ) -> list[CandidateLike]:
         filtered = self.evidence_service.filter_candidates(
-            self.branch_registry.collect_web(query=query, source_scope=source_scope),
+            self.branch_registry.collect_web(
+                query=query,
+                source_scope=source_scope,
+                query_understanding=query_understanding,
+            ),
             source_scope=source_scope,
             access_policy=access_policy,
             runtime_mode=decision.runtime_mode,
@@ -527,6 +553,7 @@ class QueryPipeline:
         mode: QueryMode,
         branches: list[tuple[str, list[CandidateLike]]],
         query_options: QueryOptions | None,
+        rerank_required: bool,
     ) -> tuple[list[CandidateLike], int, int, int]:
         candidate_count = sum(len(branch) for _, branch in branches)
         fused_candidates = self.fusion.fuse(query=query, mode=mode, branches=branches)
@@ -538,38 +565,73 @@ class QueryPipeline:
                 duplicate_count=max(0, candidate_count - len(fused_candidates)),
             )
 
-        reranked_candidates = self._rerank_candidates(query, fused_candidates, query_options=query_options)
+        reranked_candidates = self._rerank_candidates(
+            query,
+            fused_candidates,
+            query_options=query_options,
+            rerank_required=rerank_required,
+        )
         reranked_candidates, parent_backfilled_count = self._apply_parent_backfill(reranked_candidates)
         reranked_candidates, collapsed_candidate_count = self._collapse_redundant_candidates(reranked_candidates)
         reranked_candidates = self._limit_candidates(reranked_candidates, query_options=query_options)
         self._record_rerank_effectiveness(fused_candidates=fused_candidates, reranked_candidates=reranked_candidates)
         return reranked_candidates, candidate_count, parent_backfilled_count, collapsed_candidate_count
 
-    def _multimodal_branch_specs(
+    def _auxiliary_branch_specs(
         self,
         query_understanding: QueryUnderstanding,
         retrieval_limit: int,
     ) -> tuple[BranchExecutionSpec, ...]:
-        aux_limit = max(1, retrieval_limit // 2)
-        specs: list[BranchExecutionSpec] = []
+        scored_branches: list[tuple[str, float]] = []
         if query_understanding.needs_structure:
-            specs.append(BranchExecutionSpec("section", aux_limit))
+            scored_branches.append(("section", query_understanding.routing_hints.structure_priority))
         if query_understanding.needs_special:
-            specs.append(BranchExecutionSpec("special", aux_limit))
+            scored_branches.append(("special", query_understanding.routing_hints.special_priority))
         if query_understanding.needs_metadata:
-            specs.append(BranchExecutionSpec("metadata", aux_limit))
-        return tuple(specs)
+            scored_branches.append(("metadata", query_understanding.routing_hints.metadata_priority))
+        if not scored_branches:
+            return ()
+        total_priority = sum(max(score, 0.2) for _branch, score in scored_branches)
+        total_limit = max(1, retrieval_limit)
+        allocated: list[BranchExecutionSpec] = []
+        remaining = total_limit
+        for index, (branch, priority) in enumerate(sorted(scored_branches, key=lambda item: (-item[1], item[0]))):
+            if remaining <= 0:
+                break
+            if index == len(scored_branches) - 1:
+                branch_limit = remaining
+            else:
+                share = max(priority, 0.2) / total_priority
+                branch_limit = max(1, round(total_limit * share))
+                branch_limit = min(branch_limit, remaining)
+            remaining -= branch_limit
+            allocated.append(BranchExecutionSpec(branch, branch_limit))
+        return tuple(allocated)
 
-    def _call_branch(self, branch_name: str, *, query: str, source_scope: list[str]) -> Sequence[CandidateLike]:
-        return {
-            "full_text": self.branch_registry.full_text_retriever,
-            "vector": self.branch_registry.vector_retriever,
-            "section": self.branch_registry.section_retriever,
-            "special": self.branch_registry.special_retriever,
-            "metadata": self.branch_registry.metadata_retriever,
-            "local": self.branch_registry.local_retriever,
-            "global": self.branch_registry.global_retriever,
-        }.get(branch_name, self.branch_registry.vector_retriever)(query, source_scope)
+    @staticmethod
+    def _mix_text_branches(
+        query_understanding: QueryUnderstanding,
+        retrieval_limit: int,
+    ) -> tuple[BranchExecutionSpec, ...]:
+        branches: list[BranchExecutionSpec] = []
+        if query_understanding.needs_dense:
+            branches.append(BranchExecutionSpec("vector", retrieval_limit))
+        if query_understanding.needs_sparse:
+            branches.append(BranchExecutionSpec("full_text", retrieval_limit))
+        if branches:
+            return tuple(branches)
+        return (BranchExecutionSpec("vector", retrieval_limit),)
+
+    def _call_branch(
+        self,
+        branch_name: str,
+        *,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> Sequence[CandidateLike]:
+        retriever = self.branch_registry.get(branch_name)
+        return retriever(query, source_scope, query_understanding)
 
     @staticmethod
     def _requested_retrieval_limit(query_options: QueryOptions | None) -> int:
@@ -589,7 +651,10 @@ class QueryPipeline:
         candidates: Sequence[CandidateLike],
         *,
         query_options: QueryOptions | None,
+        rerank_required: bool,
     ) -> list[CandidateLike]:
+        if not rerank_required:
+            return list(candidates)
         if query_options is not None and not query_options.enable_rerank:
             return list(candidates)
         return self.reranker.rerank(query, list(candidates))
@@ -761,7 +826,7 @@ class RAGQueryPipeline:
                 context=BuiltContext(
                     evidence=[],
                     token_budget=options.max_context_tokens,
-                    token_count=text_unit_count(prompt),
+                    token_count=self.prompt_builder.token_accounting.count(prompt),
                     truncated_count=0,
                     grounded_candidate="Bypass mode does not use retrieved evidence.",
                     prompt=prompt,
@@ -771,21 +836,17 @@ class RAGQueryPipeline:
                 generation_attempts=generated.attempts,
             )
         merged_evidence = self.context_merger.merge(retrieval)
-        truncated = self.truncator.truncate(
-            merged_evidence,
-            token_budget=options.max_context_tokens,
-            max_evidence_chunks=options.max_evidence_chunks,
-            mode=options.mode,
+        total_budget = max(options.max_context_tokens, 1)
+        evidence_budget = self.truncator.token_accounting.prompt_budget(total_budget)
+        truncated, prompt_build = self._build_bounded_context(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            merged_evidence=merged_evidence,
+            total_budget=total_budget,
+            evidence_budget=evidence_budget,
         )
         context_evidence_items = [item.as_evidence_item() for item in truncated.evidence]
-        grounded_candidate = self.answer_generator.grounded_candidate(query, context_evidence_items)
-        prompt_build = self.prompt_builder.build(
-            query=query,
-            grounded_candidate=grounded_candidate,
-            evidence=truncated.evidence,
-            runtime_mode=retrieval.decision.runtime_mode,
-            token_count=truncated.token_count,
-        )
         generated = self.answer_generator.generate(
             query=query,
             prompt=prompt_build.prompt,
@@ -802,8 +863,8 @@ class RAGQueryPipeline:
             retrieval=retrieval,
             context=BuiltContext(
                 evidence=truncated.evidence,
-                token_budget=truncated.token_budget,
-                token_count=truncated.token_count,
+                token_budget=total_budget,
+                token_count=prompt_build.token_count,
                 truncated_count=truncated.truncated_count,
                 grounded_candidate=prompt_build.grounded_candidate,
                 prompt=prompt_build.prompt,
@@ -811,6 +872,161 @@ class RAGQueryPipeline:
             generation_provider=generated.provider,
             generation_model=generated.model,
             generation_attempts=generated.attempts,
+        )
+
+    def _build_bounded_context(
+        self,
+        *,
+        query: str,
+        options: QueryOptions,
+        retrieval: RetrievalResult,
+        merged_evidence: list[EvidenceItem],
+        total_budget: int,
+        evidence_budget: int,
+    ) -> tuple[ContextTruncationResult, ContextPromptBuildResult]:
+        current_budget = max(evidence_budget, 1)
+        truncated = self.truncator.truncate(
+            merged_evidence,
+            token_budget=current_budget,
+            max_evidence_chunks=options.max_evidence_chunks,
+            mode=options.mode,
+        )
+        prompt_build = self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="full",
+            user_prompt=options.user_prompt,
+            conversation_history=options.conversation_history,
+        )
+        while prompt_build.token_count > total_budget and truncated.evidence and current_budget > 1:
+            overflow = prompt_build.token_count - total_budget
+            current_budget = max(current_budget - max(overflow, 1), 1)
+            retruncated = self.truncator.truncate(
+                merged_evidence,
+                token_budget=current_budget,
+                max_evidence_chunks=options.max_evidence_chunks,
+                mode=options.mode,
+            )
+            if (
+                retruncated.token_count >= truncated.token_count
+                and len(retruncated.evidence) >= len(truncated.evidence)
+            ):
+                break
+            truncated = retruncated
+            prompt_build = self._build_prompt_from_truncation(
+                query=query,
+                options=options,
+                retrieval=retrieval,
+                truncated=truncated,
+                prompt_style="full",
+                user_prompt=options.user_prompt,
+                conversation_history=options.conversation_history,
+            )
+        if prompt_build.token_count > total_budget:
+            prompt_build = self._build_reduced_prompt(
+                query=query,
+                options=options,
+                retrieval=retrieval,
+                truncated=truncated,
+            )
+            while prompt_build.token_count > total_budget and truncated.evidence and current_budget > 1:
+                overflow = prompt_build.token_count - total_budget
+                current_budget = max(current_budget - max(overflow, 1), 1)
+                retruncated = self.truncator.truncate(
+                    merged_evidence,
+                    token_budget=current_budget,
+                    max_evidence_chunks=options.max_evidence_chunks,
+                    mode=options.mode,
+                )
+                if (
+                    retruncated.token_count >= truncated.token_count
+                    and len(retruncated.evidence) >= len(truncated.evidence)
+                ):
+                    break
+                truncated = retruncated
+                prompt_build = self._build_reduced_prompt(
+                    query=query,
+                    options=options,
+                    retrieval=retrieval,
+                    truncated=truncated,
+                )
+        return truncated, prompt_build
+
+    def _build_reduced_prompt(
+        self,
+        *,
+        query: str,
+        options: QueryOptions,
+        retrieval: RetrievalResult,
+        truncated: ContextTruncationResult,
+    ) -> ContextPromptBuildResult:
+        prompt_build = self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="compact",
+            user_prompt=options.user_prompt,
+            conversation_history=options.conversation_history,
+        )
+        if prompt_build.token_count <= options.max_context_tokens:
+            return prompt_build
+        prompt_build = self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="compact",
+            user_prompt=options.user_prompt,
+            conversation_history=(),
+        )
+        if prompt_build.token_count <= options.max_context_tokens:
+            return prompt_build
+        prompt_build = self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="compact",
+            user_prompt=None,
+            conversation_history=(),
+        )
+        if prompt_build.token_count <= options.max_context_tokens:
+            return prompt_build
+        return self._build_prompt_from_truncation(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            truncated=truncated,
+            prompt_style="minimal",
+            user_prompt=None,
+            conversation_history=(),
+        )
+
+    def _build_prompt_from_truncation(
+        self,
+        *,
+        query: str,
+        options: QueryOptions,
+        retrieval: RetrievalResult,
+        truncated: ContextTruncationResult,
+        prompt_style: Literal["full", "compact", "minimal"],
+        user_prompt: str | None,
+        conversation_history: Sequence[tuple[str, str]],
+    ) -> ContextPromptBuildResult:
+        context_evidence_items = [item.as_evidence_item() for item in truncated.evidence]
+        grounded_candidate = self.answer_generator.grounded_candidate(query, context_evidence_items)
+        return self.prompt_builder.build(
+            query=query,
+            grounded_candidate=grounded_candidate,
+            evidence=truncated.evidence,
+            runtime_mode=retrieval.decision.runtime_mode,
+            response_type=options.response_type,
+            user_prompt=user_prompt,
+            conversation_history=conversation_history,
+            prompt_style=prompt_style,
         )
 
 
@@ -836,15 +1052,15 @@ class RetrievalService:
         telemetry_service: TelemetryService | None = None,
         thresholds: RoutingThresholds | None = None,
     ) -> None:
-        self._full_text_retriever: RetrieverFn = full_text_retriever or (lambda _query, _scope: [])
-        self._vector_retriever: RetrieverFn = vector_retriever or (lambda _query, _scope: [])
-        self._local_retriever: RetrieverFn = local_retriever or (lambda _query, _scope: [])
-        self._global_retriever: RetrieverFn = global_retriever or (lambda _query, _scope: [])
-        self._section_retriever: RetrieverFn = section_retriever or (lambda _query, _scope: [])
-        self._special_retriever: RetrieverFn = special_retriever or (lambda _query, _scope: [])
-        self._metadata_retriever: RetrieverFn = metadata_retriever or (lambda _query, _scope: [])
+        self._full_text_retriever: RetrieverFn = full_text_retriever or (lambda _query, _scope, _understanding: [])
+        self._vector_retriever: RetrieverFn = vector_retriever or (lambda _query, _scope, _understanding: [])
+        self._local_retriever: RetrieverFn = local_retriever or (lambda _query, _scope, _understanding: [])
+        self._global_retriever: RetrieverFn = global_retriever or (lambda _query, _scope, _understanding: [])
+        self._section_retriever: RetrieverFn = section_retriever or (lambda _query, _scope, _understanding: [])
+        self._special_retriever: RetrieverFn = special_retriever or (lambda _query, _scope, _understanding: [])
+        self._metadata_retriever: RetrieverFn = metadata_retriever or (lambda _query, _scope, _understanding: [])
         self._graph_expander: GraphExpander = graph_expander or (lambda _query, _scope, _evidence: [])
-        self._web_retriever: RetrieverFn = web_retriever or (lambda _query, _scope: [])
+        self._web_retriever: RetrieverFn = web_retriever or (lambda _query, _scope, _understanding: [])
         self._reranker = reranker
         self._routing_service = routing_service or RoutingService(thresholds)
         self._query_understanding_service = query_understanding_service or QueryUnderstandingService()

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from rag.query.context import ContextEvidenceMerger, EvidenceBundle, EvidenceTruncator, RoutingDecision, SelfCheckResult
+from rag.query.context import ContextEvidenceMerger, EvidenceBundle, EvidenceTruncator, SelfCheckResult
 from rag.query.query import QueryMode
+from rag.query.routing import RoutingDecision
 from rag.schema._types.access import RuntimeMode
 from rag.schema._types.content import ChunkRole
 from rag.schema._types.envelope import EvidenceItem, PreservationSuggestion

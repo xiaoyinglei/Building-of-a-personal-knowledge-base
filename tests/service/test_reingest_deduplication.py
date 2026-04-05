@@ -1,11 +1,11 @@
 import sqlite3
 from pathlib import Path
 
-from rag.ingest.ingest import IngestService
+from tests.support import make_ingest_service
 
 
 def test_duplicate_ingest_does_not_create_duplicate_active_documents(tmp_path: Path) -> None:
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
 
     first = service.ingest_markdown(
         location="notes/topic.md",
@@ -24,7 +24,7 @@ def test_duplicate_ingest_does_not_create_duplicate_active_documents(tmp_path: P
 
 
 def test_duplicate_ingest_restores_missing_vectors_for_existing_chunks(tmp_path: Path) -> None:
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
 
     first = service.ingest_markdown(
         location="notes/topic.md",
@@ -48,7 +48,7 @@ def test_duplicate_ingest_restores_missing_vectors_for_existing_chunks(tmp_path:
 
 
 def test_repair_indexes_restores_missing_vectors_without_reingest(tmp_path: Path) -> None:
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
 
     first = service.ingest_markdown(
         location="notes/topic.md",

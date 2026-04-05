@@ -63,6 +63,10 @@ class FusedCandidateView(CandidateLike):
     rrf_score: float | None = None
     unified_rank: int | None = None
 
+    @property
+    def item_id(self) -> str:
+        return self.chunk_id
+
 
 @dataclass(slots=True)
 class ReciprocalRankFusion:

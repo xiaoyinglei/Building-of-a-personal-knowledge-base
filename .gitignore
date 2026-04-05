@@ -12,7 +12,7 @@ coverage.xml
 htmlcov/
 .superpowers/
 data/runtime/
+.rag*/
 *.db
 *.sqlite
 *.sqlite3
-

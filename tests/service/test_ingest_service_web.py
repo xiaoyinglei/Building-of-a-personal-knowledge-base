@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from rag.ingest.ingest import IngestService
 from rag.schema._types.content import SourceType
 from rag.utils._contracts import WebFetchRepo
+from tests.support import make_ingest_service
 
 
 @dataclass
@@ -17,7 +17,7 @@ class FakeWebFetchRepo(WebFetchRepo):
 
 
 def test_web_ingest_extracts_headings_and_article_text(tmp_path: Path) -> None:
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
 
     html = (
         "<html><head><title>Sample Article</title></head>"
@@ -47,7 +47,7 @@ def test_web_ingest_url_fetches_html_before_parsing(tmp_path: Path) -> None:
             "<body><article><h1>Remote Article</h1><p>Remote body.</p></article></body></html>"
         ),
     )
-    service = IngestService.create_in_memory(tmp_path, web_fetch_repo=fetch_repo)
+    service = make_ingest_service(tmp_path, web_fetch_repo=fetch_repo)
 
     result = service.ingest_web_url(
         location="https://example.com/article",
@@ -60,7 +60,7 @@ def test_web_ingest_url_fetches_html_before_parsing(tmp_path: Path) -> None:
 
 
 def test_browser_clip_ingest_preserves_source_type_and_title(tmp_path: Path) -> None:
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
 
     html = (
         "<html><head><title>Original Page</title></head>"

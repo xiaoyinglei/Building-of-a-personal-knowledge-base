@@ -146,9 +146,15 @@ class SQLiteVectorRepo:
                 VectorSearchResult(
                     item_id=row["item_id"],
                     score=self._cosine_similarity(query_vector, vector),
+                    item_kind=str(item_kind),
+                    doc_id=str(row["doc_id"]),
+                    source_id=str(metadata.get("source_id", "")),
+                    segment_id=str(row["segment_id"]),
+                    text=str(row["text"]),
                     metadata=metadata
                     | {
                         "doc_id": row["doc_id"],
+                        "source_id": metadata.get("source_id", ""),
                         "segment_id": row["segment_id"],
                         "text": row["text"],
                     },

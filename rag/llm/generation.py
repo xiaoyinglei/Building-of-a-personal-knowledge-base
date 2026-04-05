@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from rag.schema._types import EvidenceItem, RuntimeMode
 from rag.schema._types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection, GroundedAnswer
@@ -51,23 +51,67 @@ class AnswerGenerationService:
         evidence_pack: Sequence[EvidenceItem],
         grounded_candidate: str,
         runtime_mode: RuntimeMode,
+        response_type: str = "Multiple Paragraphs",
+        user_prompt: str | None = None,
+        conversation_history: Sequence[tuple[str, str]] = (),
+        prompt_style: Literal["full", "compact", "minimal"] = "full",
     ) -> str:
         del runtime_mode
-        lines = [
-            grounded_candidate,
-            "",
-            "你是知识库回答生成器，只基于证据回答，不允许编造。",
-            f"问题：{query}",
-            "输出要求：",
-            "- 只输出一个 JSON 对象。",
-            '- 顶层字段必须包含 "answer_text"、"answer_sections"、"insufficient_evidence_flag"。',
-            '- answer_sections 是数组，每个元素包含 "title"、"text"、"evidence_ids"。',
-            "- evidence_ids 必须引用下面证据编号，例如 E1、E2。",
-            "- 证据不足时，把 insufficient_evidence_flag 设为 true，并明确说明无法从证据中确认。",
-            "- 严格使用和问题相同的语言。",
-            "- 不要输出 Markdown、代码块、解释文字。",
-            "证据：",
-        ]
+        if prompt_style == "minimal":
+            lines = [
+                f"Q:{query}",
+                "JSON: answer_text, answer_sections, insufficient_evidence_flag; cite E ids.",
+            ]
+        elif prompt_style == "compact":
+            lines = [
+                grounded_candidate,
+                f"问题：{query}",
+                f"格式：{response_type}",
+                "只基于证据回答；证据不足时将 insufficient_evidence_flag 设为 true。",
+            ]
+        else:
+            lines = [
+                grounded_candidate,
+                "",
+                "你是知识库回答生成器，只基于证据回答，不允许编造。",
+                f"问题：{query}",
+                f"输出格式偏好：{response_type}",
+            ]
+        if user_prompt:
+            lines.extend(["附加要求：", user_prompt.strip()])
+        if conversation_history:
+            lines.append("对话历史：")
+            history = conversation_history[-2:] if prompt_style != "full" else conversation_history
+            for role, content in history:
+                normalized_role = role.strip() or "user"
+                normalized_content = content.strip()
+                if normalized_content:
+                    lines.append(f"{normalized_role}: {normalized_content}")
+        if prompt_style == "minimal":
+            lines.append("Evidence:")
+        elif prompt_style == "compact":
+            lines.extend(
+                [
+                    "输出要求：",
+                    "返回一个 JSON 对象，包含 answer_text、answer_sections、insufficient_evidence_flag。",
+                    "answer_sections 中的 evidence_ids 必须引用下面的 E 编号。",
+                    "证据：",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "输出要求：",
+                    "- 只输出一个 JSON 对象。",
+                    '- 顶层字段必须包含 "answer_text"、"answer_sections"、"insufficient_evidence_flag"。',
+                    '- answer_sections 是数组，每个元素包含 "title"、"text"、"evidence_ids"。',
+                    "- evidence_ids 必须引用下面证据编号，例如 E1、E2。",
+                    "- 证据不足时，把 insufficient_evidence_flag 设为 true，并明确说明无法从证据中确认。",
+                    "- 严格使用和问题相同的语言。",
+                    "- 不要输出 Markdown、代码块、解释文字。",
+                    "证据：",
+                ]
+            )
         for index, item in enumerate(evidence_pack, start=1):
             evidence_id = self._evidence_id(index)
             section = " > ".join(item.section_path) if item.section_path else item.citation_anchor
@@ -89,12 +133,17 @@ class AnswerGenerationService:
             lines.extend(
                 [
                     (
-                        f"{evidence_id} | kind={item.evidence_kind} | file={file_name} "
-                        f"| section={section}{page_hint} | chunk_type={chunk_type}"
+                        f"{evidence_id} {item.text}"
+                        if prompt_style == "minimal"
+                        else (
+                            f"{evidence_id} | kind={item.evidence_kind} | file={file_name} "
+                            f"| section={section}{page_hint} | chunk_type={chunk_type}"
+                        )
                     ),
-                    item.text,
                 ]
             )
+            if prompt_style != "minimal":
+                lines.append(item.text)
         return "\n".join(lines)
 
     def generate(

@@ -1,2 +1,0 @@
-The migration was postponed and as of 2025-01-10 the legacy retrieval service remained the default path.
-

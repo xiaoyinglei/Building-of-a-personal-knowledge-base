@@ -32,14 +32,6 @@ from rag.schema._types.diagnostics import (
 )
 from rag.schema._types.envelope import EvidenceItem, ExecutionPolicy, PreservationSuggestion, QueryResponse
 from rag.schema._types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection, GroundedAnswer
-from rag.schema._types.memory import (
-    EpisodicMemory,
-    MemoryEvidenceLink,
-    MemoryKind,
-    ResearchEpisode,
-    UserMemory,
-    UserProfile,
-)
 from rag.schema._types.processing import (
     ChunkingStrategy,
     ChunkRoutingDecision,
@@ -49,9 +41,15 @@ from rag.schema._types.processing import (
 )
 from rag.schema._types.query import (
     ComplexityLevel,
+    ConfidenceBand,
+    MetadataFilters,
+    PageRangeConstraint,
+    QueryIntent,
     QueryRequest,
     QueryUnderstanding,
     ResearchSubQuestion,
+    RoutingHints,
+    StructureConstraints,
     TaskType,
 )
 from rag.schema._types.storage import (
@@ -73,6 +71,7 @@ __all__ = [
     "ChunkRole",
     "ChunkRoutingDecision",
     "ChunkStatistics",
+    "ConfidenceBand",
     "ComplexityLevel",
     "CapabilityHealth",
     "CacheEntry",
@@ -94,26 +93,25 @@ __all__ = [
     "HealthReport",
     "IndexHealth",
     "KnowledgeArtifact",
-    "MemoryEvidenceLink",
-    "MemoryKind",
+    "MetadataFilters",
     "ModelDiagnostics",
+    "PageRangeConstraint",
     "PreservationSuggestion",
     "ProviderAttempt",
     "ProviderHealth",
+    "QueryIntent",
     "QueryRequest",
     "QueryUnderstanding",
     "QueryDiagnostics",
     "QueryResponse",
     "ResearchSubQuestion",
-    "ResearchEpisode",
     "RetrievalDiagnostics",
     "Residency",
+    "RoutingHints",
     "RuntimeMode",
     "Segment",
     "Source",
     "SourceType",
+    "StructureConstraints",
     "TaskType",
-    "UserMemory",
-    "UserProfile",
-    "EpisodicMemory",
 ]

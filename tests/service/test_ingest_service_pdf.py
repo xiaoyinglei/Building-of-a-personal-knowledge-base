@@ -2,7 +2,7 @@ from pathlib import Path
 
 import fitz  # type: ignore[import-untyped]
 
-from rag.ingest.ingest import IngestService
+from tests.support import make_ingest_service
 
 
 def test_pdf_ingest_produces_page_anchored_segments_and_chunks(tmp_path: Path) -> None:
@@ -15,7 +15,7 @@ def test_pdf_ingest_produces_page_anchored_segments_and_chunks(tmp_path: Path) -
     document.save(pdf_path)
     document.close()
 
-    service = IngestService.create_in_memory(tmp_path)
+    service = make_ingest_service(tmp_path)
     result = service.ingest_pdf(location=str(pdf_path), pdf_path=pdf_path, owner="user")
 
     assert result.segments[0].page_range == (1, 1)
