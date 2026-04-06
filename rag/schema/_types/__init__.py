@@ -41,14 +41,11 @@ from rag.schema._types.processing import (
 )
 from rag.schema._types.query import (
     ComplexityLevel,
-    ConfidenceBand,
     MetadataFilters,
     PageRangeConstraint,
-    QueryIntent,
     QueryRequest,
     QueryUnderstanding,
     ResearchSubQuestion,
-    RoutingHints,
     StructureConstraints,
     TaskType,
 )
@@ -71,7 +68,6 @@ __all__ = [
     "ChunkRole",
     "ChunkRoutingDecision",
     "ChunkStatistics",
-    "ConfidenceBand",
     "ComplexityLevel",
     "CapabilityHealth",
     "CacheEntry",
@@ -99,7 +95,6 @@ __all__ = [
     "PreservationSuggestion",
     "ProviderAttempt",
     "ProviderHealth",
-    "QueryIntent",
     "QueryRequest",
     "QueryUnderstanding",
     "QueryDiagnostics",
@@ -107,7 +102,6 @@ __all__ = [
     "ResearchSubQuestion",
     "RetrievalDiagnostics",
     "Residency",
-    "RoutingHints",
     "RuntimeMode",
     "Segment",
     "Source",

@@ -6,7 +6,6 @@ from typing import Protocol, cast
 from rag.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
 from rag.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
 from rag.llm.assembly import RerankCapabilityBinding
-from rag.query.understanding import QueryUnderstandingService
 
 
 class CandidateLike(Protocol):
@@ -23,12 +22,10 @@ class ModelBackedRerankService:
     def __init__(
         self,
         *,
-        query_understanding_service: QueryUnderstandingService | None = None,
         binding: RerankCapabilityBinding | None = None,
         provider: object | None = None,
         config: RerankPipelineConfig | None = None,
     ) -> None:
-        self._query_understanding_service = query_understanding_service or QueryUnderstandingService()
         resolved_config = config or RerankPipelineConfig()
         self._binding = binding
         resolved_provider = binding.backend if binding is not None else provider

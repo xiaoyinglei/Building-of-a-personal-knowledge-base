@@ -10,11 +10,8 @@ from rag.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCros
 from rag.llm._rerank.models import RerankCandidate, RerankRequest
 from rag.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
 from rag.schema._types.query import (
-    ConfidenceBand,
     MetadataFilters,
-    QueryIntent,
     QueryUnderstanding,
-    RoutingHints,
     StructureConstraints,
 )
 
@@ -46,20 +43,13 @@ class FakeProvider:
 
 def _query_analysis(**updates: object) -> QueryUnderstanding:
     payload = {
-        "intent": QueryIntent.STRUCTURE_LOOKUP,
-        "query_type": "architecture_lookup",
-        "confidence": 0.9,
-        "confidence_band": ConfidenceBand.HIGH,
-        "needs_dense": True,
-        "needs_sparse": True,
+        "query_type": "structure_lookup",
         "needs_special": False,
         "needs_structure": True,
         "needs_metadata": False,
         "needs_graph_expansion": False,
-        "should_rewrite_query": False,
-        "should_decompose_query": False,
         "structure_constraints": StructureConstraints(
-            match_strategy="semantic_heading",
+            match_strategy="heading",
             requires_structure_match=True,
             prefer_heading_match=True,
             semantic_section_families=["architecture"],
@@ -71,17 +61,6 @@ def _query_analysis(**updates: object) -> QueryUnderstanding:
         "metadata_filters": MetadataFilters(),
         "special_targets": [],
         "preferred_section_terms": ["系统架构"],
-        "routing_hints": RoutingHints(
-            dense_priority=0.62,
-            sparse_priority=0.71,
-            structure_priority=0.92,
-            metadata_priority=0.0,
-            special_priority=0.0,
-            graph_priority=0.0,
-            primary_channels=["structure", "sparse", "dense"],
-            rewrite_focus_terms=["系统架构"],
-            decomposition_axes=[],
-        ),
     }
     payload.update(updates)
     return QueryUnderstanding.model_validate(payload)
@@ -158,24 +137,11 @@ def test_formal_rerank_pipeline_deduplicates_same_parent_and_preserves_special_d
     request = RerankRequest(
         query="表格里告警是多少？",
         query_analysis=_query_analysis(
-            intent=QueryIntent.SPECIAL_CONTENT_LOOKUP,
-            query_type="table_lookup",
-            confidence_band=ConfidenceBand.HIGH,
+            query_type="special_lookup",
             needs_special=True,
             needs_structure=False,
             structure_constraints=StructureConstraints(),
             special_targets=["table"],
-            routing_hints=RoutingHints(
-                dense_priority=0.28,
-                sparse_priority=0.74,
-                structure_priority=0.0,
-                metadata_priority=0.0,
-                special_priority=0.94,
-                graph_priority=0.0,
-                primary_channels=["special", "sparse"],
-                rewrite_focus_terms=["table"],
-                decomposition_axes=[],
-            ),
         ),
         candidate_list=[
             RerankCandidate(

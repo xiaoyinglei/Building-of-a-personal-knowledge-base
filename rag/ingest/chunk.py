@@ -154,12 +154,13 @@ class ChunkRoutingService:
                 debug=debug,
             )
         if features.source_type is SourceType.DOCX:
-            if features.heading_quality_score >= 0.55 and features.heading_count >= 2:
-                reasons.append("DOCX heading quality is high, prefer HierarchicalChunker.")
+            has_reliable_structure = features.has_dense_structure and features.section_count >= 2
+            if has_reliable_structure:
+                reasons.append("DOCX exposes stable heading structure, prefer HierarchicalChunker.")
                 strategy = ChunkingStrategy.HIERARCHICAL
                 local_refine = False
             else:
-                reasons.append("DOCX heading quality is low, fall back to HybridChunker.")
+                reasons.append("DOCX structure is weak, fall back to HybridChunker.")
                 strategy = ChunkingStrategy.HYBRID
                 local_refine = True
             return ChunkRoutingDecision(

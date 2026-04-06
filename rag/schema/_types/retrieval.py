@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from rag.query.context import EvidenceBundle, SelfCheckResult
-from rag.query.routing import RoutingDecision
+from rag.query.analysis import RoutingDecision
 from rag.schema._types.diagnostics import RetrievalDiagnostics
 from rag.schema._types.envelope import PreservationSuggestion
 

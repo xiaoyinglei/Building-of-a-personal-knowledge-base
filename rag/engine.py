@@ -33,7 +33,8 @@ from rag.llm._generation.answer_generator import AnswerGenerator
 from rag.llm.assembly import CapabilityAssemblyService, CapabilityBundle
 from rag.llm.generation import AnswerGenerationService
 from rag.llm.rerank import ModelBackedRerankService
-from rag.query._artifact.service import ArtifactService
+from rag.query.analysis import QueryUnderstandingService, RoutingService
+from rag.query.artifact import ArtifactService
 from rag.query.context import (
     CandidateLike,
     ContextEvidenceMerger,
@@ -44,8 +45,6 @@ from rag.query.context import (
 from rag.query.graph import GraphExpansionService, SearchBackedRetrievalFactory
 from rag.query.query import QueryOptions, RAGQueryResult
 from rag.query.retrieve import RAGQueryPipeline, RetrievalService
-from rag.query.routing import RoutingService
-from rag.query.understanding import QueryUnderstandingService
 from rag.schema._types.diagnostics import ProviderAttempt
 from rag.schema._types.storage import CacheEntry
 from rag.schema._types.text import (

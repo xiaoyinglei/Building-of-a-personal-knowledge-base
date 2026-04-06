@@ -1,10 +1,33 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
-from rag.query._retrieval.contracts import RetrieverFn
 from rag.query.context import CandidateLike
 from rag.schema._types.query import QueryUnderstanding
+
+
+class RetrieverFn(Protocol):
+    def __call__(
+        self,
+        query: str,
+        source_scope: list[str],
+        query_understanding: QueryUnderstanding,
+    ) -> Sequence[CandidateLike]: ...
+
+
+class GraphExpander(Protocol):
+    def __call__(
+        self,
+        query: str,
+        source_scope: list[str],
+        evidence: list[CandidateLike],
+    ) -> Sequence[CandidateLike]: ...
+
+
+class Reranker(Protocol):
+    def __call__(self, query: str, candidates: list[CandidateLike]) -> Sequence[CandidateLike]: ...
 
 
 @dataclass(slots=True)
@@ -37,3 +60,22 @@ class BranchRetrieverRegistry:
             "local": self.local_retriever,
             "global": self.global_retriever,
         }.get(branch, self.vector_retriever)
+
+
+@dataclass(slots=True)
+class UnifiedReranker:
+    reranker: Reranker | None = None
+
+    def rerank(self, query: str, candidates: list[CandidateLike]) -> list[CandidateLike]:
+        if self.reranker is None:
+            return list(candidates)
+        return list(self.reranker(query, candidates))
+
+
+__all__ = [
+    "BranchRetrieverRegistry",
+    "GraphExpander",
+    "RetrieverFn",
+    "Reranker",
+    "UnifiedReranker",
+]

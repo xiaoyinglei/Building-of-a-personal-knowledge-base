@@ -290,14 +290,19 @@ function renderEvidence(items) {
 
 function renderRouting(result) {
   const understanding = result.query_understanding || {};
+  const metadata = understanding.metadata_filters || {};
+  const structure = understanding.structure_constraints || {};
   const lines = [
-    `intent: ${understanding.intent || "-"}`,
     `query_type: ${understanding.query_type || "-"}`,
-    `confidence: ${understanding.confidence_band || "-"} (${understanding.confidence ?? "-"})`,
     `needs_structure: ${Boolean(understanding.needs_structure)}`,
     `needs_metadata: ${Boolean(understanding.needs_metadata)}`,
     `needs_special: ${Boolean(understanding.needs_special)}`,
     `needs_graph_expansion: ${Boolean(understanding.needs_graph_expansion)}`,
+    `section_terms: ${(understanding.preferred_section_terms || []).join(", ") || "-"}`,
+    `special_targets: ${(understanding.special_targets || []).join(", ") || "-"}`,
+    `page_numbers: ${(metadata.page_numbers || []).join(", ") || "-"}`,
+    `source_types: ${(metadata.source_types || []).join(", ") || "-"}`,
+    `section_families: ${(structure.semantic_section_families || []).join(", ") || "-"}`,
   ];
   dom.routingPanel.textContent = lines.join("\n");
 }

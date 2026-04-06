@@ -5,11 +5,9 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from rag.llm._generation.answer_generator import AnswerGenerator
-from rag.query._artifact.service import ArtifactService
-from rag.query._retrieval.branch_retrievers import BranchRetrieverRegistry
-from rag.query._retrieval.contracts import GraphExpander, Reranker, RetrieverFn
-from rag.query._retrieval.fusion import FusedCandidateView, ReciprocalRankFusion
-from rag.query._retrieval.rerank import UnifiedReranker
+from rag.query.analysis import QueryUnderstandingService, RoutingDecision, RoutingService
+from rag.query.artifact import ArtifactService
+from rag.query.branches import BranchRetrieverRegistry, GraphExpander, Reranker, RetrieverFn, UnifiedReranker
 from rag.query.context import (
     CandidateLike,
     ContextEvidenceMerger,
@@ -18,14 +16,13 @@ from rag.query.context import (
     ContextTruncationResult,
     EvidenceBundle,
     EvidenceService,
+    EvidenceThresholds,
     EvidenceTruncator,
     SelfCheckResult,
 )
+from rag.query.fusion import FusedCandidateView, ReciprocalRankFusion
 from rag.query.graph import GraphExpansionService
-from rag.query.policies import RoutingThresholds
 from rag.query.query import BuiltContext, QueryMode, QueryOptions, RAGQueryResult, normalize_query_mode
-from rag.query.routing import RoutingDecision, RoutingService
-from rag.query.understanding import QueryUnderstandingService
 from rag.schema._types.diagnostics import ProviderAttempt, RetrievalDiagnostics
 from rag.schema._types.envelope import EvidenceItem
 from rag.schema._types.query import QueryUnderstanding
@@ -504,6 +501,7 @@ class QueryPipeline:
                 source_scope=source_scope,
                 access_policy=access_policy,
                 runtime_mode=decision.runtime_mode,
+                query_understanding=query_understanding,
             )
             limited = filtered[: branch_spec.limit]
             branch_hits[branch_spec.branch] = len(limited)
@@ -536,6 +534,7 @@ class QueryPipeline:
             source_scope=source_scope,
             access_policy=access_policy,
             runtime_mode=decision.runtime_mode,
+            query_understanding=query_understanding,
         )
         limited = filtered[:limit]
         if self.telemetry_service is not None:
@@ -582,45 +581,28 @@ class QueryPipeline:
         query_understanding: QueryUnderstanding,
         retrieval_limit: int,
     ) -> tuple[BranchExecutionSpec, ...]:
-        scored_branches: list[tuple[str, float]] = []
+        branches: list[str] = []
         if query_understanding.needs_structure:
-            scored_branches.append(("section", query_understanding.routing_hints.structure_priority))
+            branches.append("section")
         if query_understanding.needs_special:
-            scored_branches.append(("special", query_understanding.routing_hints.special_priority))
+            branches.append("special")
         if query_understanding.needs_metadata:
-            scored_branches.append(("metadata", query_understanding.routing_hints.metadata_priority))
-        if not scored_branches:
+            branches.append("metadata")
+        if not branches:
             return ()
-        total_priority = sum(max(score, 0.2) for _branch, score in scored_branches)
-        total_limit = max(1, retrieval_limit)
-        allocated: list[BranchExecutionSpec] = []
-        remaining = total_limit
-        for index, (branch, priority) in enumerate(sorted(scored_branches, key=lambda item: (-item[1], item[0]))):
-            if remaining <= 0:
-                break
-            if index == len(scored_branches) - 1:
-                branch_limit = remaining
-            else:
-                share = max(priority, 0.2) / total_priority
-                branch_limit = max(1, round(total_limit * share))
-                branch_limit = min(branch_limit, remaining)
-            remaining -= branch_limit
-            allocated.append(BranchExecutionSpec(branch, branch_limit))
-        return tuple(allocated)
+        branch_limit = max(1, retrieval_limit)
+        return tuple(BranchExecutionSpec(branch, branch_limit) for branch in branches)
 
     @staticmethod
     def _mix_text_branches(
         query_understanding: QueryUnderstanding,
         retrieval_limit: int,
     ) -> tuple[BranchExecutionSpec, ...]:
-        branches: list[BranchExecutionSpec] = []
-        if query_understanding.needs_dense:
-            branches.append(BranchExecutionSpec("vector", retrieval_limit))
-        if query_understanding.needs_sparse:
-            branches.append(BranchExecutionSpec("full_text", retrieval_limit))
-        if branches:
-            return tuple(branches)
-        return (BranchExecutionSpec("vector", retrieval_limit),)
+        del query_understanding
+        return (
+            BranchExecutionSpec("vector", retrieval_limit),
+            BranchExecutionSpec("full_text", retrieval_limit),
+        )
 
     def _call_branch(
         self,
@@ -1050,7 +1032,7 @@ class RetrievalService:
         graph_expansion_service: GraphExpansionService | None = None,
         artifact_service: ArtifactService | None = None,
         telemetry_service: TelemetryService | None = None,
-        thresholds: RoutingThresholds | None = None,
+        evidence_thresholds: EvidenceThresholds | None = None,
     ) -> None:
         self._full_text_retriever: RetrieverFn = full_text_retriever or (lambda _query, _scope, _understanding: [])
         self._vector_retriever: RetrieverFn = vector_retriever or (lambda _query, _scope, _understanding: [])
@@ -1062,13 +1044,12 @@ class RetrievalService:
         self._graph_expander: GraphExpander = graph_expander or (lambda _query, _scope, _evidence: [])
         self._web_retriever: RetrieverFn = web_retriever or (lambda _query, _scope, _understanding: [])
         self._reranker = reranker
-        self._routing_service = routing_service or RoutingService(thresholds)
+        self._routing_service = routing_service or RoutingService()
         self._query_understanding_service = query_understanding_service or QueryUnderstandingService()
-        self._evidence_service = evidence_service or EvidenceService(thresholds)
+        self._evidence_service = evidence_service or EvidenceService(evidence_thresholds)
         self._graph_expansion_service = graph_expansion_service or GraphExpansionService()
         self._artifact_service = artifact_service or ArtifactService()
         self._telemetry_service = telemetry_service
-        self._thresholds = thresholds or RoutingThresholds()
         self._fusion = ReciprocalRankFusion()
         self._unified_reranker = UnifiedReranker(reranker=self._reranker)
         self.last_result: RetrievalResult | None = None

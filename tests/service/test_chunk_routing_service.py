@@ -54,7 +54,7 @@ def test_markdown_prefers_hierarchical_chunker() -> None:
     assert decision.local_refine is False
 
 
-def test_docx_heading_quality_controls_secondary_route() -> None:
+def test_docx_structure_controls_secondary_route() -> None:
     service = ChunkRoutingService()
     high_quality = DocumentFeatures(
         source_type=SourceType.DOCX,
@@ -71,7 +71,14 @@ def test_docx_heading_quality_controls_secondary_route() -> None:
         has_dense_structure=True,
         metadata={},
     )
-    low_quality = high_quality.model_copy(update={"heading_quality_score": 0.22, "heading_count": 1})
+    low_quality = high_quality.model_copy(
+        update={
+            "heading_quality_score": 0.22,
+            "heading_count": 1,
+            "structure_depth": 1,
+            "has_dense_structure": False,
+        }
+    )
 
     high_decision = service.route(high_quality)
     low_decision = service.route(low_quality)

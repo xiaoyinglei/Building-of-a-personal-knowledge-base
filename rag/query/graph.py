@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Protocol
 
 from rag.llm.assembly import EmbeddingCapabilityBinding
+from rag.query.analysis import section_family_aliases, special_target_aliases
 from rag.query.context import CandidateLike, EvidenceBundle
-from rag.query.understanding import section_family_aliases, special_target_aliases
 from rag.schema._types.query import QueryUnderstanding
 from rag.schema._types.text import keyword_overlap, search_terms
-from rag.schema.chunk import Chunk, ChunkRole
+from rag.schema.chunk import ChunkRole
 from rag.schema.document import AccessPolicy, Document, ExecutionLocationPreference
 from rag.storage._search.web_search_repo import DeterministicWebSearchRepo
 from rag.utils._contracts import (
@@ -20,42 +20,6 @@ from rag.utils._contracts import (
     MetadataRepo,
     VectorSearchResult,
 )
-
-_GRAPH_RELATION_WEIGHTS = {
-    "depends_on": 1.18,
-    "supports": 1.12,
-    "requires": 1.1,
-    "uses": 1.02,
-    "tabulated_in": 1.08,
-    "illustrated_by": 1.06,
-    "captioned_by": 0.98,
-    "summarized_by": 0.96,
-    "observed_in": 0.94,
-    "expressed_by_formula": 1.04,
-    "contains_special": 0.92,
-    "enables": 1.0,
-    "contains": 0.96,
-    "part_of": 0.94,
-    "integrates_with": 0.92,
-    "compares": 0.78,
-    "related_to": 0.68,
-}
-
-_GRAPH_QUERY_HINTS = {
-    "depends_on": ("depend", "dependency", "依赖", "upstream"),
-    "supports": ("support", "supports", "支撑", "supporting"),
-    "uses": ("use", "uses", "used", "使用"),
-    "tabulated_in": ("table", "表", "表格", "metric", "metrics", "数值", "指标"),
-    "illustrated_by": ("figure", "diagram", "image", "图片", "图", "图像"),
-    "captioned_by": ("caption", "图注", "标题"),
-    "summarized_by": ("summary", "visual", "image summary", "摘要", "画面"),
-    "observed_in": ("ocr", "region", "识别", "截图文字"),
-    "expressed_by_formula": ("formula", "equation", "latex", "公式", "表达式"),
-    "contains_special": ("table", "figure", "image", "caption", "ocr", "表格", "图片"),
-    "contains": ("contain", "contains", "include", "includes", "包含"),
-    "part_of": ("part", "belongs", "归属"),
-    "integrates_with": ("integrate", "connection", "connect", "link", "连接"),
-}
 
 _MULTIMODAL_NODE_TYPES = {"table", "figure", "caption", "ocr_region", "image_summary", "formula"}
 
@@ -247,8 +211,6 @@ class HybridSpecialRetriever:
                 merged[candidate.chunk_id] = candidate
                 continue
             merged_score = max(float(existing.score), float(candidate.score))
-            if existing.source_kind != candidate.source_kind:
-                merged_score += 0.04
             merged[candidate.chunk_id] = existing.__class__(
                 **{
                     **existing.__dict__,
@@ -314,11 +276,11 @@ class SearchBackedRetrievalFactory:
                 if segment is None:
                     continue
                 section_text = " ".join(segment.toc_path)
-                heading_score = sum(1.4 for hint in heading_hints if hint and hint in section_text)
-                preferred_score = sum(1.2 for term in preferred_sections if term and term in section_text)
-                semantic_score = sum(0.8 for alias in semantic_aliases if alias and alias in section_text.lower())
+                heading_score = sum(1 for hint in heading_hints if hint and hint in section_text)
+                preferred_score = sum(1 for term in preferred_sections if term and term in section_text)
+                semantic_score = sum(1 for alias in semantic_aliases if alias and alias in section_text.lower())
                 lexical_score = keyword_overlap(query_terms, section_text)
-                score = heading_score + preferred_score + semantic_score + lexical_score * 0.2
+                score = heading_score + preferred_score + semantic_score + lexical_score
                 if constraints.prefer_heading_match and heading_score <= 0 and preferred_score <= 0:
                     continue
                 if score <= 0.0:
@@ -371,9 +333,9 @@ class SearchBackedRetrievalFactory:
                 special_type = chunk.special_chunk_type or ""
                 aliases = target_aliases.get(special_type, set())
                 if special_type and special_type in target_aliases:
-                    score += 2.4
+                    score += 1.0
                 if aliases and any(alias in lowered for alias in aliases):
-                    score += 1.6
+                    score += 1.0
                 if score <= 0:
                     continue
                 candidates.extend(
@@ -420,30 +382,30 @@ class SearchBackedRetrievalFactory:
                 section_text = "" if segment is None else " ".join(segment.toc_path)
                 score = 0.0
                 if source_types and source_type in source_types:
-                    score += 3.0
+                    score += 1.0
                 if document_titles and document.title in document_titles:
-                    score += 2.2
+                    score += 1.0
                 if file_names and file_name in file_names:
-                    score += 2.2
+                    score += 1.0
                 if preferred_sections and any(term in section_text for term in preferred_sections):
-                    score += 3.5
+                    score += 1.0
                 if page_numbers:
                     page_no = chunk.metadata.get("page_no", "")
                     if page_no.isdigit() and int(page_no) in page_numbers:
-                        score += 4.0
+                        score += 1.0
                     elif segment is not None and segment.page_range is not None:
                         start, end = segment.page_range
                         if any(start <= page <= end for page in page_numbers):
-                            score += 2.5
+                            score += 1.0
                 if page_ranges and segment is not None and segment.page_range is not None:
                     start, end = segment.page_range
                     if any(not (page_range.end < start or page_range.start > end) for page_range in page_ranges):
-                        score += 3.0
+                        score += 1.0
                 if (
                     query_understanding.special_targets
                     and chunk.special_chunk_type in query_understanding.special_targets
                 ):
-                    score += 2.0
+                    score += 1.0
                 if score <= 0:
                     continue
                 candidates.extend(
@@ -458,7 +420,7 @@ class SearchBackedRetrievalFactory:
     def graph_expander(
         self, query: str, source_scope: list[str], evidence: list[CandidateLike]
     ) -> list[RetrievedCandidate]:
-        query_terms = set(search_terms(query))
+        del query
         seed_chunk_ids = [candidate.chunk_id for candidate in evidence if candidate.source_kind == "internal"]
         seed_node_scores: dict[str, float] = {}
         for candidate in evidence:
@@ -467,17 +429,15 @@ class SearchBackedRetrievalFactory:
                 seed_node_scores[node.node_id] = max(seed_node_scores.get(node.node_id, 0.0), candidate_score)
             for edge in self._graph_repo.list_edges_for_chunk(candidate.chunk_id, include_candidates=True):
                 for node_id in (edge.from_node_id, edge.to_node_id):
-                    edge_score = candidate_score * max(edge.confidence, 0.45)
+                    edge_score = candidate_score * max(edge.confidence, 0.0)
                     seed_node_scores[node_id] = max(seed_node_scores.get(node_id, 0.0), edge_score)
         chunk_scores, support_counts = self._score_graph_walk(
             seed_node_scores=seed_node_scores,
-            query_terms=query_terms,
             max_depth=2,
         )
         for chunk_id in seed_chunk_ids:
             chunk_scores.pop(chunk_id, None)
             support_counts.pop(chunk_id, None)
-        self._boost_related_special_chunks(chunk_scores, support_counts)
         return self._build_scored_candidates(
             chunk_scores,
             support_counts,
@@ -577,13 +537,12 @@ class SearchBackedRetrievalFactory:
         del query
         chunk_scores = {result.item_id: float(result.score) for result in results if float(result.score) > 0.0}
         support_counts = {result.item_id: 1 for result in results if float(result.score) > 0.0}
-        self._boost_related_special_chunks(chunk_scores, support_counts)
         return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
 
     def build_local_candidates_from_vector_results(
         self, query: str, results: list[VectorSearchResult], source_scope: list[str]
     ) -> list[RetrievedCandidate]:
-        query_terms = set(search_terms(query))
+        del query
         seed_node_scores: dict[str, float] = {}
         for result in results:
             base_score = max(float(result.score), 0.0)
@@ -592,16 +551,14 @@ class SearchBackedRetrievalFactory:
             seed_node_scores[result.item_id] = max(seed_node_scores.get(result.item_id, 0.0), base_score)
         chunk_scores, support_counts = self._score_graph_walk(
             seed_node_scores=seed_node_scores,
-            query_terms=query_terms,
             max_depth=2,
         )
-        self._boost_related_special_chunks(chunk_scores, support_counts)
         return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
 
     def build_global_candidates_from_vector_results(
         self, query: str, results: list[VectorSearchResult], source_scope: list[str]
     ) -> list[RetrievedCandidate]:
-        query_terms = set(search_terms(query))
+        del query
         chunk_scores: dict[str, float] = defaultdict(float)
         support_counts: dict[str, int] = defaultdict(int)
         seed_node_scores: dict[str, float] = {}
@@ -612,23 +569,17 @@ class SearchBackedRetrievalFactory:
             base_score = max(float(result.score), 0.0)
             if base_score <= 0.0:
                 continue
-            edge_weight = self._edge_traversal_weight(
-                edge.relation_type, query_terms=query_terms, confidence=edge.confidence, depth=0
-            )
-            self._add_scored_chunk_ids(
-                chunk_scores, support_counts, edge.evidence_chunk_ids, score=base_score + edge_weight * 0.45
-            )
+            edge_weight = self._edge_traversal_weight(confidence=edge.confidence, depth=0)
+            self._add_scored_chunk_ids(chunk_scores, support_counts, edge.evidence_chunk_ids, score=base_score)
             for node_id in (edge.from_node_id, edge.to_node_id):
-                seed_node_scores[node_id] = max(seed_node_scores.get(node_id, 0.0), base_score * edge_weight * 0.92)
+                seed_node_scores[node_id] = max(seed_node_scores.get(node_id, 0.0), base_score * edge_weight)
         walked_scores, walked_support = self._score_graph_walk(
             seed_node_scores=seed_node_scores,
-            query_terms=query_terms,
             max_depth=1,
         )
         for chunk_id, score in walked_scores.items():
             chunk_scores[chunk_id] += score
             support_counts[chunk_id] += walked_support.get(chunk_id, 0)
-        self._boost_related_special_chunks(chunk_scores, support_counts)
         return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
 
     def build_multimodal_candidates_from_vector_results(
@@ -637,7 +588,7 @@ class SearchBackedRetrievalFactory:
         results: list[VectorSearchResult],
         source_scope: list[str],
     ) -> list[RetrievedCandidate]:
-        query_terms = set(search_terms(query))
+        del query
         chunk_scores: dict[str, float] = defaultdict(float)
         support_counts: dict[str, int] = defaultdict(int)
         for result in results:
@@ -647,16 +598,11 @@ class SearchBackedRetrievalFactory:
             node = self._graph_repo.get_node(result.item_id)
             if node is None or node.node_type not in _MULTIMODAL_NODE_TYPES:
                 continue
-            type_bonus = 1.0
-            for hint in _GRAPH_QUERY_HINTS.get(self._multimodal_relation_for_node_type(node.node_type), ()):
-                if hint in query_terms or any(hint in term for term in query_terms):
-                    type_bonus = 1.18
-                    break
             self._add_scored_chunk_ids(
                 chunk_scores,
                 support_counts,
                 self._graph_repo.list_node_evidence_chunk_ids(node.node_id),
-                score=base_score * 1.24 * type_bonus,
+                score=base_score,
             )
         return self._build_scored_candidates(chunk_scores, support_counts, source_scope=source_scope)
 
@@ -684,52 +630,13 @@ class SearchBackedRetrievalFactory:
         if score <= 0.0:
             return
         for rank, chunk_id in enumerate(chunk_ids, start=1):
-            chunk_scores[chunk_id] = chunk_scores.get(chunk_id, 0.0) + score / (1.0 + (rank - 1) * 0.15)
+            chunk_scores[chunk_id] = chunk_scores.get(chunk_id, 0.0) + score / rank
             support_counts[chunk_id] = support_counts.get(chunk_id, 0) + 1
-
-    def _boost_related_special_chunks(
-        self,
-        chunk_scores: dict[str, float],
-        support_counts: dict[str, int],
-    ) -> None:
-        if not chunk_scores:
-            return
-        doc_chunk_cache: dict[str, list[Chunk]] = {}
-        scored_items = sorted(chunk_scores.items(), key=lambda item: (-item[1], item[0]))
-        for chunk_id, base_score in scored_items:
-            if base_score <= 0.0:
-                continue
-            seed_chunk = self._metadata_repo.get_chunk(chunk_id)
-            if seed_chunk is None:
-                continue
-            doc_chunks = doc_chunk_cache.setdefault(
-                seed_chunk.doc_id, self._metadata_repo.list_chunks(seed_chunk.doc_id)
-            )
-            for candidate in doc_chunks:
-                if candidate.chunk_role is not ChunkRole.SPECIAL or candidate.chunk_id == seed_chunk.chunk_id:
-                    continue
-                if not self._is_related_special_chunk(
-                    seed_chunk_id=seed_chunk.chunk_id, seed_chunk=seed_chunk, candidate_chunk=candidate
-                ):
-                    continue
-                boost = base_score * 0.28
-                if candidate.special_chunk_type in {
-                    "table",
-                    "figure",
-                    "caption",
-                    "image_summary",
-                    "ocr_region",
-                    "formula",
-                }:
-                    boost *= 1.10
-                chunk_scores[candidate.chunk_id] = max(chunk_scores.get(candidate.chunk_id, 0.0), boost)
-                support_counts[candidate.chunk_id] = max(support_counts.get(candidate.chunk_id, 0), 1)
 
     def _score_graph_walk(
         self,
         *,
         seed_node_scores: dict[str, float],
-        query_terms: set[str],
         max_depth: int,
     ) -> tuple[dict[str, float], dict[str, int]]:
         chunk_scores: dict[str, float] = defaultdict(float)
@@ -749,7 +656,7 @@ class SearchBackedRetrievalFactory:
             current_node = self._graph_repo.get_node(node_id)
             current_node_type = None if current_node is None else current_node.node_type
 
-            node_evidence_score = node_score * (1.92 if depth == 0 else 0.82 / (depth + 0.3))
+            node_evidence_score = node_score / (1.0 + depth)
             self._add_scored_chunk_ids(
                 chunk_scores,
                 support_counts,
@@ -765,12 +672,7 @@ class SearchBackedRetrievalFactory:
                     and edge.relation_type == "contains_special"
                 ):
                     continue
-                traversal_weight = self._edge_traversal_weight(
-                    edge.relation_type,
-                    query_terms=query_terms,
-                    confidence=edge.confidence,
-                    depth=depth,
-                )
+                traversal_weight = self._edge_traversal_weight(confidence=edge.confidence, depth=depth)
                 if traversal_weight <= 0.0:
                     continue
                 edge_score = node_score * traversal_weight
@@ -778,10 +680,10 @@ class SearchBackedRetrievalFactory:
                     chunk_scores,
                     support_counts,
                     edge.evidence_chunk_ids,
-                    score=edge_score * 0.72,
+                    score=edge_score / (1.0 + depth),
                 )
                 adjacent = edge.to_node_id if edge.from_node_id == node_id else edge.from_node_id
-                next_score = edge_score * 0.76
+                next_score = edge_score / (2.0 + depth)
                 if next_score <= best_node_scores.get(adjacent, 0.0):
                     continue
                 best_node_scores[adjacent] = next_score
@@ -790,47 +692,11 @@ class SearchBackedRetrievalFactory:
 
     @staticmethod
     def _edge_traversal_weight(
-        relation_type: str,
         *,
-        query_terms: set[str],
         confidence: float,
         depth: int,
     ) -> float:
-        normalized_relation = relation_type.lower()
-        relation_weight = _GRAPH_RELATION_WEIGHTS.get(normalized_relation, 0.9)
-        hints = _GRAPH_QUERY_HINTS.get(normalized_relation, ())
-        if hints and any(hint in query_terms or any(hint in term for term in query_terms) for hint in hints):
-            relation_weight += 0.12
-        depth_decay = 1.0 / (1.0 + depth * 0.55)
-        confidence_factor = max(confidence, 0.45)
-        return relation_weight * confidence_factor * depth_decay
-
-    @staticmethod
-    def _multimodal_relation_for_node_type(node_type: str) -> str:
-        mapping = {
-            "table": "tabulated_in",
-            "figure": "illustrated_by",
-            "caption": "captioned_by",
-            "image_summary": "summarized_by",
-            "ocr_region": "observed_in",
-            "formula": "expressed_by_formula",
-        }
-        return mapping.get(node_type, "contains_special")
-
-    @staticmethod
-    def _is_related_special_chunk(*, seed_chunk_id: str, seed_chunk: Chunk, candidate_chunk: Chunk) -> bool:
-        same_segment = getattr(seed_chunk, "segment_id", None) == getattr(candidate_chunk, "segment_id", None)
-        same_parent = getattr(seed_chunk, "parent_chunk_id", None) is not None and getattr(
-            seed_chunk, "parent_chunk_id", None
-        ) == getattr(candidate_chunk, "parent_chunk_id", None)
-        linked_by_parent = getattr(candidate_chunk, "parent_chunk_id", None) == seed_chunk_id
-        linked_by_chain = (
-            getattr(candidate_chunk, "prev_chunk_id", None) == seed_chunk_id
-            or getattr(candidate_chunk, "next_chunk_id", None) == seed_chunk_id
-            or getattr(seed_chunk, "prev_chunk_id", None) == getattr(candidate_chunk, "chunk_id", None)
-            or getattr(seed_chunk, "next_chunk_id", None) == getattr(candidate_chunk, "chunk_id", None)
-        )
-        return same_segment or same_parent or linked_by_parent or linked_by_chain
+        return max(confidence, 0.0) / (depth + 1)
 
     def _build_scored_candidates(
         self,
@@ -890,7 +756,7 @@ class SearchBackedRetrievalFactory:
                     source_id=document.source_id,
                     text=chunk.text,
                     citation_anchor=chunk.citation_anchor,
-                    score=max(0.0, 1.0 - (rank - 1) * 0.05),
+                    score=1.0 / rank,
                     rank=rank,
                     source_kind=source_kind,
                     section_path=tuple(segment.toc_path) if segment is not None else (),

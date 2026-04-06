@@ -23,7 +23,7 @@ from rag.llm._rerank.models import (
     RerankResultItem,
 )
 from rag.llm._rerank.postprocess import CandidateDiversityController, PostprocessConfig
-from rag.query.understanding import QueryUnderstandingService
+from rag.query.analysis import QueryUnderstandingService
 from rag.schema._types.query import QueryUnderstanding
 
 
@@ -152,7 +152,16 @@ class FormalRerankService:
                     metadata=dict(candidate.metadata),
                 )
             )
-        ranked_items = sorted(items, key=lambda item: item.final_score, reverse=True)
+        ranked_items = sorted(
+            items,
+            key=lambda item: (
+                item.final_score,
+                bool(item.feature_summary.get("special_target_match", False)),
+                bool(item.feature_summary.get("constraint_match", False)),
+                -item.rank_before,
+            ),
+            reverse=True,
+        )
         top_n = request.top_n or self._config.top_n
         kept_items, dropped_items = self._diversity_controller.postprocess(
             items=ranked_items[: max(top_n, len(ranked_items))],

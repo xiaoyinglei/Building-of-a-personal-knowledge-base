@@ -188,7 +188,7 @@ def test_retrieval_service_separates_external_evidence_and_expands_graph() -> No
     )
 
     result = service.retrieve(
-        "Compare the tradeoffs between Alpha and Beta",
+        "Compare how Alpha depends on Beta",
         access_policy=AccessPolicy.default(),
     )
 
@@ -308,7 +308,7 @@ def test_retrieval_service_bypass_mode_skips_retrieval_and_graph_expansion() -> 
     assert calls["web_calls"] == 0
 
 
-def test_retrieval_service_prefers_definition_chunk_when_vector_and_sparse_signals_disagree() -> None:
+def test_retrieval_service_keeps_definition_and_cli_candidates_for_downstream_rerank() -> None:
     service, calls = _build_service(
         full_text_candidates=[
             FakeCandidate(
@@ -357,8 +357,9 @@ def test_retrieval_service_prefers_definition_chunk_when_vector_and_sparse_signa
         access_policy=AccessPolicy.default(),
     )
 
-    assert calls["rerank_inputs"] == [["chunk-desc", "chunk-cli"]]
-    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-desc", "chunk-cli"]
+    assert len(calls["rerank_inputs"]) == 1
+    assert set(calls["rerank_inputs"][0]) == {"chunk-desc", "chunk-cli"}
+    assert {item.chunk_id for item in result.evidence.internal} == {"chunk-desc", "chunk-cli"}
 
 
 def test_retrieval_service_uses_query_understanding_to_enable_special_branch() -> None:
@@ -539,6 +540,72 @@ def test_retrieval_service_uses_metadata_branch_for_page_constrained_queries() -
     assert result.diagnostics.query_understanding is not None
     assert result.diagnostics.query_understanding.metadata_filters.page_numbers == [2]
     assert result.diagnostics.branch_hits["metadata"] == 1
+
+
+def test_retrieval_service_filters_out_candidates_that_violate_explicit_page_constraints() -> None:
+    service, _calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate(
+                "chunk-page-5",
+                "doc-a",
+                "第五页记录了其他内容。",
+                "#page-5",
+                0.95,
+                1,
+                metadata={"page_no": "5"},
+            ),
+            FakeCandidate(
+                "chunk-page-2",
+                "doc-a",
+                "第二页记录了主要风险与缓解计划。",
+                "#page-2",
+                0.85,
+                2,
+                metadata={"page_no": "2"},
+            ),
+        ],
+    )
+
+    result = service.retrieve(
+        "第2页讲了什么风险？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+    )
+
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-page-2"]
+
+
+def test_retrieval_service_filters_out_candidates_that_violate_explicit_section_constraints() -> None:
+    service, _calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate(
+                "chunk-intro",
+                "doc-a",
+                "系统由多个模块组成。",
+                "#intro",
+                0.96,
+                1,
+                section_path=("项目介绍",),
+            ),
+            FakeCandidate(
+                "chunk-arch",
+                "doc-a",
+                "系统架构分为接入层、检索层、生成层。",
+                "#arch",
+                0.88,
+                2,
+                section_path=("系统架构",),
+            ),
+        ],
+    )
+
+    result = service.retrieve(
+        "系统架构分为哪几层？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+    )
+
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-arch"]
 
 
 def test_retrieval_service_collapses_duplicate_child_hits_from_same_parent() -> None:

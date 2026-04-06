@@ -29,6 +29,7 @@ class RerankFeatureExtractor:
         query_is_command_like = looks_command_like(request.query)
         query_is_definition_like = looks_definition_query(request.query)
         query_is_structure_like = looks_structure_query(request.query)
+        requested_special_targets = set(request.query_analysis.special_targets)
         parent_counts = Counter(candidate.parent_id for candidate in candidates if candidate.parent_id)
         max_order_index = max((int(candidate.metadata.get("order_index", "0")) for candidate in candidates), default=0)
 
@@ -78,6 +79,10 @@ class RerankFeatureExtractor:
                 "is_figure": candidate.chunk_type == "figure",
                 "is_ocr_region": candidate.chunk_type == "ocr_region",
                 "is_image_summary": candidate.chunk_type == "image_summary",
+                "query_requires_special": bool(requested_special_targets),
+                "special_target_match": bool(
+                    requested_special_targets and candidate.chunk_type in requested_special_targets
+                ),
                 "parent_section_match": bool(preferred_sections & set(candidate.section_path)),
                 "page_match": bool(requested_pages & page_numbers),
                 "source_type": metadata.get("source_type", ""),

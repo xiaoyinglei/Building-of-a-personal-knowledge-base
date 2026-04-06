@@ -37,25 +37,6 @@ class ResearchSubQuestion(BaseModel):
     purpose: str
 
 
-class QueryIntent(StrEnum):
-    FACTUAL_LOOKUP = "factual_lookup"
-    SEMANTIC_LOOKUP = "semantic_lookup"
-    LOCALIZED_LOOKUP = "localized_lookup"
-    STRUCTURE_LOOKUP = "structure_lookup"
-    SECTION_LOOKUP = "section_lookup"
-    SUMMARY_REQUEST = "summary_request"
-    FLOW_PROCESS_REQUEST = "flow_process_request"
-    COMPARISON_REQUEST = "comparison_request"
-    SPECIAL_CONTENT_LOOKUP = "special_content_lookup"
-    METADATA_CONSTRAINED_LOOKUP = "metadata_constrained_lookup"
-
-
-class ConfidenceBand(StrEnum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-
-
 class PageRangeConstraint(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -110,37 +91,29 @@ class MetadataFilters(BaseModel):
         )
 
 
-class RoutingHints(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    dense_priority: float = 0.0
-    sparse_priority: float = 0.0
-    structure_priority: float = 0.0
-    metadata_priority: float = 0.0
-    special_priority: float = 0.0
-    graph_priority: float = 0.0
-    primary_channels: list[str] = Field(default_factory=list)
-    rewrite_focus_terms: list[str] = Field(default_factory=list)
-    decomposition_axes: list[str] = Field(default_factory=list)
-
-
 class QueryUnderstanding(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    intent: QueryIntent
-    query_type: str
-    confidence: float = 0.0
-    confidence_band: ConfidenceBand = ConfidenceBand.LOW
-    needs_dense: bool = False
-    needs_sparse: bool = False
+    query_type: str = "lookup"
     needs_special: bool = False
     needs_structure: bool = False
     needs_metadata: bool = False
     needs_graph_expansion: bool = False
-    should_rewrite_query: bool = False
-    should_decompose_query: bool = False
     structure_constraints: StructureConstraints = Field(default_factory=StructureConstraints)
     metadata_filters: MetadataFilters = Field(default_factory=MetadataFilters)
     special_targets: list[str] = Field(default_factory=list)
     preferred_section_terms: list[str] = Field(default_factory=list)
-    routing_hints: RoutingHints = Field(default_factory=RoutingHints)
+
+    def has_explicit_constraints(self) -> bool:
+        return any(
+            (
+                self.needs_special,
+                self.needs_structure,
+                self.needs_metadata,
+                self.needs_graph_expansion,
+                self.structure_constraints.has_constraints(),
+                self.metadata_filters.has_constraints(),
+                bool(self.special_targets),
+                bool(self.preferred_section_terms),
+            )
+        )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from rag.query._artifact.service import ArtifactService
+from rag.query.artifact import ArtifactService
 from rag.schema._types.access import RuntimeMode
 from rag.schema._types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
 from rag.schema._types.envelope import EvidenceItem

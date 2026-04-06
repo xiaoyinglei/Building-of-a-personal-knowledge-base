@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from collections.abc import Callable, Sequence
+from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from rag.llm.generation import AnswerGenerationService
-from rag.query.policies import RoutingThresholds
+from rag.query.analysis import section_family_aliases
 from rag.schema._types.access import AccessPolicy, RuntimeMode
 from rag.schema._types.content import ChunkRole
 from rag.schema._types.envelope import EvidenceItem
-from rag.schema._types.query import ComplexityLevel, TaskType
+from rag.schema._types.query import ComplexityLevel, QueryUnderstanding, TaskType
 from rag.schema._types.text import (
     DEFAULT_TOKENIZER_FALLBACK_MODEL,
     TokenAccountingService,
@@ -69,11 +69,13 @@ def classify_retrieval_family(
     return "kg" if evidence_kind == "graph" else "vector"
 
 
-@dataclass(frozen=True, slots=True)
-class ContextAssemblyPolicy:
-    family_order: tuple[str, ...]
-    family_chunk_targets: dict[str, int]
-    family_token_shares: dict[str, float]
+class EvidenceThresholds(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    fast_min_evidence_chunks: int = 2
+    fast_min_sections: int = 1
+    deep_min_evidence_chunks: int = 4
+    deep_min_supporting_units: int = 2
 
 
 class EvidenceBundle(BaseModel):
@@ -97,8 +99,8 @@ class SelfCheckResult(BaseModel):
 
 
 class EvidenceService:
-    def __init__(self, thresholds: RoutingThresholds | None = None) -> None:
-        self._thresholds = thresholds or RoutingThresholds()
+    def __init__(self, thresholds: EvidenceThresholds | None = None) -> None:
+        self._thresholds = thresholds or EvidenceThresholds()
 
     @staticmethod
     def _candidate_source_scope(candidate: CandidateLike) -> set[str]:
@@ -129,6 +131,7 @@ class EvidenceService:
         source_scope: Sequence[str],
         access_policy: AccessPolicy,
         runtime_mode: RuntimeMode,
+        query_understanding: QueryUnderstanding | None = None,
     ) -> list[CandidateLike]:
         allowed_scope = set(source_scope)
         filtered: list[CandidateLike] = []
@@ -143,8 +146,101 @@ class EvidenceService:
                     continue
                 if not (candidate_policy.allowed_locations & access_policy.allowed_locations):
                     continue
+            if query_understanding is not None and not self._matches_explicit_constraints(
+                candidate, query_understanding
+            ):
+                continue
             filtered.append(candidate)
         return filtered
+
+    @staticmethod
+    def _matches_explicit_constraints(candidate: CandidateLike, query_understanding: QueryUnderstanding) -> bool:
+        if getattr(candidate, "source_kind", "internal") == "external":
+            return True
+        if not query_understanding.has_explicit_constraints():
+            return True
+        if not EvidenceService._matches_metadata_constraints(candidate, query_understanding):
+            return False
+        if not EvidenceService._matches_structure_constraints(candidate, query_understanding):
+            return False
+        return True
+
+    @staticmethod
+    def _matches_metadata_constraints(candidate: CandidateLike, query_understanding: QueryUnderstanding) -> bool:
+        metadata_filters = query_understanding.metadata_filters
+        candidate_metadata = getattr(candidate, "metadata", {}) or {}
+        candidate_source_type = getattr(candidate, "source_type", None) or candidate_metadata.get("source_type")
+        if metadata_filters.source_types and candidate_source_type is not None:
+            if candidate_source_type not in metadata_filters.source_types:
+                return False
+
+        candidate_file_name = getattr(candidate, "file_name", None)
+        if metadata_filters.file_names and candidate_file_name is not None:
+            if candidate_file_name not in metadata_filters.file_names:
+                return False
+        if metadata_filters.document_titles and candidate_file_name is not None:
+            if candidate_file_name not in metadata_filters.document_titles:
+                return False
+
+        if not metadata_filters.page_numbers and not metadata_filters.page_ranges:
+            return True
+        candidate_pages = EvidenceService._candidate_pages(candidate)
+        if not candidate_pages:
+            return True
+        if metadata_filters.page_numbers and not candidate_pages & set(metadata_filters.page_numbers):
+            if not metadata_filters.page_ranges:
+                return False
+        if metadata_filters.page_ranges and not any(
+            any(page_range.start <= page <= page_range.end for page in candidate_pages)
+            for page_range in metadata_filters.page_ranges
+        ):
+            if not metadata_filters.page_numbers:
+                return False
+            if not candidate_pages & set(metadata_filters.page_numbers):
+                return False
+        return True
+
+    @staticmethod
+    def _matches_structure_constraints(candidate: CandidateLike, query_understanding: QueryUnderstanding) -> bool:
+        constraints = query_understanding.structure_constraints
+        if not constraints.requires_structure_match:
+            return True
+        section_path = tuple(getattr(candidate, "section_path", ()) or ())
+        if not section_path:
+            return True
+        section_text = " ".join(section_path).lower()
+        preferred_terms = {term.lower() for term in query_understanding.preferred_section_terms}
+        heading_hints = {hint.lower() for hint in constraints.heading_hints}
+        title_hints = {hint.lower() for hint in constraints.title_hints}
+        semantic_aliases = {
+            alias.lower()
+            for family in constraints.semantic_section_families
+            for alias in section_family_aliases(family)
+        }
+        match_terms = preferred_terms | heading_hints | title_hints | semantic_aliases
+        if not match_terms:
+            return True
+        matched = any(term in section_text for term in match_terms)
+        if constraints.prefer_heading_match:
+            return matched
+        return matched
+
+    @staticmethod
+    def _candidate_pages(candidate: CandidateLike) -> set[int]:
+        metadata = getattr(candidate, "metadata", {}) or {}
+        pages: set[int] = set()
+        page_no = metadata.get("page_no")
+        if isinstance(page_no, str) and page_no.isdigit():
+            pages.add(int(page_no))
+        page_start = getattr(candidate, "page_start", None)
+        page_end = getattr(candidate, "page_end", None)
+        if isinstance(page_start, int) and isinstance(page_end, int):
+            pages.update(range(page_start, page_end + 1))
+        elif isinstance(page_start, int):
+            pages.add(page_start)
+        elif isinstance(page_end, int):
+            pages.add(page_end)
+        return pages
 
     @staticmethod
     def _to_evidence_item(candidate: CandidateLike) -> EvidenceItem:
@@ -368,13 +464,15 @@ class EvidenceTruncator:
 
         normalized_budget = max(token_budget, 1)
         normalized_max_chunks = min(max(max_evidence_chunks, 1), normalized_budget)
-        policy = self._build_context_policy(evidence=evidence, mode=mode, max_evidence_chunks=normalized_max_chunks)
-        prioritized_items = self._prioritize_evidence(evidence, normalized_max_chunks, policy=policy)
-        assigned_budgets = self._allocate_family_token_budgets(
-            prioritized_items,
-            token_budget=normalized_budget,
-            policy=policy,
+        family_order = self._family_order(mode)
+        coverage_order = self._family_coverage_order(mode)
+        prioritized_items = self._prioritize_evidence(
+            evidence,
+            normalized_max_chunks,
+            coverage_order=coverage_order,
+            family_order=family_order,
         )
+        assigned_budgets = self._allocate_token_budgets(prioritized_items, token_budget=normalized_budget)
 
         selected: list[ContextEvidence] = []
         consumed = 0
@@ -440,7 +538,8 @@ class EvidenceTruncator:
         evidence: list[EvidenceItem],
         max_evidence_chunks: int,
         *,
-        policy: ContextAssemblyPolicy,
+        coverage_order: tuple[str, ...],
+        family_order: tuple[str, ...],
     ) -> list[EvidenceItem]:
         if len(evidence) <= max_evidence_chunks:
             return list(evidence)
@@ -449,156 +548,91 @@ class EvidenceTruncator:
         selected_indices: list[int] = []
         selected_docs: set[str] = set()
         selected_groups: set[str] = set()
-        family_counts: Counter[str] = Counter()
+        family_priority = {
+            family: len(family_order) - position
+            for position, family in enumerate(family_order)
+        }
 
-        def pick_best(predicate: Callable[[EvidenceItem], bool] | None = None) -> None:
-            remaining = [
+        def select(index: int, item: EvidenceItem) -> None:
+            selected_indices.append(index)
+            if item.doc_id:
+                selected_docs.add(item.doc_id)
+            selected_groups.add(self._group_key(item))
+
+        for family in coverage_order:
+            if len(selected_indices) >= max_evidence_chunks:
+                break
+            family_candidates = [
                 (index, item)
                 for index, item in indexed_items
-                if index not in selected_indices and (predicate(item) if predicate is not None else True)
+                if index not in selected_indices and self._evidence_family(item) == family
             ]
-            if not remaining or len(selected_indices) >= max_evidence_chunks:
-                return
+            if not family_candidates:
+                continue
             best_index, best_item = max(
-                remaining,
-                key=lambda pair: self._selection_score(
+                family_candidates,
+                key=lambda pair: self._selection_key(
                     pair[1],
                     original_index=pair[0],
+                    family_priority=family_priority,
                     selected_docs=selected_docs,
                     selected_groups=selected_groups,
                 ),
             )
-            selected_indices.append(best_index)
-            if best_item.doc_id:
-                selected_docs.add(best_item.doc_id)
-            selected_groups.add(self._group_key(best_item))
-            family_counts[self._evidence_family(best_item)] += 1
+            select(best_index, best_item)
 
-        for family in policy.family_order:
-            target = policy.family_chunk_targets.get(family, 0)
-            while family_counts[family] < target and len(selected_indices) < max_evidence_chunks:
-                previous_count = len(selected_indices)
-                def belongs_to_family(item: EvidenceItem, *, family: str = family) -> bool:
-                    return self._evidence_family(item) == family
-
-                pick_best(belongs_to_family)
-                if len(selected_indices) == previous_count:
-                    break
-        while len(selected_indices) < max_evidence_chunks:
-            previous_count = len(selected_indices)
-            pick_best()
-            if len(selected_indices) == previous_count:
+        remaining = sorted(
+            [
+                (index, item)
+                for index, item in indexed_items
+                if index not in selected_indices
+            ],
+            key=lambda pair: self._selection_key(
+                pair[1],
+                original_index=pair[0],
+                family_priority=family_priority,
+                selected_docs=selected_docs,
+                selected_groups=selected_groups,
+            ),
+            reverse=True,
+        )
+        for index, item in remaining:
+            if len(selected_indices) >= max_evidence_chunks:
                 break
+            select(index, item)
 
         return [evidence[index] for index in sorted(selected_indices)]
 
     def _allocate_token_budgets(self, evidence: list[EvidenceItem], token_budget: int) -> list[int]:
         if not evidence:
             return []
-
-        weights = [self._budget_weight(item) for item in evidence]
-        total_weight = sum(weights) or 1.0
-        raw_budgets = [max(1, int(token_budget * (weight / total_weight))) for weight in weights]
-        assigned = raw_budgets[:]
-        remainder = token_budget - sum(assigned)
-
-        if remainder > 0:
-            for index in range(remainder):
-                assigned[index % len(assigned)] += 1
-        elif remainder < 0:
-            for _ in range(-remainder):
-                candidates = [index for index, value in enumerate(assigned) if value > 1]
-                if not candidates:
-                    break
-                largest = max(candidates, key=lambda index: assigned[index])
-                assigned[largest] -= 1
-        return assigned
-
-    def _allocate_family_token_budgets(
-        self,
-        evidence: list[EvidenceItem],
-        *,
-        token_budget: int,
-        policy: ContextAssemblyPolicy,
-    ) -> list[int]:
-        if not evidence:
-            return []
-
-        family_groups: dict[str, list[tuple[int, EvidenceItem]]] = defaultdict(list)
-        for index, item in enumerate(evidence):
-            family_groups[self._evidence_family(item)].append((index, item))
-
-        family_budgets = self._family_budget_pools(
-            family_groups=family_groups,
-            token_budget=token_budget,
-            policy=policy,
-        )
         assigned = [1] * len(evidence)
-        for family, indexed_items in family_groups.items():
-            indices = [index for index, _item in indexed_items]
-            items = [item for _index, item in indexed_items]
-            budgets = self._allocate_token_budgets(items, family_budgets[family])
-            for index, budget in zip(indices, budgets, strict=False):
-                assigned[index] = budget
+        remaining = max(token_budget - len(evidence), 0)
+        desired_counts = [max(self.token_accounting.count(item.text), 1) for item in evidence]
+        ranked_indices = sorted(
+            range(len(evidence)),
+            key=lambda index: self._budget_priority(evidence[index], original_index=index),
+            reverse=True,
+        )
+        while remaining > 0:
+            progress = False
+            for index in ranked_indices:
+                if assigned[index] >= desired_counts[index]:
+                    continue
+                assigned[index] += 1
+                remaining -= 1
+                progress = True
+                if remaining <= 0:
+                    break
+            if not progress:
+                break
         return assigned
 
-    def _family_budget_pools(
-        self,
-        *,
-        family_groups: dict[str, list[tuple[int, EvidenceItem]]],
-        token_budget: int,
-        policy: ContextAssemblyPolicy,
-    ) -> dict[str, int]:
-        present_families = [family for family in policy.family_order if family in family_groups]
-        remaining_families = [family for family in family_groups if family not in present_families]
-        ordered_families = [*present_families, *sorted(remaining_families)]
-        base_budgets = {family: len(items) for family, items in family_groups.items()}
-        remaining_budget = token_budget - sum(base_budgets.values())
-        if remaining_budget <= 0:
-            return base_budgets
-
-        weights = {
-            family: max(policy.family_token_shares.get(family, 0.0), 0.0)
-            for family in ordered_families
-        }
-        if not any(weight > 0.0 for weight in weights.values()):
-            weights = {family: 1.0 for family in ordered_families}
-        total_weight = sum(weights.values()) or 1.0
-
-        allocated = dict(base_budgets)
-        fractional: list[tuple[float, str]] = []
-        for family in ordered_families:
-            raw_extra = remaining_budget * (weights[family] / total_weight)
-            extra = int(raw_extra)
-            allocated[family] += extra
-            fractional.append((raw_extra - extra, family))
-
-        remainder = token_budget - sum(allocated.values())
-        for _fraction, family in sorted(fractional, key=lambda item: (-item[0], ordered_families.index(item[1]))):
-            if remainder <= 0:
-                break
-            allocated[family] += 1
-            remainder -= 1
-        return allocated
-
-    def _build_context_policy(
-        self,
-        *,
-        evidence: list[EvidenceItem],
-        mode: str,
-        max_evidence_chunks: int,
-    ) -> ContextAssemblyPolicy:
+    @staticmethod
+    def _family_order(mode: str) -> tuple[str, ...]:
         from rag.query.query import QueryMode, normalize_query_mode
 
         resolved_mode = normalize_query_mode(mode)
-        family_shares_by_mode: dict[QueryMode, dict[str, float]] = {
-            QueryMode.BYPASS: {"kg": 0.0, "vector": 0.0, "multimodal": 0.0, "external": 0.0},
-            QueryMode.NAIVE: {"kg": 0.1, "vector": 0.8, "multimodal": 0.1, "external": 0.0},
-            QueryMode.LOCAL: {"kg": 0.78, "vector": 0.0, "multimodal": 0.22, "external": 0.0},
-            QueryMode.GLOBAL: {"kg": 0.74, "vector": 0.0, "multimodal": 0.26, "external": 0.0},
-            QueryMode.HYBRID: {"kg": 0.66, "vector": 0.0, "multimodal": 0.28, "external": 0.06},
-            QueryMode.MIX: {"kg": 0.45, "vector": 0.35, "multimodal": 0.15, "external": 0.05},
-        }
         family_order_by_mode: dict[QueryMode, tuple[str, ...]] = {
             QueryMode.BYPASS: ("vector", "kg", "multimodal", "external"),
             QueryMode.NAIVE: ("vector", "multimodal", "kg", "external"),
@@ -607,94 +641,54 @@ class EvidenceTruncator:
             QueryMode.HYBRID: ("kg", "multimodal", "vector", "external"),
             QueryMode.MIX: ("kg", "vector", "multimodal", "external"),
         }
-        family_order = family_order_by_mode[resolved_mode]
-        shares = family_shares_by_mode[resolved_mode]
-        available_families = {self._evidence_family(item) for item in evidence}
-        family_chunk_targets = self._allocate_family_chunk_targets(
-            available_families=available_families,
-            family_order=family_order,
-            family_shares=shares,
-            max_evidence_chunks=max_evidence_chunks,
-        )
-        return ContextAssemblyPolicy(
-            family_order=family_order,
-            family_chunk_targets=family_chunk_targets,
-            family_token_shares=shares,
-        )
+        return family_order_by_mode[resolved_mode]
 
     @staticmethod
-    def _allocate_family_chunk_targets(
-        *,
-        available_families: set[str],
-        family_order: tuple[str, ...],
-        family_shares: dict[str, float],
-        max_evidence_chunks: int,
-    ) -> dict[str, int]:
-        active_families = [family for family in family_order if family in available_families]
-        if not active_families or max_evidence_chunks <= 0:
-            return {}
-        targets = {family: 0 for family in active_families}
-        remaining = max_evidence_chunks
-        for family in active_families:
-            if remaining <= 0:
-                break
-            if family_shares.get(family, 0.0) > 0.0:
-                targets[family] += 1
-                remaining -= 1
-        if remaining <= 0:
-            return targets
+    def _family_coverage_order(mode: str) -> tuple[str, ...]:
+        from rag.query.query import QueryMode, normalize_query_mode
 
-        raw_allocations: dict[str, float] = {
-            family: remaining * family_shares.get(family, 0.0) for family in active_families
+        resolved_mode = normalize_query_mode(mode)
+        coverage_order_by_mode: dict[QueryMode, tuple[str, ...]] = {
+            QueryMode.BYPASS: ("vector",),
+            QueryMode.NAIVE: ("vector",),
+            QueryMode.LOCAL: ("kg", "multimodal"),
+            QueryMode.GLOBAL: ("kg", "multimodal"),
+            QueryMode.HYBRID: ("kg", "multimodal"),
+            QueryMode.MIX: ("kg", "vector", "multimodal"),
         }
-        for family, raw in raw_allocations.items():
-            extra = int(raw)
-            targets[family] += extra
-            remaining -= extra
-        if remaining <= 0:
-            return targets
-        for family in sorted(
-            active_families,
-            key=lambda family: (-(raw_allocations.get(family, 0.0) % 1), family_order.index(family)),
-        ):
-            if remaining <= 0:
-                break
-            targets[family] += 1
-            remaining -= 1
-        return targets
+        return coverage_order_by_mode[resolved_mode]
 
-    def _budget_weight(self, item: EvidenceItem) -> float:
-        weight = max(float(item.score), 0.0) + 0.1
-        if item.evidence_kind == "internal":
-            weight += 0.3
-        if item.special_chunk_type:
-            weight += 0.25
-        if item.chunk_role and getattr(item.chunk_role, "value", "") == "special":
-            weight += 0.15
-        if item.page_start is not None:
-            weight += 0.05
-        return weight
-
-    def _selection_score(
+    def _budget_priority(
         self,
         item: EvidenceItem,
         *,
         original_index: int,
+    ) -> tuple[float, int, int, int, int]:
+        return (
+            max(float(item.score), 0.0),
+            int(item.evidence_kind == "internal"),
+            int(bool(item.special_chunk_type)),
+            int(item.page_start is not None),
+            -original_index,
+        )
+
+    def _selection_key(
+        self,
+        item: EvidenceItem,
+        *,
+        original_index: int,
+        family_priority: dict[str, int],
         selected_docs: set[str],
         selected_groups: set[str],
-    ) -> tuple[float, float, float, int]:
-        score = max(float(item.score), 0.0)
-        novelty_bonus = 0.0 if item.doc_id in selected_docs else 0.15
-        group_bonus = 0.0 if self._group_key(item) in selected_groups else 0.1
-        retrieval_family = self._evidence_family(item)
-        kind_bonus = 0.2 if item.evidence_kind == "internal" else 0.0
-        if retrieval_family == "kg":
-            kind_bonus += 0.12
-        if retrieval_family == "multimodal":
-            kind_bonus += 0.15
-        if item.special_chunk_type:
-            kind_bonus += 0.08
-        return (score + novelty_bonus + group_bonus + kind_bonus, score, kind_bonus, -original_index)
+    ) -> tuple[int, float, int, int, int, int]:
+        return (
+            family_priority.get(self._evidence_family(item), 0),
+            max(float(item.score), 0.0),
+            int(self._group_key(item) not in selected_groups),
+            int(bool(item.doc_id) and item.doc_id not in selected_docs),
+            int(item.evidence_kind == "internal"),
+            -original_index,
+        )
 
     @staticmethod
     def _group_key(item: EvidenceItem) -> str:
