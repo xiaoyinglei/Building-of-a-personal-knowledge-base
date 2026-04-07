@@ -332,10 +332,8 @@ class SearchBackedRetrievalFactory:
                 score = float(keyword_overlap(query_terms, chunk.text))
                 special_type = chunk.special_chunk_type or ""
                 aliases = target_aliases.get(special_type, set())
-                if special_type and special_type in target_aliases:
-                    score += 1.0
-                if aliases and any(alias in lowered for alias in aliases):
-                    score += 1.0
+                score += float(int(bool(special_type and special_type in target_aliases)))
+                score += float(sum(1 for alias in aliases if alias and alias in lowered))
                 if score <= 0:
                     continue
                 candidates.extend(
@@ -424,7 +422,9 @@ class SearchBackedRetrievalFactory:
         seed_chunk_ids = [candidate.chunk_id for candidate in evidence if candidate.source_kind == "internal"]
         seed_node_scores: dict[str, float] = {}
         for candidate in evidence:
-            candidate_score = max(float(candidate.score), 0.1)
+            candidate_score = max(float(candidate.score), 0.0)
+            if candidate_score <= 0.0:
+                continue
             for node in self._graph_repo.list_nodes_for_chunk(candidate.chunk_id):
                 seed_node_scores[node.node_id] = max(seed_node_scores.get(node.node_id, 0.0), candidate_score)
             for edge in self._graph_repo.list_edges_for_chunk(candidate.chunk_id, include_candidates=True):
@@ -459,7 +459,7 @@ class SearchBackedRetrievalFactory:
                 source_id=result.url,
                 text=result.snippet,
                 citation_anchor=result.title,
-                score=result.score or 0.5,
+                score=float(result.score or 0.0),
                 rank=index,
                 source_kind="external",
                 file_name=result.title,
@@ -629,8 +629,8 @@ class SearchBackedRetrievalFactory:
     ) -> None:
         if score <= 0.0:
             return
-        for rank, chunk_id in enumerate(chunk_ids, start=1):
-            chunk_scores[chunk_id] = chunk_scores.get(chunk_id, 0.0) + score / rank
+        for chunk_id in chunk_ids:
+            chunk_scores[chunk_id] = chunk_scores.get(chunk_id, 0.0) + score
             support_counts[chunk_id] = support_counts.get(chunk_id, 0) + 1
 
     def _score_graph_walk(
@@ -656,12 +656,11 @@ class SearchBackedRetrievalFactory:
             current_node = self._graph_repo.get_node(node_id)
             current_node_type = None if current_node is None else current_node.node_type
 
-            node_evidence_score = node_score / (1.0 + depth)
             self._add_scored_chunk_ids(
                 chunk_scores,
                 support_counts,
                 self._graph_repo.list_node_evidence_chunk_ids(node_id),
-                score=node_evidence_score,
+                score=node_score,
             )
             if depth >= max_depth:
                 continue
@@ -680,10 +679,10 @@ class SearchBackedRetrievalFactory:
                     chunk_scores,
                     support_counts,
                     edge.evidence_chunk_ids,
-                    score=edge_score / (1.0 + depth),
+                    score=edge_score,
                 )
                 adjacent = edge.to_node_id if edge.from_node_id == node_id else edge.from_node_id
-                next_score = edge_score / (2.0 + depth)
+                next_score = edge_score
                 if next_score <= best_node_scores.get(adjacent, 0.0):
                     continue
                 best_node_scores[adjacent] = next_score
@@ -696,7 +695,8 @@ class SearchBackedRetrievalFactory:
         confidence: float,
         depth: int,
     ) -> float:
-        return max(confidence, 0.0) / (depth + 1)
+        del depth
+        return max(confidence, 0.0)
 
     def _build_scored_candidates(
         self,

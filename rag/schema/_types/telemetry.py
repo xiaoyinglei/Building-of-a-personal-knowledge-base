@@ -10,8 +10,8 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 class TelemetryEvent(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    name: str
-    category: str
+    name: str 
+    category: str 
     payload: dict[str, str | int | float | bool] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -21,19 +21,19 @@ class EvaluationMetricInput(BaseModel):
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
-    citation_precision: float = Field(ge=0.0, le=1.0)
-    evidence_sufficient: bool
-    conflict_detected: bool
+    citation_precision: float = Field(ge=0.0, le=1.0) # 相关且支持答案的引用证据比例
+    evidence_sufficient: bool # 答案是否有充分的证据支持
+    conflict_detected: bool # 是否检测到证据之间的冲突
     simple_query_latency_seconds: float = Field(
         ge=0.0,
         validation_alias=AliasChoices("latency_seconds", "simple_query_latency_seconds"),
-    )
+    ) # 简单查询的响应时间，单位为秒
     deep_query_completion_quality: float = Field(
         ge=0.0,
         le=1.0,
         validation_alias=AliasChoices("deep_quality", "deep_query_completion_quality"),
-    )
-    preservation_useful: bool
+    ) # 深度查询的完成质量评分，范围从0到1
+    preservation_useful: bool # 是否认为保存建议有用
 
 
 class EvaluationMetricSummary(BaseModel):

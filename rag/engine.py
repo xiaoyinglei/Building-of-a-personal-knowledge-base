@@ -271,12 +271,13 @@ class _CoreRAG:
 
     def _build_retrieval_service(self) -> RetrievalService:
         bundle = self.capability_bundle
+        query_understanding_service = QueryUnderstandingService(chat_bindings=bundle.chat_bindings)
         retrieval_factory = SearchBackedRetrievalFactory(
             metadata_repo=self.stores.metadata_repo,
             fts_repo=self._fts_repo,
             graph_repo=self.stores.graph_repo,
         )
-        reranker_service = self._build_reranker_service()
+        reranker_service = self._build_reranker_service(query_understanding_service=query_understanding_service)
         instrumented_reranker = None if reranker_service is None else _CoreInstrumentedReranker(reranker_service)
         return RetrievalService(
             full_text_retriever=retrieval_factory.full_text_retriever,
@@ -302,19 +303,26 @@ class _CoreRAG:
             web_retriever=retrieval_factory.web_retriever,
             reranker=instrumented_reranker,
             routing_service=RoutingService(),
-            query_understanding_service=QueryUnderstandingService(),
+            query_understanding_service=query_understanding_service,
             evidence_service=EvidenceService(),
             graph_expansion_service=GraphExpansionService(),
             artifact_service=ArtifactService(),
             telemetry_service=self.telemetry_service,
         )
 
-    def _build_reranker_service(self) -> object | None:
+    def _build_reranker_service(
+        self,
+        *,
+        query_understanding_service: QueryUnderstandingService,
+    ) -> object | None:
         if not self.capability_bundle.rerank_bindings:
             return None
         binding = self.capability_bundle.rerank_bindings[0]
         if binding is not None:
-            return ModelBackedRerankService(binding=binding)
+            return ModelBackedRerankService(
+                binding=binding,
+                query_understanding_service=query_understanding_service,
+            )
         return None
 
     def _register_or_validate_runtime_contract(self) -> None:

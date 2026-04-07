@@ -81,17 +81,11 @@ class DocumentFeatureService:
         ocr_region_count = len([element for element in parsed.elements if element.kind == "ocr_region"])
         structure_depth = max((len(section.toc_path) - 1 for section in parsed.sections), default=1)
         avg_section_words = word_count / max(section_count, 1)
-        heading_quality_score = self._heading_quality_score(
-            section_count=section_count,
-            heading_count=heading_count,
-            structure_depth=structure_depth,
-        )
         return DocumentFeatures(
             source_type=parsed.source_type,
             section_count=section_count,
             word_count=word_count,
             heading_count=heading_count,
-            heading_quality_score=heading_quality_score,
             table_count=table_count,
             figure_count=figure_count,
             caption_count=caption_count,
@@ -105,39 +99,29 @@ class DocumentFeatureService:
             },
         )
 
-    @staticmethod
-    def _heading_quality_score(
-        *,
-        section_count: int,
-        heading_count: int,
-        structure_depth: int,
-    ) -> float:
-        if heading_count <= 0 or section_count <= 0:
-            return 0.0
-        density = min(heading_count / section_count, 1.0)
-        depth_score = min(structure_depth / 4.0, 1.0)
-        return round((density * 0.7) + (depth_score * 0.3), 4)
-
 
 class ChunkRoutingService:
     def route(self, features: DocumentFeatures) -> ChunkRoutingDecision:
         reasons: list[str] = []
         debug = {
-            "heading_quality_score": f"{features.heading_quality_score:.3f}",
             "section_count": str(features.section_count),
+            "heading_count": str(features.heading_count),
+            "structure_depth": str(features.structure_depth),
+            "has_dense_structure": str(features.has_dense_structure),
             "table_count": str(features.table_count),
             "figure_count": str(features.figure_count),
             "ocr_region_count": str(features.ocr_region_count),
         }
         if features.source_type is SourceType.PDF:
             reasons.append("PDF defaults to HybridChunker for mixed layout resilience.")
-            if features.table_count > 0 or features.avg_section_words >= 220:
-                reasons.append("Large or mixed-content PDF enables local refine.")
+            local_refine = features.table_count > 0 or not features.has_dense_structure
+            if local_refine:
+                reasons.append("PDF with tables or weak structure keeps local refine enabled.")
             return ChunkRoutingDecision(
                 source_type=features.source_type,
                 selected_strategy=ChunkingStrategy.HYBRID,
                 special_chunk_mode=True,
-                local_refine=features.table_count > 0 or features.avg_section_words >= 220,
+                local_refine=local_refine,
                 fallback=False,
                 reasons=reasons,
                 debug=debug,
@@ -383,7 +367,7 @@ class ChunkingService:
                     citation_anchor=segment.anchor or segment.segment_id,
                     citation_span=(span_start, span_end),
                     effective_access_policy=access_policy,
-                    extraction_quality=1.0 if len(chunks) == 1 else 0.95,
+                    extraction_quality=1.0,
                     embedding_ref=chunk_id,
                     order_index=index,
                     metadata={"order_index": str(index)},
@@ -1001,9 +985,8 @@ class DocumentProcessingService:
 
     def _max_chunk_tokens(self, *, local_refine: bool) -> int:
         base = max(self._tokenizer_contract.chunk_token_size, 32)
-        if not local_refine:
-            return base
-        return max(int(base * 0.72), 64)
+        del local_refine
+        return base
 
     @staticmethod
     def _page_numbers(chunk: Any) -> list[int]:

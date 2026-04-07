@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -10,19 +9,34 @@ from rag.schema._types.access import AccessPolicy, ExecutionLocationPreference, 
 from rag.schema._types.diagnostics import ProviderAttempt
 from rag.schema._types.envelope import EvidenceItem
 from rag.schema._types.generation import AnswerSection, GroundedAnswer
-from rag.schema._types.text import (
-    focus_terms,
-    keyword_overlap,
-    looks_command_like,
-    looks_definition_query,
-    looks_definition_text,
-    looks_operation_query,
-    looks_operation_text,
-    looks_structure_query,
-    looks_structure_text,
-    search_terms,
-    split_sentences,
-)
+from rag.schema._types.query import QueryUnderstanding
+from rag.schema._types.text import keyword_overlap, looks_command_like, search_terms, split_sentences
+
+_GENERIC_TERMS = {
+    "什么",
+    "哪些",
+    "哪里",
+    "一下",
+    "这个",
+    "那个",
+    "这里",
+    "那里",
+    "请问",
+    "请",
+    "how",
+    "what",
+    "which",
+    "where",
+    "why",
+    "when",
+    "this",
+    "that",
+    "these",
+    "those",
+    "document",
+    "doc",
+    "source",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,54 +52,28 @@ class AnswerGenerator:
     answer_generation_service: AnswerGenerationService = field(default_factory=AnswerGenerationService)
     chat_bindings: tuple[ChatCapabilityBinding, ...] = ()
 
-    def grounded_candidate(self, query: str, evidence_pack: Sequence[EvidenceItem]) -> str:
+    def grounded_candidate(
+        self,
+        query: str,
+        evidence_pack: Sequence[EvidenceItem],
+        *,
+        query_understanding: QueryUnderstanding | None = None,
+    ) -> str:
         hits = [item for item in evidence_pack if item.text.strip()]
         if not hits:
             return "Insufficient evidence in indexed sources."
 
-        operation_conclusion = self._operation_aware_conclusion(query, hits)
-        if operation_conclusion is not None:
-            return operation_conclusion
+        if query_understanding is not None and query_understanding.needs_special:
+            special_candidate = self._special_aware_conclusion(hits, query_understanding)
+            if special_candidate is not None:
+                return special_candidate
 
-        structure_conclusion = self._structure_aware_conclusion(query, hits)
-        if structure_conclusion is not None:
-            return structure_conclusion
+        if query_understanding is not None and query_understanding.needs_structure:
+            structure_candidate = self._structure_aware_conclusion(hits, query_understanding)
+            if structure_candidate is not None:
+                return structure_candidate
 
-        query_terms = search_terms(query)
-        query_focus_terms = focus_terms(query)
-        query_is_command_like = looks_command_like(query)
-        query_is_definition_like = looks_definition_query(query)
-        query_is_structure_like = looks_structure_query(query)
-        normalized_query = query.strip().lower()
-        sentences = [sentence for item in hits[:5] for sentence in split_sentences(item.text)]
-        if not sentences:
-            return hits[0].text
-
-        def _score(sentence: str) -> float:
-            score = float(keyword_overlap(query_terms, sentence))
-            score += keyword_overlap(query_focus_terms, sentence) * 0.7
-            if normalized_query and normalized_query in sentence.lower():
-                score += 2.0
-            if not query_is_command_like and looks_command_like(sentence):
-                score -= 5.0
-            if (
-                query_is_definition_like
-                and not query_is_structure_like
-                and not looks_command_like(sentence)
-                and looks_definition_text(sentence)
-            ):
-                score += 4.0
-            if query_is_structure_like and looks_structure_text(sentence):
-                score += 5.0
-            return score
-
-        non_command_sentences = [sentence for sentence in sentences if not looks_command_like(sentence)]
-        candidate_pool = (
-            non_command_sentences
-            if (query_is_definition_like or not query_is_command_like) and non_command_sentences
-            else sentences
-        )
-        return max(candidate_pool, key=_score)
+        return self._best_overlap_sentence(query, hits, query_understanding)
 
     def generate(
         self,
@@ -252,144 +240,59 @@ class AnswerGenerator:
         return ordered
 
     @staticmethod
-    def _operation_aware_conclusion(query: str, hits: Sequence[EvidenceItem]) -> str | None:
-        if not looks_operation_query(query):
-            return None
-
-        query_focus_terms = focus_terms(query)
-        segments: list[str] = []
-        seen: set[str] = set()
-        for hit in hits[:12]:
-            if AnswerGenerator._operation_fragment_score(hit.text, query_focus_terms) < 2:
-                continue
-            normalized = AnswerGenerator._normalize_operation_fragment(hit.text)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            segments.append(normalized)
-        if not segments:
-            return None
-        return "；".join(segments[:4])
-
-    @staticmethod
-    def _operation_fragment_score(text: str, query_focus_terms: Sequence[str]) -> int:
-        lowered = text.lower()
-        score = 0
-        if looks_operation_text(text):
-            score += 1
-        if any(
-            marker in lowered
-            for marker in (
-                "ollama",
-                "openai",
-                "local_only",
-                "cloud_first",
-                ".env",
-                "uv sync",
-                "安装依赖",
-                "本地模式",
-                "云端模式",
-            )
-        ):
-            score += 2
-        if looks_definition_text(text):
-            score -= 2
-        if looks_structure_text(text):
-            score -= 3
-        score += min(2, keyword_overlap(query_focus_terms, text))
-        return score
-
-    @staticmethod
-    def _structure_aware_conclusion(query: str, hits: Sequence[EvidenceItem]) -> str | None:
-        if not looks_structure_query(query):
-            return None
-
-        query_focus_terms = focus_terms(query)
-        lead = None
-        scored_hits = sorted(
-            hits[:5],
+    def _special_aware_conclusion(
+        hits: Sequence[EvidenceItem],
+        understanding: QueryUnderstanding,
+    ) -> str | None:
+        preferred_targets = set(understanding.special_targets)
+        ranked_hits = sorted(
+            hits[:8],
             key=lambda item: (
-                keyword_overlap(query_focus_terms, item.citation_anchor) * 3.0
-                + keyword_overlap(query_focus_terms, item.text) * 1.2
-                + (
-                    4.0
-                    if looks_structure_text(item.citation_anchor)
-                    and keyword_overlap(query_focus_terms, item.citation_anchor) > 0
-                    else 0.0
-                )
-                + (
-                    2.0
-                    if looks_structure_text(item.text) and keyword_overlap(query_focus_terms, item.text) > 0
-                    else 0.0
-                )
-                + float(item.score)
+                int((item.chunk_type or item.special_chunk_type or "") in preferred_targets),
+                float(item.score),
             ),
             reverse=True,
         )
+        for item in ranked_hits:
+            chunk_type = item.chunk_type or item.special_chunk_type or ""
+            if preferred_targets and chunk_type not in preferred_targets:
+                continue
+            if item.text.strip():
+                return item.text.strip()
+        return None
 
-        if AnswerGenerator._prefers_layer_signature_query(query):
-            for hit in scored_hits:
-                signature = AnswerGenerator._extract_layer_signature(hit.text)
-                if signature is not None:
-                    return signature
-
-        for hit in scored_hits:
+    @staticmethod
+    def _structure_aware_conclusion(
+        hits: Sequence[EvidenceItem],
+        understanding: QueryUnderstanding,
+    ) -> str | None:
+        query_focus_terms = understanding.preferred_section_terms or understanding.quoted_terms
+        ranked_hits = sorted(
+            hits[:8],
+            key=lambda item: (
+                int(keyword_overlap(query_focus_terms, item.citation_anchor) > 0),
+                keyword_overlap(query_focus_terms, item.citation_anchor),
+                keyword_overlap(query_focus_terms, item.text),
+                float(item.score),
+            ),
+            reverse=True,
+        )
+        for hit in ranked_hits:
             lead = AnswerGenerator._pick_structure_lead(hit.text, query_focus_terms)
             if lead:
-                break
-
-        for hit in scored_hits:
-            if (
-                keyword_overlap(query_focus_terms, hit.text) == 0
-                and keyword_overlap(query_focus_terms, hit.citation_anchor) == 0
-            ):
-                continue
-            bullets = AnswerGenerator._extract_structure_points(hit.text)
-            hit_lead = AnswerGenerator._pick_structure_lead(hit.text, query_focus_terms)
-            if not hit_lead and not bullets and not lead:
-                continue
-            if bullets:
-                segments = [lead] if lead else []
-                segments.extend(bullets[:6])
-                return "；".join(segment for segment in segments if segment)
-            if hit_lead:
-                return hit_lead
-        if lead:
-            return lead
+                return lead
         return None
 
     @staticmethod
     def _pick_structure_lead(text: str, query_focus_terms: Sequence[str]) -> str | None:
-        signature = AnswerGenerator._extract_layer_signature(text)
-        if signature is not None:
-            return signature
         sentences = split_sentences(text)
         for sentence in sentences:
-            if (
-                keyword_overlap(query_focus_terms, sentence) > 0
-                and looks_structure_text(sentence)
-                and not looks_command_like(sentence)
-            ):
+            if keyword_overlap(query_focus_terms, sentence) > 0 and not looks_command_like(sentence):
                 return AnswerGenerator._normalize_answer_fragment(sentence)
         for sentence in sentences:
-            if looks_structure_text(sentence) and not looks_command_like(sentence):
+            if not looks_command_like(sentence):
                 return AnswerGenerator._normalize_answer_fragment(sentence)
         return None
-
-    @staticmethod
-    def _extract_structure_points(text: str) -> list[str]:
-        segments: list[str] = []
-        parts = [part.strip() for part in re.split(r"(?=\s*-\s+)", text) if part.strip()]
-        for part in parts:
-            cleaned = part.strip()
-            if cleaned.startswith("-"):
-                cleaned = cleaned[1:].strip()
-            if not cleaned or looks_command_like(cleaned):
-                continue
-            if "：" not in cleaned and ":" not in cleaned:
-                continue
-            segments.append(AnswerGenerator._normalize_answer_fragment(cleaned))
-        return segments
 
     @staticmethod
     def _normalize_answer_fragment(text: str) -> str:
@@ -399,27 +302,54 @@ class AnswerGenerator:
         return cleaned.strip()
 
     @staticmethod
-    def _normalize_operation_fragment(text: str) -> str:
-        normalized = AnswerGenerator._normalize_answer_fragment(text)
-        lowered = normalized.lower()
-        if "rag_openai__" in lowered and "OpenAI" not in normalized:
-            normalized = f"OpenAI：{normalized}"
-        if "rag_ollama__" in lowered and "Ollama" not in normalized:
-            normalized = f"Ollama：{normalized}"
-        return normalized
-
-    @staticmethod
-    def _prefers_layer_signature_query(query: str) -> bool:
-        lowered = query.lower()
-        return any(marker in lowered for marker in ("架构", "architecture", "分层", "layer", "layers"))
-
-    @staticmethod
-    def _extract_layer_signature(text: str) -> str | None:
-        normalized = text.replace("`", " ")
-        match = re.search(
-            r"([A-Za-z][A-Za-z0-9/ ]+(?:\s*->\s*[A-Za-z][A-Za-z0-9/ ]+){2,})",
-            normalized,
+    def _best_overlap_sentence(
+        query: str,
+        hits: Sequence[EvidenceItem],
+        understanding: QueryUnderstanding | None,
+    ) -> str:
+        query_terms = search_terms(query)
+        query_focus_terms = (
+            list(understanding.preferred_section_terms)
+            if understanding is not None and understanding.preferred_section_terms
+            else _focus_terms(query)
         )
-        if match is None:
-            return None
-        return AnswerGenerator._normalize_answer_fragment(match.group(1))
+        normalized_query = query.strip().lower()
+        sentences = [sentence for item in hits[:6] for sentence in split_sentences(item.text)]
+        if not sentences:
+            return hits[0].text
+
+        def _score(sentence: str) -> tuple[int, int, int, int, float]:
+            lowered = sentence.lower()
+            exact_match = int(bool(normalized_query) and normalized_query in lowered)
+            focus_overlap = keyword_overlap(query_focus_terms, sentence)
+            term_overlap = keyword_overlap(query_terms, sentence)
+            command_penalty = 0 if looks_command_like(sentence) else 1
+            structure_priority = (
+                keyword_overlap(query_focus_terms, sentence)
+                if understanding is not None and understanding.needs_structure
+                else 0
+            )
+            return (
+                exact_match,
+                structure_priority,
+                focus_overlap,
+                command_penalty,
+                float(term_overlap),
+            )
+
+        candidate_pool = [sentence for sentence in sentences if not looks_command_like(sentence)] or sentences
+        return max(candidate_pool, key=_score)
+
+
+def _focus_terms(text: str) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for term in search_terms(text):
+        normalized = term.strip().lower()
+        if not normalized or normalized in _GENERIC_TERMS or len(normalized) < 2:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered or list(search_terms(text))

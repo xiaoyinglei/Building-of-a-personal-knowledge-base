@@ -1,8 +1,111 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from rag.llm.assembly import ChatCapabilityBinding
 from rag.query.analysis import QueryUnderstandingService
+
+
+class FakeQueryUnderstandingBackend:
+    chat_model_name = "fake-query-understanding"
+
+    def chat(self, prompt: str) -> str:
+        query = prompt.split("Query: ", 1)[1].rsplit("\nJSON only.", 1)[0]
+        payload = {
+            "这个项目做什么？": {
+                "task_type": "lookup",
+                "complexity_level": "L1_direct",
+                "query_type": "lookup",
+            },
+            "第2页讲了什么风险？": {
+                "task_type": "single_doc_qa",
+                "complexity_level": "L2_scoped",
+                "query_type": "scoped_lookup",
+                "needs_metadata": True,
+                "metadata_filters": {"page_numbers": [2]},
+            },
+            "讲系统分层的那一部分在哪一节？": {
+                "task_type": "single_doc_qa",
+                "complexity_level": "L2_scoped",
+                "query_type": "section_lookup",
+                "needs_structure": True,
+                "structure_constraints": {
+                    "match_strategy": "heading",
+                    "requires_structure_match": True,
+                    "prefer_heading_match": True,
+                    "semantic_section_families": ["architecture"],
+                    "preferred_section_terms": ["系统架构"],
+                    "heading_hints": ["系统架构"],
+                    "locator_terms": ["那一部分", "哪一节"],
+                },
+                "preferred_section_terms": ["系统架构"],
+            },
+            "系统架构分为哪几层？": {
+                "task_type": "lookup",
+                "complexity_level": "L2_scoped",
+                "query_type": "structure_lookup",
+                "needs_structure": True,
+                "structure_constraints": {
+                    "match_strategy": "semantic",
+                    "requires_structure_match": True,
+                    "semantic_section_families": ["architecture"],
+                    "preferred_section_terms": ["系统架构"],
+                },
+                "preferred_section_terms": ["系统架构"],
+            },
+            "总结一下这个系统的核心能力。": {
+                "task_type": "synthesis",
+                "complexity_level": "L4_research",
+                "query_type": "summary",
+            },
+            "这个系统的处理流程是怎样的？": {
+                "task_type": "research",
+                "complexity_level": "L4_research",
+                "query_type": "process",
+                "needs_graph_expansion": True,
+            },
+            "比较 Alpha 和 Beta 的检索链路差异。": {
+                "task_type": "comparison",
+                "complexity_level": "L3_comparative",
+                "query_type": "comparison",
+            },
+            "解释一下这个公式表达了什么": {
+                "task_type": "lookup",
+                "complexity_level": "L2_scoped",
+                "query_type": "special_lookup",
+                "needs_special": True,
+                "special_targets": ["formula"],
+            },
+            "pdf 第2到4页的表格指标是什么？": {
+                "task_type": "single_doc_qa",
+                "complexity_level": "L2_scoped",
+                "query_type": "special_lookup",
+                "needs_special": True,
+                "needs_metadata": True,
+                "metadata_filters": {
+                    "source_types": ["pdf"],
+                    "page_ranges": [{"start": 2, "end": 4}],
+                },
+                "special_targets": ["table"],
+            },
+            "比较 pptx 和 xlsx 里的表格有什么区别": {
+                "task_type": "comparison",
+                "complexity_level": "L3_comparative",
+                "query_type": "comparison",
+                "needs_special": True,
+                "needs_metadata": True,
+                "metadata_filters": {"source_types": ["pptx", "xlsx"]},
+                "special_targets": ["table"],
+            },
+        }.get(query, {"task_type": "lookup", "complexity_level": "L1_direct", "query_type": "lookup"})
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def _service() -> QueryUnderstandingService:
+    binding = ChatCapabilityBinding(backend=FakeQueryUnderstandingBackend(), location="local")
+    return QueryUnderstandingService(chat_bindings=(binding,))
 
 
 @pytest.mark.parametrize(
@@ -19,13 +122,13 @@ from rag.query.analysis import QueryUnderstandingService
     ],
 )
 def test_query_understanding_service_classifies_coarse_query_types(query: str, query_type: str) -> None:
-    result = QueryUnderstandingService().analyze(query)
+    result = _service().analyze(query)
 
     assert result.query_type == query_type
 
 
 def test_query_understanding_service_extracts_structure_constraints_from_explicit_section_query() -> None:
-    result = QueryUnderstandingService().analyze("讲系统分层的那一部分在哪一节？")
+    result = _service().analyze("讲系统分层的那一部分在哪一节？")
 
     assert result.needs_structure is True
     assert result.structure_constraints.requires_structure_match is True
@@ -35,7 +138,7 @@ def test_query_understanding_service_extracts_structure_constraints_from_explici
 
 
 def test_query_understanding_service_extracts_metadata_and_special_constraints() -> None:
-    result = QueryUnderstandingService().analyze("pdf 第2到4页的表格指标是什么？")
+    result = _service().analyze("pdf 第2到4页的表格指标是什么？")
 
     assert result.needs_metadata is True
     assert result.needs_special is True
@@ -45,7 +148,7 @@ def test_query_understanding_service_extracts_metadata_and_special_constraints()
 
 
 def test_query_understanding_service_extracts_multiple_source_types() -> None:
-    result = QueryUnderstandingService().analyze("比较 pptx 和 xlsx 里的表格有什么区别")
+    result = _service().analyze("比较 pptx 和 xlsx 里的表格有什么区别")
 
     assert result.query_type == "comparison"
     assert result.metadata_filters.source_types == ["pptx", "xlsx"]
@@ -54,7 +157,7 @@ def test_query_understanding_service_extracts_multiple_source_types() -> None:
 
 
 def test_query_understanding_service_marks_process_queries_for_graph_expansion() -> None:
-    result = QueryUnderstandingService().analyze("这个系统的处理流程是怎样的？")
+    result = _service().analyze("这个系统的处理流程是怎样的？")
 
     assert result.query_type == "process"
     assert result.needs_graph_expansion is True

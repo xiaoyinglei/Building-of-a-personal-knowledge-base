@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from rag.llm._generation.answer_generator import AnswerGenerator
-from rag.query.analysis import QueryUnderstandingService, RoutingDecision, RoutingService
+from rag.query.analysis import (
+    QueryUnderstandingService,
+    RoutingDecision,
+    RoutingService,
+    narrow_access_policy_for_query,
+)
 from rag.query.artifact import ArtifactService
 from rag.query.branches import BranchRetrieverRegistry, GraphExpander, Reranker, RetrieverFn, UnifiedReranker
 from rag.query.context import (
@@ -86,12 +91,19 @@ class QueryPipeline:
     ) -> RetrievalResult:
         scope = list(source_scope)
         resolved_mode = normalize_query_mode(query_options.mode if query_options is not None else query_mode)
-        query_understanding = self.query_understanding_service.analyze(query)
+        query_understanding = self.query_understanding_service.analyze(
+            query,
+            access_policy=access_policy,
+            execution_location_preference=(
+                execution_location_preference or ExecutionLocationPreference.LOCAL_FIRST
+            ),
+        )
+        effective_access_policy = narrow_access_policy_for_query(access_policy, query_understanding)
         decision = self.routing_service.route(
             query,
             query_understanding=query_understanding,
             source_scope=scope,
-            access_policy=access_policy,
+            access_policy=effective_access_policy,
         )
         if resolved_mode is QueryMode.BYPASS:
             return self._run_bypass_mode(
@@ -103,7 +115,7 @@ class QueryPipeline:
             return self._run_naive_mode(
                 query=query,
                 source_scope=scope,
-                access_policy=access_policy,
+                access_policy=effective_access_policy,
                 decision=decision,
                 query_understanding=query_understanding,
                 query_options=query_options,
@@ -112,7 +124,7 @@ class QueryPipeline:
             return self._run_local_mode(
                 query=query,
                 source_scope=scope,
-                access_policy=access_policy,
+                access_policy=effective_access_policy,
                 decision=decision,
                 query_understanding=query_understanding,
                 query_options=query_options,
@@ -121,7 +133,7 @@ class QueryPipeline:
             return self._run_global_mode(
                 query=query,
                 source_scope=scope,
-                access_policy=access_policy,
+                access_policy=effective_access_policy,
                 decision=decision,
                 query_understanding=query_understanding,
                 query_options=query_options,
@@ -130,7 +142,7 @@ class QueryPipeline:
             return self._run_hybrid_mode(
                 query=query,
                 source_scope=scope,
-                access_policy=access_policy,
+                access_policy=effective_access_policy,
                 decision=decision,
                 query_understanding=query_understanding,
                 query_options=query_options,
@@ -138,7 +150,7 @@ class QueryPipeline:
         return self._run_mix_mode(
             query=query,
             source_scope=scope,
-            access_policy=access_policy,
+            access_policy=effective_access_policy,
             decision=decision,
             query_understanding=query_understanding,
             query_options=query_options,
@@ -430,6 +442,7 @@ class QueryPipeline:
                 fused_count=len(reranked_candidates),
                 graph_expanded=graph_expanded,
                 query_understanding=query_understanding,
+                query_understanding_debug=self.query_understanding_service.diagnostics_payload(),
                 parent_backfilled_count=parent_backfilled_count,
                 collapsed_candidate_count=collapsed_candidate_count,
             ),
@@ -469,6 +482,7 @@ class QueryPipeline:
                 fused_count=0,
                 graph_expanded=False,
                 query_understanding=query_understanding,
+                query_understanding_debug={},
                 parent_backfilled_count=0,
                 collapsed_candidate_count=0,
             ),
@@ -999,7 +1013,11 @@ class RAGQueryPipeline:
         conversation_history: Sequence[tuple[str, str]],
     ) -> ContextPromptBuildResult:
         context_evidence_items = [item.as_evidence_item() for item in truncated.evidence]
-        grounded_candidate = self.answer_generator.grounded_candidate(query, context_evidence_items)
+        grounded_candidate = self.answer_generator.grounded_candidate(
+            query,
+            context_evidence_items,
+            query_understanding=retrieval.diagnostics.query_understanding,
+        )
         return self.prompt_builder.build(
             query=query,
             grounded_candidate=grounded_candidate,

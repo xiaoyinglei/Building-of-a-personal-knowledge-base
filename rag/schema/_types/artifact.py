@@ -30,7 +30,7 @@ class KnowledgeArtifact(BaseModel):
     artifact_type: ArtifactType
     title: str
     supported_chunk_ids: list[str]
-    confidence: float
+    confidence: float | None = None
     status: ArtifactStatus
     last_reviewed_at: datetime
     body_markdown: str

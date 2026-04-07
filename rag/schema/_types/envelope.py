@@ -31,7 +31,7 @@ class EvidenceItem(BaseModel):
     retrieval_channels: list[str] = Field(default_factory=list)
     retrieval_family: str | None = None
 
-
+#系统是否建议把这次结果保留下来
 class PreservationSuggestion(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -66,7 +66,7 @@ class ExecutionPolicy(BaseModel):
     effective_access_policy: AccessPolicy
     task_type: TaskType
     complexity_level: ComplexityLevel
-    latency_budget: int
+    latency_budget: int # 延迟预算。表示这次任务允许花多少时间。
     cost_budget: float
     token_budget: int | None = None
     execution_location_preference: ExecutionLocationPreference

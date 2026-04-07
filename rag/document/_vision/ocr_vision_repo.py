@@ -33,7 +33,7 @@ class OCRMacVisionRepo(OcrVisionRepo):
         self,
         *,
         language_preferences: tuple[str, ...] = ("zh-Hans", "zh-Hant", "en-US"),
-        min_confidence: float = 0.3,
+        min_confidence: float | None = None,
         fallback_repo: OcrVisionRepo | None = None,
     ) -> None:
         self._language_preferences = tuple(language_preferences)
@@ -62,7 +62,9 @@ class OCRMacVisionRepo(OcrVisionRepo):
         for raw in raw_results:
             text, confidence, bbox = self._parse_record(raw)
             normalized = normalize_whitespace(text)
-            if not normalized or confidence < self._min_confidence:
+            if not normalized:
+                continue
+            if self._min_confidence is not None and confidence < self._min_confidence:
                 continue
             if not lines or lines[-1] != normalized:
                 lines.append(normalized)

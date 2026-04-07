@@ -7,12 +7,36 @@ from typing import TYPE_CHECKING, Literal
 
 from rag.schema._types import EvidenceItem, RuntimeMode
 from rag.schema._types.generation import AnswerCitation, AnswerEvidenceLink, AnswerSection, GroundedAnswer
-from rag.schema._types.text import focus_terms, keyword_overlap, search_terms, split_sentences
+from rag.schema._types.text import keyword_overlap, search_terms, split_sentences
 
 if TYPE_CHECKING:
     from rag.llm._generation.answer_generator import AnswerGenerator
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+_GENERIC_QUERY_TERMS = {
+    "这个",
+    "那个",
+    "这里",
+    "那里",
+    "什么",
+    "哪些",
+    "一下",
+    "请问",
+    "请",
+    "how",
+    "what",
+    "which",
+    "where",
+    "why",
+    "when",
+    "this",
+    "that",
+    "these",
+    "those",
+    "the",
+    "a",
+    "an",
+}
 
 
 class AnswerGenerationService:
@@ -221,7 +245,7 @@ class AnswerGenerationService:
             return True
         if trust_evidence_pack:
             return False
-        query_terms = focus_terms(query)
+        query_terms = _focus_terms(query)
         if not query_terms:
             return False
         combined = " ".join(self._evidence_search_text(item) for item in evidence_pack)
@@ -422,7 +446,7 @@ class AnswerGenerationService:
         ranked = sorted(
             evidence_pack,
             key=lambda item: (
-                keyword_overlap(focus_terms(section_text), self._evidence_search_text(item)),
+                keyword_overlap(_focus_terms(section_text), self._evidence_search_text(item)),
                 keyword_overlap(search_terms(section_text), item.text),
                 float(item.score),
             ),
@@ -430,7 +454,7 @@ class AnswerGenerationService:
         )
         if not ranked:
             return []
-        query_terms = focus_terms(section_text)
+        query_terms = _focus_terms(section_text)
         top = ranked[0]
         if keyword_overlap(query_terms, self._evidence_search_text(top)) == 0:
             return [top]
@@ -438,7 +462,7 @@ class AnswerGenerationService:
 
     @staticmethod
     def _support_score(answer_excerpt: str, evidence_text: str) -> float:
-        terms = focus_terms(answer_excerpt)
+        terms = _focus_terms(answer_excerpt)
         if not terms:
             return 1.0 if answer_excerpt.strip() else 0.0
         overlap = keyword_overlap(terms, evidence_text)
@@ -451,7 +475,7 @@ class AnswerGenerationService:
     def _variant_grounded(self, text: str, evidence_pack: Sequence[EvidenceItem]) -> bool:
         if self._text_supported_by_evidence(text, evidence_pack):
             return True
-        terms = focus_terms(text)
+        terms = _focus_terms(text)
         if not terms:
             return False
         for item in evidence_pack:
@@ -518,6 +542,11 @@ def __getattr__(name: str) -> object:
 
         return AnswerGenerator
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _focus_terms(text: str) -> tuple[str, ...]:
+    filtered = tuple(term for term in search_terms(text) if term not in _GENERIC_QUERY_TERMS)
+    return filtered or search_terms(text)
 
 
 __all__ = ["AnswerGenerationService", "AnswerGenerator"]

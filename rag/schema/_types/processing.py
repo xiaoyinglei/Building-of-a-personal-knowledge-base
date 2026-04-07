@@ -8,8 +8,8 @@ from rag.schema._types.content import Chunk, ChunkRole, Document, Source, Source
 
 
 class ChunkingStrategy(StrEnum):
-    HIERARCHICAL = "hierarchical"
-    HYBRID = "hybrid"
+    HIERARCHICAL = "hierarchical" #层级式
+    HYBRID = "hybrid" #混合式
     IMAGE = "image"
 
 
@@ -20,7 +20,6 @@ class DocumentFeatures(BaseModel):
     section_count: int
     word_count: int
     heading_count: int
-    heading_quality_score: float
     table_count: int
     figure_count: int
     caption_count: int

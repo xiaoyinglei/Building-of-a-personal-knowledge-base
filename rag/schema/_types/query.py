@@ -29,14 +29,14 @@ class QueryRequest(BaseModel):
     source_scope: list[str] = Field(default_factory=list)
     metadata_filters: dict[str, str] = Field(default_factory=dict)
 
-
+#研究型问题拆出来的子问题
 class ResearchSubQuestion(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     prompt: str
     purpose: str
 
-
+#页码范围约束
 class PageRangeConstraint(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -91,9 +91,28 @@ class MetadataFilters(BaseModel):
         )
 
 
+class PolicyHints(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    disable_external_retrieval: bool = False
+    local_only: bool = False
+    source_type_scope: list[str] = Field(default_factory=list)
+
+    def has_hints(self) -> bool:
+        return any(
+            (
+                self.disable_external_retrieval,
+                self.local_only,
+                bool(self.source_type_scope),
+            )
+        )
+
+
 class QueryUnderstanding(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    task_type: TaskType = TaskType.LOOKUP
+    complexity_level: ComplexityLevel = ComplexityLevel.L1_DIRECT
     query_type: str = "lookup"
     needs_special: bool = False
     needs_structure: bool = False
@@ -103,6 +122,9 @@ class QueryUnderstanding(BaseModel):
     metadata_filters: MetadataFilters = Field(default_factory=MetadataFilters)
     special_targets: list[str] = Field(default_factory=list)
     preferred_section_terms: list[str] = Field(default_factory=list)
+    source_scope_hints: list[str] = Field(default_factory=list)
+    quoted_terms: list[str] = Field(default_factory=list)
+    policy_hints: PolicyHints = Field(default_factory=PolicyHints)
 
     def has_explicit_constraints(self) -> bool:
         return any(
@@ -115,5 +137,8 @@ class QueryUnderstanding(BaseModel):
                 self.metadata_filters.has_constraints(),
                 bool(self.special_targets),
                 bool(self.preferred_section_terms),
+                bool(self.source_scope_hints),
+                bool(self.quoted_terms),
+                self.policy_hints.has_hints(),
             )
         )

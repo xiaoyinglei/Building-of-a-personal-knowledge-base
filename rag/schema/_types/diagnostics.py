@@ -31,8 +31,9 @@ class RetrievalDiagnostics(BaseModel):
     fused_count: int = 0
     graph_expanded: bool = False
     query_understanding: QueryUnderstanding | None = None
+    query_understanding_debug: dict[str, object] = Field(default_factory=dict)
     parent_backfilled_count: int = 0
-    collapsed_candidate_count: int = 0
+    collapsed_candidate_count: int = 0 #候选合并/折叠后，减少到了多少。
 
 
 class ModelDiagnostics(BaseModel):
@@ -42,7 +43,7 @@ class ModelDiagnostics(BaseModel):
     attempts: list[ProviderAttempt] = Field(default_factory=list)
     fallback_reason: str | None = None
     failed_stage: str | None = None
-    degraded_to_retrieval_only: bool = False
+    degraded_to_retrieval_only: bool = False  #是不是退化成“只返回检索结果，不做生成
 
 
 class QueryDiagnostics(BaseModel):
@@ -51,12 +52,12 @@ class QueryDiagnostics(BaseModel):
     retrieval: RetrievalDiagnostics = Field(default_factory=RetrievalDiagnostics)
     model: ModelDiagnostics = Field(default_factory=ModelDiagnostics)
 
-
+#某项能力的健康状态
 class CapabilityHealth(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    configured: bool
-    available: bool
+    configured: bool #是否配置了这个能力，比如是否配置了文本生成能力，或者检索能力等。
+    available: bool #在当前时刻是否可用，比如虽然配置了文本生成能力，但由于外部依赖不可用，导致当前不可用。
     model: str | None = None
     error: str | None = None
 
@@ -68,19 +69,19 @@ class ProviderHealth(BaseModel):
     location: str
     capabilities: dict[str, CapabilityHealth] = Field(default_factory=dict)
 
-
+#索引/知识库的健康状态
 class IndexHealth(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    documents: int = 0
-    chunks: int = 0
-    vectors: int = 0
-    missing_vectors: int = 0
+    documents: int = 0 #知识库里有多少文档
+    chunks: int = 0 #知识库里有多少chunk
+    vectors: int = 0 #知识库里有多少向量
+    missing_vectors: int = 0 #知识库里有多少chunk缺失向量
 
 
 class HealthReport(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    status: str
-    providers: list[ProviderHealth] = Field(default_factory=list)
-    indices: IndexHealth = Field(default_factory=IndexHealth)
+    status: str #整体健康状态，比如"healthy", "degraded", "unhealthy"等
+    providers: list[ProviderHealth] = Field(default_factory=list) #每个外部服务提供者的健康状态
+    indices: IndexHealth = Field(default_factory=IndexHealth) #索引/知识库的健康状态

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, cast
 
+from rag.llm.assembly import ChatCapabilityBinding
+from rag.query.analysis import QueryUnderstandingService
 from rag.query.query import QueryMode
 from rag.query.retrieve import RetrievalService
 from rag.schema._types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
@@ -25,6 +28,139 @@ class FakeCandidate:
     parent_chunk_id: str | None = None
     parent_text: str | None = None
     metadata: dict[str, str] | None = None
+
+
+class FakeRetrievalBackend:
+    chat_model_name = "fake-retrieval-query-understanding"
+
+    def chat(self, prompt: str) -> str:
+        query = prompt.split("Query: ", 1)[1].rsplit("\nJSON only.", 1)[0]
+        payload = {
+            "Compare the tradeoffs between Alpha and Beta": {
+                "task_type": "comparison",
+                "complexity_level": "L3_comparative",
+                "query_type": "comparison",
+            },
+            "Compare how Alpha depends on Beta": {
+                "task_type": "research",
+                "complexity_level": "L4_research",
+                "query_type": "process",
+                "needs_graph_expansion": True,
+            },
+            "compare Alpha and Beta": {
+                "task_type": "comparison",
+                "complexity_level": "L3_comparative",
+                "query_type": "comparison",
+            },
+            "What is Alpha Engine?": {
+                "task_type": "lookup",
+                "complexity_level": "L1_direct",
+                "query_type": "lookup",
+            },
+            "这个项目做什么？": {
+                "task_type": "lookup",
+                "complexity_level": "L1_direct",
+                "query_type": "lookup",
+            },
+            "表格里指标数值是多少？": {
+                "task_type": "single_doc_qa",
+                "complexity_level": "L2_scoped",
+                "query_type": "special_lookup",
+                "needs_special": True,
+                "special_targets": ["table"],
+            },
+            "pptx 第2页表格里的系统架构是什么？": {
+                "task_type": "single_doc_qa",
+                "complexity_level": "L2_scoped",
+                "query_type": "special_lookup",
+                "needs_special": True,
+                "needs_structure": True,
+                "needs_metadata": True,
+                "structure_constraints": {
+                    "match_strategy": "heading",
+                    "requires_structure_match": True,
+                    "prefer_heading_match": True,
+                    "semantic_section_families": ["architecture"],
+                    "preferred_section_terms": ["系统架构"],
+                    "heading_hints": ["系统架构"],
+                },
+                "metadata_filters": {
+                    "source_types": ["pptx"],
+                    "page_numbers": [2],
+                },
+                "special_targets": ["table"],
+                "preferred_section_terms": ["系统架构"],
+            },
+            "这个问题的完整上下文是什么？": {
+                "task_type": "lookup",
+                "complexity_level": "L1_direct",
+                "query_type": "lookup",
+            },
+            "系统架构分为哪几层？": {
+                "task_type": "lookup",
+                "complexity_level": "L2_scoped",
+                "query_type": "structure_lookup",
+                "needs_structure": True,
+                "structure_constraints": {
+                    "match_strategy": "semantic",
+                    "requires_structure_match": True,
+                    "semantic_section_families": ["architecture"],
+                    "preferred_section_terms": ["系统架构"],
+                },
+                "preferred_section_terms": ["系统架构"],
+            },
+            "第2页讲了什么风险？": {
+                "task_type": "single_doc_qa",
+                "complexity_level": "L2_scoped",
+                "query_type": "scoped_lookup",
+                "needs_metadata": True,
+                "metadata_filters": {"page_numbers": [2]},
+            },
+            "这个文档里提到了哪些内容？": {
+                "task_type": "synthesis",
+                "complexity_level": "L4_research",
+                "query_type": "summary",
+            },
+            "What is Alpha?": {
+                "task_type": "lookup",
+                "complexity_level": "L1_direct",
+                "query_type": "lookup",
+            },
+            "Alpha engine details": {
+                "task_type": "lookup",
+                "complexity_level": "L1_direct",
+                "query_type": "lookup",
+            },
+            "How does Alpha depend on Beta?": {
+                "task_type": "research",
+                "complexity_level": "L4_research",
+                "query_type": "process",
+                "needs_graph_expansion": True,
+            },
+            "How are Alpha and Beta related?": {
+                "task_type": "comparison",
+                "complexity_level": "L3_comparative",
+                "query_type": "comparison",
+            },
+            "pptx 第2页表格里的 Alpha 和 Beta 有什么关系？": {
+                "task_type": "comparison",
+                "complexity_level": "L3_comparative",
+                "query_type": "comparison",
+                "needs_special": True,
+                "needs_metadata": True,
+                "metadata_filters": {
+                    "source_types": ["pptx"],
+                    "page_numbers": [2],
+                },
+                "special_targets": ["table"],
+            },
+        }.get(query, {"task_type": "lookup", "complexity_level": "L1_direct", "query_type": "lookup"})
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def _query_understanding_service() -> QueryUnderstandingService:
+    binding = ChatCapabilityBinding(backend=FakeRetrievalBackend(), location="local")
+    return QueryUnderstandingService(chat_bindings=(binding,))
 
 
 def _build_service(
@@ -130,6 +266,7 @@ def _build_service(
         graph_expander=cast(Any, graph_expander),
         web_retriever=cast(Any, web_retriever),
         reranker=cast(Any, reranker),
+        query_understanding_service=_query_understanding_service(),
     )
     return service, calls
 

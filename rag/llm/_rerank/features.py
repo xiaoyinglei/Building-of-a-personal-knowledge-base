@@ -7,10 +7,6 @@ from rag.llm._rerank.models import FeatureRecord, RerankCandidate, RerankRequest
 from rag.schema._types.text import (
     keyword_overlap,
     looks_command_like,
-    looks_definition_query,
-    looks_definition_text,
-    looks_structure_query,
-    looks_structure_text,
     search_terms,
     text_unit_count,
 )
@@ -27,8 +23,6 @@ class RerankFeatureExtractor:
         query_terms = search_terms(request.query)
         query_numbers = {term for term in query_terms if term.isdigit()}
         query_is_command_like = looks_command_like(request.query)
-        query_is_definition_like = looks_definition_query(request.query)
-        query_is_structure_like = looks_structure_query(request.query)
         requested_special_targets = set(request.query_analysis.special_targets)
         parent_counts = Counter(candidate.parent_id for candidate in candidates if candidate.parent_id)
         max_order_index = max((int(candidate.metadata.get("order_index", "0")) for candidate in candidates), default=0)
@@ -69,12 +63,6 @@ class RerankFeatureExtractor:
                 "heading_level_match": 1 if preferred_sections & set(candidate.section_path) else 0,
                 "candidate_is_command_like": looks_command_like(candidate.text),
                 "query_is_command_like": query_is_command_like,
-                "query_is_definition_like": query_is_definition_like,
-                "query_is_structure_like": query_is_structure_like,
-                "definition_text_hit": looks_definition_text(candidate.text),
-                "definition_section_hit": looks_definition_text(section_text),
-                "structure_text_hit": looks_structure_text(candidate.text),
-                "structure_section_hit": looks_structure_text(section_text),
                 "is_table": candidate.chunk_type == "table",
                 "is_figure": candidate.chunk_type == "figure",
                 "is_ocr_region": candidate.chunk_type == "ocr_region",

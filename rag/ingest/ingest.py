@@ -625,20 +625,26 @@ class IngestPipeline:
                 if not same_segment and not mentioned:
                     continue
                 relation_type = self._multimodal_relation_type(chunk.special_chunk_type)
-                confidence = 0.9 if mentioned else 0.76
                 self.graph.save_edge(
                     GraphEdge(
                         edge_id=self._deterministic_id(entity.node_id, node_id, relation_type, "edge"),
                         from_node_id=entity.node_id,
                         to_node_id=node_id,
                         relation_type=relation_type,
-                        confidence=confidence,
+                        confidence=1.0,
                         evidence_chunk_ids=[chunk.chunk_id],
                         metadata={
                             "doc_id": document.doc_id,
                             "source_id": source.source_id,
                             "from_label": entity.label,
                             "to_label": label,
+                            "association_basis": (
+                                "segment_and_alias"
+                                if same_segment and mentioned
+                                else "alias_mention"
+                                if mentioned
+                                else "shared_segment"
+                            ),
                         },
                     )
                 )
@@ -758,31 +764,36 @@ class IngestPipeline:
         if not incoming_aliases:
             return None
 
-        candidates: dict[str, GraphNode] = {}
-        scores: dict[str, int] = {}
         incoming_normalized = {normalized for alias in incoming_aliases if (normalized := self._normalize_alias(alias))}
         incoming_acronyms = {acronym for alias in incoming_aliases if (acronym := self._label_acronym(alias))}
+        exact_key_match: GraphNode | None = None
+        normalized_overlap_matches: list[GraphNode] = []
+        acronym_matches: list[GraphNode] = []
 
         for alias in incoming_aliases:
             for node in self.graph.list_nodes_by_alias(alias, node_type="entity"):
-                candidates[node.node_id] = node
-                score = scores.get(node.node_id, 0)
                 existing_key = node.metadata.get("entity_key") or normalize_entity_key(node.label)
                 if existing_key and existing_key == entity.key:
-                    score += 6
+                    exact_key_match = node
+                    continue
                 existing_aliases = self._entity_alias_values(node.label, node.metadata.get("aliases", ""))
                 existing_normalized = {
                     normalized for item in existing_aliases if (normalized := self._normalize_alias(item))
                 }
                 existing_acronyms = {acronym for item in existing_aliases if (acronym := self._label_acronym(item))}
-                score += 8 * len(incoming_normalized & existing_normalized)
-                score += 3 * len(incoming_acronyms & existing_acronyms)
-                scores[node.node_id] = score
+                if incoming_normalized & existing_normalized:
+                    normalized_overlap_matches.append(node)
+                    continue
+                if incoming_acronyms & existing_acronyms:
+                    acronym_matches.append(node)
 
-        if not scores:
-            return None
-        best_node_id = max(scores, key=lambda node_id: (scores[node_id], node_id))
-        return None if scores[best_node_id] < 8 else candidates[best_node_id]
+        if exact_key_match is not None:
+            return exact_key_match
+        if normalized_overlap_matches:
+            return sorted(normalized_overlap_matches, key=lambda node: node.node_id)[0]
+        if len({node.node_id for node in acronym_matches}) == 1:
+            return acronym_matches[0]
+        return None
 
     def _extract_entities_and_relations(
         self,

@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class AnswerCitation(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    citation_id: str
+    citation_id: str 
     file_name: str | None = None
     section_path: list[str] = Field(default_factory=list)
     page_start: int | None = None
@@ -22,7 +22,7 @@ class AnswerCitation(BaseModel):
 class AnswerEvidenceLink(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    link_id: str
+    link_id: str 
     answer_section_id: str
     answer_excerpt: str
     evidence_chunk_id: str
@@ -47,5 +47,5 @@ class GroundedAnswer(BaseModel):
     answer_sections: list[AnswerSection] = Field(default_factory=list)
     citations: list[AnswerCitation] = Field(default_factory=list)
     evidence_links: list[AnswerEvidenceLink] = Field(default_factory=list)
-    groundedness_flag: bool
-    insufficient_evidence_flag: bool
+    groundedness_flag: bool #答案是否有充分的证据支持
+    insufficient_evidence_flag: bool #证据是否不足

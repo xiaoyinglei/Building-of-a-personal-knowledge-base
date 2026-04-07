@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -8,6 +7,7 @@ from hashlib import sha256
 from rag.schema._types.access import RuntimeMode
 from rag.schema._types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
 from rag.schema._types.envelope import EvidenceItem, PreservationSuggestion
+from rag.schema._types.text import search_terms
 
 
 class ArtifactService:
@@ -58,7 +58,7 @@ class ArtifactService:
     def _related_concepts(self, title: str, query: str) -> list[str]:
         concepts: list[str] = []
         seen: set[str] = set()
-        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]*", f"{title} {query}"):
+        for token in search_terms(f"{title} {query}"):
             normalized = token.lower()
             if normalized in self._STOPWORDS or len(normalized) < 4:
                 continue
@@ -97,7 +97,7 @@ class ArtifactService:
 
     @staticmethod
     def _normalized_query(query: str) -> str:
-        return re.sub(r"\s+", " ", query.strip().lower())
+        return " ".join(query.strip().lower().split())
 
     def _render_topic_or_comparison_body(
         self,
@@ -108,7 +108,6 @@ class ArtifactService:
         evidence: Sequence[EvidenceItem],
         differences_or_conflicts: Sequence[str],
         reviewed_at: datetime,
-        confidence: float,
     ) -> str:
         doc_ids = sorted(self._unique_docs(evidence))
         related_concepts = self._related_concepts(title, query)
@@ -156,8 +155,7 @@ class ArtifactService:
             "## Last Reviewed",
             f"- {reviewed_at.isoformat()}",
             "",
-            "## Confidence and Coverage",
-            f"- Confidence: {confidence:.2f}",
+            "## Evidence Coverage",
             f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
         ]
         return "\n".join(sections)
@@ -169,7 +167,6 @@ class ArtifactService:
         title: str,
         evidence: Sequence[EvidenceItem],
         reviewed_at: datetime,
-        confidence: float,
     ) -> str:
         doc_ids = sorted(self._unique_docs(evidence))
         summary_lines = self._bullet_lines(
@@ -195,8 +192,7 @@ class ArtifactService:
             "## Last Reviewed",
             f"- {reviewed_at.isoformat()}",
             "",
-            "## Confidence and Coverage",
-            f"- Confidence: {confidence:.2f}",
+            "## Evidence Coverage",
             f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
         ]
         return "\n".join(sections)
@@ -208,7 +204,6 @@ class ArtifactService:
         title: str,
         evidence: Sequence[EvidenceItem],
         reviewed_at: datetime,
-        confidence: float,
     ) -> str:
         doc_ids = sorted(self._unique_docs(evidence))
         summary_lines = self._bullet_lines(
@@ -234,8 +229,7 @@ class ArtifactService:
             "## Last Reviewed",
             f"- {reviewed_at.isoformat()}",
             "",
-            "## Confidence and Coverage",
-            f"- Confidence: {confidence:.2f}",
+            "## Evidence Coverage",
             f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
         ]
         return "\n".join(sections)
@@ -247,7 +241,6 @@ class ArtifactService:
         title: str,
         evidence: Sequence[EvidenceItem],
         reviewed_at: datetime,
-        confidence: float,
     ) -> str:
         doc_ids = sorted(self._unique_docs(evidence))
         event_lines = [
@@ -272,8 +265,7 @@ class ArtifactService:
             "## Last Reviewed",
             f"- {reviewed_at.isoformat()}",
             "",
-            "## Confidence and Coverage",
-            f"- Confidence: {confidence:.2f}",
+            "## Evidence Coverage",
             f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
         ]
         return "\n".join(sections)
@@ -285,7 +277,6 @@ class ArtifactService:
         title: str,
         evidence: Sequence[EvidenceItem],
         reviewed_at: datetime,
-        confidence: float,
     ) -> str:
         doc_ids = sorted(self._unique_docs(evidence))
         question_lines = self._bullet_lines(
@@ -318,8 +309,7 @@ class ArtifactService:
             "## Last Reviewed",
             f"- {reviewed_at.isoformat()}",
             "",
-            "## Confidence and Coverage",
-            f"- Confidence: {confidence:.2f}",
+            "## Evidence Coverage",
             f"- Coverage: {len(evidence)} evidence item(s) across {len(doc_ids)} document(s).",
         ]
         return "\n".join(sections)
@@ -333,7 +323,6 @@ class ArtifactService:
         evidence: Sequence[EvidenceItem],
         differences_or_conflicts: Sequence[str],
         reviewed_at: datetime,
-        confidence: float,
     ) -> str:
         if artifact_type is ArtifactType.DOCUMENT_SUMMARY:
             return self._render_document_summary_body(
@@ -341,7 +330,6 @@ class ArtifactService:
                 title=title,
                 evidence=evidence,
                 reviewed_at=reviewed_at,
-                confidence=confidence,
             )
         if artifact_type is ArtifactType.SECTION_SUMMARY:
             return self._render_section_summary_body(
@@ -349,7 +337,6 @@ class ArtifactService:
                 title=title,
                 evidence=evidence,
                 reviewed_at=reviewed_at,
-                confidence=confidence,
             )
         if artifact_type is ArtifactType.TIMELINE:
             return self._render_timeline_body(
@@ -357,7 +344,6 @@ class ArtifactService:
                 title=title,
                 evidence=evidence,
                 reviewed_at=reviewed_at,
-                confidence=confidence,
             )
         if artifact_type is ArtifactType.OPEN_QUESTION_PAGE:
             return self._render_open_question_body(
@@ -365,7 +351,6 @@ class ArtifactService:
                 title=title,
                 evidence=evidence,
                 reviewed_at=reviewed_at,
-                confidence=confidence,
             )
         return self._render_topic_or_comparison_body(
             query=query,
@@ -374,7 +359,6 @@ class ArtifactService:
             evidence=evidence,
             differences_or_conflicts=differences_or_conflicts,
             reviewed_at=reviewed_at,
-            confidence=confidence,
         )
 
     def suggest_preservation(
@@ -481,13 +465,12 @@ class ArtifactService:
         title = suggestion.title or query.strip().rstrip("?") or "Reusable knowledge"
         artifact_type = ArtifactType(suggestion.artifact_type or ArtifactType.TOPIC_PAGE.value)
         last_reviewed_at = reviewed_at or self.build_timestamp()
-        confidence = 0.8 if differences_or_conflicts else 0.9
         return KnowledgeArtifact(
             artifact_id=self._artifact_id(query, evidence),
             artifact_type=artifact_type,
             title=title,
             supported_chunk_ids=[item.chunk_id for item in evidence],
-            confidence=confidence,
+            confidence=None,
             status=ArtifactStatus.SUGGESTED,
             last_reviewed_at=last_reviewed_at,
             body_markdown=self._render_body(
@@ -497,7 +480,6 @@ class ArtifactService:
                 evidence=evidence,
                 differences_or_conflicts=differences_or_conflicts,
                 reviewed_at=last_reviewed_at,
-                confidence=confidence,
             ),
             source_scope=sorted({item.doc_id for item in evidence}),
             metadata={

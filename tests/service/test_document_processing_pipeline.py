@@ -167,7 +167,7 @@ def test_docx_secondary_route_uses_hybrid_when_heading_quality_is_low(tmp_path: 
     result = service.ingest_file(location=str(path), file_path=path, owner="user")
 
     assert result.processing is not None
-    assert result.processing.analysis.heading_quality_score < 0.5
+    assert result.processing.analysis.has_dense_structure is False
     assert result.processing.routing.selected_strategy is ChunkingStrategy.HYBRID
 
 

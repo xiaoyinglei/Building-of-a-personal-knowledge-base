@@ -1,13 +1,65 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
-from rag.ingest.extract import HeuristicEntityRelationExtractor
+from rag.ingest.extract import PromptedEntityRelationExtractor
 from rag.schema._types import AccessPolicy, Chunk, Document, DocumentType
 
 
-def test_heuristic_extractor_canonicalizes_aliases_and_relation_direction() -> None:
-    extractor = HeuristicEntityRelationExtractor()
+class FakeEntityRelationBackend:
+    def chat(self, prompt: str) -> str:
+        del prompt
+        return json.dumps(
+            {
+                "entities": [
+                    {
+                        "key": "alpha_engine",
+                        "label": "Alpha Engine",
+                        "entity_type": "system",
+                        "description": "Alpha Engine supports Beta Service and depends on Gamma Index.",
+                        "source_chunk_ids": ["chunk-1"],
+                    },
+                    {
+                        "key": "beta_service",
+                        "label": "Beta Service",
+                        "entity_type": "service",
+                        "description": "Beta Service is supported by Alpha Engine.",
+                        "source_chunk_ids": ["chunk-1"],
+                    },
+                    {
+                        "key": "gamma_index",
+                        "label": "Gamma Index",
+                        "entity_type": "index",
+                        "description": "Gamma Index is a dependency of Alpha Engine.",
+                        "source_chunk_ids": ["chunk-1"],
+                    },
+                ],
+                "relations": [
+                    {
+                        "source_key": "alpha_engine",
+                        "target_key": "beta_service",
+                        "relation_type": "supports",
+                        "description": "Alpha Engine supports Beta Service.",
+                        "confidence": 1.0,
+                        "source_chunk_ids": ["chunk-1"],
+                    },
+                    {
+                        "source_key": "alpha_engine",
+                        "target_key": "gamma_index",
+                        "relation_type": "depends_on",
+                        "description": "Alpha Engine depends on Gamma Index.",
+                        "confidence": 1.0,
+                        "source_chunk_ids": ["chunk-1"],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+
+def test_prompted_extractor_returns_grounded_entities_and_relations() -> None:
+    extractor = PromptedEntityRelationExtractor(model_provider=FakeEntityRelationBackend())
     document = Document(
         doc_id="doc-1",
         source_id="src-1",

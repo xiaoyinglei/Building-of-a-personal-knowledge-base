@@ -32,7 +32,7 @@ def _artifact(
         artifact_type=ArtifactType.TOPIC_PAGE,
         title=title,
         supported_chunk_ids=supported_chunk_ids,
-        confidence=0.8,
+        confidence=None,
         status=status,
         last_reviewed_at=datetime(2026, 1, 1, tzinfo=UTC),
         body_markdown=body_markdown,
@@ -136,7 +136,7 @@ def test_artifact_service_builds_topic_page_with_stable_sections() -> None:
         "## Related Concepts and Entities",
         "## Open Questions",
         "## Last Reviewed",
-        "## Confidence and Coverage",
+        "## Evidence Coverage",
     ]
     positions = [artifact.body_markdown.index(section) for section in sections]
 
@@ -177,7 +177,7 @@ def test_artifact_service_builds_comparison_page_with_stable_sections() -> None:
     assert "## Comparison Definition" in artifact.body_markdown
     assert "## Disagreements" in artifact.body_markdown
     assert "Alpha and Beta diverge on retention" in artifact.body_markdown
-    assert "## Confidence and Coverage" in artifact.body_markdown
+    assert "## Evidence Coverage" in artifact.body_markdown
 
 
 def test_artifact_service_suggests_document_summary_for_single_document_summary_queries() -> None:
@@ -261,7 +261,7 @@ def test_artifact_service_builds_document_summary_with_stable_sections() -> None
         "## Key Evidence",
         "## Open Questions",
         "## Last Reviewed",
-        "## Confidence and Coverage",
+        "## Evidence Coverage",
     ]
 
     assert artifact.artifact_type is ArtifactType.DOCUMENT_SUMMARY
@@ -296,7 +296,7 @@ def test_artifact_service_builds_section_summary_with_stable_sections() -> None:
         "## Key Evidence",
         "## Open Questions",
         "## Last Reviewed",
-        "## Confidence and Coverage",
+        "## Evidence Coverage",
     ]
 
     assert artifact.artifact_type is ArtifactType.SECTION_SUMMARY
@@ -336,7 +336,7 @@ def test_artifact_service_builds_timeline_with_stable_sections() -> None:
         "## Key Evidence",
         "## Open Questions",
         "## Last Reviewed",
-        "## Confidence and Coverage",
+        "## Evidence Coverage",
     ]
 
     assert artifact.artifact_type is ArtifactType.TIMELINE
@@ -377,7 +377,7 @@ def test_artifact_service_builds_open_question_page_with_stable_sections() -> No
         "## Candidate Answers",
         "## Key Evidence",
         "## Last Reviewed",
-        "## Confidence and Coverage",
+        "## Evidence Coverage",
     ]
 
     assert artifact.artifact_type is ArtifactType.OPEN_QUESTION_PAGE

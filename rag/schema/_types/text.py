@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import importlib
 import os
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -16,85 +16,7 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9]+|[\u3400-\u4dbf\u4e00-\u9fff]")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;.\n])")
 _COMMAND_FLAG_RE = re.compile(r"(^|\s)-{1,2}[a-zA-Z][a-zA-Z-]*")
 _COMMAND_MARKERS = ("uv run", "curl -x", "--query", "--mode", "rag_", "```", "ollama ", "python -m")
-_DEFINITION_QUERY_MARKERS = ("做什么", "是什么", "作用", "用途", "what is", "what does")
-_DEFINITION_TEXT_MARKERS = ("是一个", "用于", "用来", "负责", "平台", "system", "designed to", "used to")
-_OPERATION_QUERY_MARKERS = (
-    "如何使用",
-    "怎么使用",
-    "运行方式",
-    "怎么运行",
-    "如何运行",
-    "如何配置",
-    "怎么配置",
-    "怎么接入",
-    "如何接入",
-    "how to use",
-    "how to run",
-    "setup",
-    "configure",
-)
-_OPERATION_TEXT_MARKERS = (
-    "ollama",
-    "openai",
-    "local_only",
-    "cloud_first",
-    "uv sync",
-    ".env",
-    "安装依赖",
-    "本地模式",
-    "云端模式",
-    "如何使用",
-    "接入",
-    "配置",
-)
-_STRUCTURE_QUERY_MARKERS = (
-    "架构",
-    "architecture",
-    "结构",
-    "分层",
-    "层级",
-    "模块",
-    "module",
-    "modules",
-    "组件",
-    "component",
-    "components",
-    "组成",
-    "layer",
-    "layers",
-)
-_GENERIC_QUERY_TERMS = frozenset(
-    {
-        "这个",
-        "那个",
-        "什么",
-        "项目",
-        "这个项目",
-        "一下",
-        "请问",
-        "如何",
-        "的是",
-        "什么是",
-        "what",
-        "does",
-        "this",
-        "project",
-        "is",
-        "the",
-        "a",
-        "an",
-        "of",
-    }
-)
 DEFAULT_TOKENIZER_FALLBACK_MODEL = "BAAI/bge-m3"
-_OPENAI_TOKENIZER_MARKERS = (
-    "gpt-",
-    "o1",
-    "o3",
-    "o4",
-    "text-embedding-",
-    "omni-",
-)
 _CODE_FENCE_MARKERS = ("```", "<code>", "</code>")
 _CODE_LINE_RE = re.compile(
     r"^\s*(?:def |class |function |SELECT |INSERT |UPDATE |DELETE |FROM |WHERE "
@@ -146,13 +68,13 @@ def _env_bool(name: str, default: bool) -> bool:
         return False
     return default
 
-
+#定义了 RAG 系统如何处理文本碎片
 @dataclass(frozen=True, slots=True)
 class TokenizerContract:
     embedding_model_name: str
     tokenizer_model_name: str
     chunking_tokenizer_model_name: str
-    tokenizer_backend: str = "auto"
+    tokenizer_backend: str = "auto" 
     chunk_token_size: int = 480
     chunk_overlap_tokens: int = 64
     max_context_tokens: int = 1024
@@ -326,7 +248,7 @@ class TokenAccountingService:
 
     def backend_descriptor(self) -> tuple[str, str]:
         self._ensure_backend()
-        return self._backend_kind or "heuristic", self.contract.tokenizer_model_name
+        return self._backend_kind or "simple", self.contract.tokenizer_model_name
 
     def _encode(self, text: str) -> list[int] | None:
         self._ensure_backend()
@@ -376,7 +298,7 @@ class TokenAccountingService:
 
     def _offset_spans(self, text: str) -> list[tuple[int, int]] | None:
         self._ensure_backend()
-        if self._backend_kind == "heuristic":
+        if self._backend_kind == "simple":
             return _token_unit_spans(text)
         if self._backend_kind != "transformers":
             return None
@@ -423,29 +345,28 @@ def _build_tokenizer_backend(
     backend: str,
     local_files_only: bool,
 ) -> tuple[str, Any | None]:
-    preferred = _preferred_backend(model_name=model_name, backend=backend)
+    preferred = _preferred_backend(backend=backend)
     for candidate in preferred:
         built = _try_build_tokenizer(model_name=model_name, backend=candidate, local_files_only=local_files_only)
         if built is not None:
             return candidate, built
-    return "heuristic", None
+    return "simple", None
 
 
-def _preferred_backend(*, model_name: str, backend: str) -> tuple[str, ...]:
+def _preferred_backend(*, backend: str) -> tuple[str, ...]:
     normalized_backend = backend.strip().lower()
-    if normalized_backend in {"tiktoken", "transformers", "heuristic"}:
+    if normalized_backend == "heuristic":
+        normalized_backend = "simple"
+    if normalized_backend in {"tiktoken", "transformers", "simple"}:
         return (normalized_backend,)
-    lowered_model = model_name.strip().lower()
-    if any(marker in lowered_model for marker in _OPENAI_TOKENIZER_MARKERS):
-        return ("tiktoken", "transformers", "heuristic")
-    return ("transformers", "tiktoken", "heuristic")
+    return ("transformers", "tiktoken", "simple")
 
 
 def _try_build_tokenizer(*, model_name: str, backend: str, local_files_only: bool) -> Any | None:
-    if backend == "heuristic":
+    if backend == "simple":
         return None
     if backend == "tiktoken":
-        spec = importlib.util.find_spec("tiktoken")
+        spec = find_spec("tiktoken")
         if spec is None:
             return None
         import tiktoken
@@ -453,9 +374,9 @@ def _try_build_tokenizer(*, model_name: str, backend: str, local_files_only: boo
         try:
             return tiktoken.encoding_for_model(model_name)
         except KeyError:
-            return tiktoken.get_encoding("cl100k_base")
+            return None
     if backend == "transformers":
-        spec = importlib.util.find_spec("transformers")
+        spec = find_spec("transformers")
         if spec is None:
             return None
         from transformers import AutoTokenizer
@@ -570,38 +491,3 @@ def looks_command_like(text: str) -> bool:
         or '{"query"' in lowered
         or bool(_COMMAND_FLAG_RE.search(text))
     )
-
-
-def looks_definition_query(text: str) -> bool:
-    lowered = text.lower()
-    return any(marker in lowered for marker in _DEFINITION_QUERY_MARKERS)
-
-
-def looks_definition_text(text: str) -> bool:
-    lowered = text.lower()
-    return any(marker in lowered for marker in _DEFINITION_TEXT_MARKERS)
-
-
-def looks_operation_query(text: str) -> bool:
-    lowered = text.lower()
-    return any(marker in lowered for marker in _OPERATION_QUERY_MARKERS)
-
-
-def looks_operation_text(text: str) -> bool:
-    lowered = text.lower()
-    return any(marker in lowered for marker in _OPERATION_TEXT_MARKERS)
-
-
-def looks_structure_query(text: str) -> bool:
-    lowered = text.lower()
-    return any(marker in lowered for marker in _STRUCTURE_QUERY_MARKERS)
-
-
-def looks_structure_text(text: str) -> bool:
-    lowered = text.lower()
-    return any(marker in lowered for marker in _STRUCTURE_QUERY_MARKERS)
-
-
-def focus_terms(text: str) -> tuple[str, ...]:
-    filtered = tuple(term for term in search_terms(text) if term not in _GENERIC_QUERY_TERMS)
-    return filtered or search_terms(text)

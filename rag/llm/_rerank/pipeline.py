@@ -53,6 +53,7 @@ class FormalRerankService:
         feedback_sink: FeedbackSink | None = None,
         parent_context_assembler: ParentContextAssembler | None = None,
         config: RerankPipelineConfig | None = None,
+        query_understanding_service: QueryUnderstandingService | None = None,
     ) -> None:
         self._config = config or RerankPipelineConfig()
         self._cross_encoder: CrossEncoderProtocol = (
@@ -74,7 +75,7 @@ class FormalRerankService:
         self._distillation_sink = distillation_sink
         self._feedback_sink = feedback_sink
         self._parent_context_assembler = parent_context_assembler
-        self._query_understanding_service = QueryUnderstandingService()
+        self._query_understanding_service = query_understanding_service or QueryUnderstandingService()
         self.last_response: RerankResponse | None = None
 
     def rerank(self, query: str, candidates: Sequence[object]) -> list[object]:

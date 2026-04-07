@@ -10,7 +10,6 @@ def test_pdf_defaults_to_hybrid_chunker() -> None:
         section_count=6,
         word_count=1800,
         heading_count=3,
-        heading_quality_score=0.35,
         table_count=1,
         figure_count=0,
         caption_count=0,
@@ -36,7 +35,6 @@ def test_markdown_prefers_hierarchical_chunker() -> None:
         section_count=9,
         word_count=1200,
         heading_count=8,
-        heading_quality_score=0.94,
         table_count=0,
         figure_count=0,
         caption_count=0,
@@ -61,7 +59,6 @@ def test_docx_structure_controls_secondary_route() -> None:
         section_count=7,
         word_count=1400,
         heading_count=6,
-        heading_quality_score=0.88,
         table_count=0,
         figure_count=0,
         caption_count=0,
@@ -73,7 +70,6 @@ def test_docx_structure_controls_secondary_route() -> None:
     )
     low_quality = high_quality.model_copy(
         update={
-            "heading_quality_score": 0.22,
             "heading_count": 1,
             "structure_depth": 1,
             "has_dense_structure": False,
@@ -95,7 +91,6 @@ def test_image_route_enables_special_chunks_and_fallback() -> None:
         section_count=1,
         word_count=24,
         heading_count=0,
-        heading_quality_score=0.0,
         table_count=0,
         figure_count=1,
         caption_count=1,
