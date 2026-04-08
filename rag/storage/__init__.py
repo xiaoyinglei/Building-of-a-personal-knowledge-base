@@ -7,23 +7,23 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import NoReturn, cast
 
-from rag.storage._graph.neo4j_graph_repo import Neo4jGraphRepo
-from rag.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
-from rag.storage._repo.file_object_store import FileObjectStore
-from rag.storage._repo.postgres_metadata_repo import PostgresMetadataRepo
-from rag.storage._repo.redis_cache_repo import RedisCacheRepo
-from rag.storage._repo.s3_object_store import S3ObjectStore
-from rag.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
-from rag.storage._search.milvus_vector_repo import MilvusVectorRepo
-from rag.storage._search.pgvector_vector_repo import PgvectorVectorRepo
-from rag.storage._search.postgres_fts_repo import PostgresFTSRepo
-from rag.storage._search.sqlite_fts_repo import SQLiteFTSRepo
-from rag.storage._search.sqlite_vector_repo import SQLiteVectorRepo
-from rag.storage.doc_status import StatusStore
-from rag.storage.graph_store import GraphStore
-from rag.storage.kv_store import CacheStore, ChunkStore, DocumentStore
-from rag.storage.vector_store import VectorStore
-from rag.utils._contracts import CacheRepo, FullTextSearchRepo, GraphRepo, MetadataRepo, ObjectStore, VectorRepo
+from rag.schema.runtime import CacheRepo, FullTextSearchRepo, GraphRepo, MetadataRepo, ObjectStore, VectorRepo
+from rag.storage.cache import CacheStore
+from rag.storage.graph import GraphStore
+from rag.storage.graph_backends.neo4j_graph_repo import Neo4jGraphRepo
+from rag.storage.graph_backends.sqlite_graph_repo import SQLiteGraphRepo
+from rag.storage.metadata import ChunkStore, DocumentStore, StatusStore
+from rag.storage.repositories.file_object_store import FileObjectStore
+from rag.storage.repositories.postgres_metadata_repo import PostgresMetadataRepo
+from rag.storage.repositories.redis_cache_repo import RedisCacheRepo
+from rag.storage.repositories.s3_object_store import S3ObjectStore
+from rag.storage.repositories.sqlite_metadata_repo import SQLiteMetadataRepo
+from rag.storage.search_backends.milvus_vector_repo import MilvusVectorRepo
+from rag.storage.search_backends.pgvector_vector_repo import PgvectorVectorRepo
+from rag.storage.search_backends.postgres_fts_repo import PostgresFTSRepo
+from rag.storage.search_backends.sqlite_fts_repo import SQLiteFTSRepo
+from rag.storage.search_backends.sqlite_vector_repo import SQLiteVectorRepo
+from rag.storage.vector import VectorStore
 
 
 @dataclass(frozen=True, slots=True)

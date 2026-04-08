@@ -1,7 +1,6 @@
-from rag.ingest.chunk import ChunkPostprocessingService
-from rag.schema._types.access import AccessPolicy
-from rag.schema._types.content import Chunk
-from rag.schema._types.processing import ChunkRole
+from rag.ingest.chunking import ChunkPostprocessingService
+from rag.schema.core import Chunk, ChunkRole
+from rag.schema.runtime import AccessPolicy
 
 
 def _chunk(

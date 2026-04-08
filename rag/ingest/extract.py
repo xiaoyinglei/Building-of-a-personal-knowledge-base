@@ -8,8 +8,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from rag.schema.chunk import Chunk
-from rag.schema.document import Document
+from rag.schema.core import Chunk, Document
 
 
 class ChatModelLike(Protocol):
@@ -94,6 +93,44 @@ _ENTITY_TYPE_SUFFIXES = {
     "document": "document",
 }
 
+_RELATION_PHRASES = (
+    "depends on",
+    "integrates with",
+    "part of",
+    "supports",
+    "contains",
+    "enables",
+    "requires",
+    "uses",
+    "compares",
+    "relates to",
+)
+_PASSIVE_RELATION_PHRASES = (
+    "supported by",
+    "used by",
+    "enabled by",
+    "required by",
+    "included in",
+    "part of",
+)
+_ENTITY_LABEL_PATTERN = r"(?:[A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)+|[A-Z]{2,6})"
+_EXPLICIT_RELATION_RE = re.compile(
+    rf"(?P<left>{_ENTITY_LABEL_PATTERN})\s+"
+    r"(?P<relation>"
+    + "|".join(re.escape(phrase) for phrase in _RELATION_PHRASES)
+    + r")\s+"
+    rf"(?P<right>{_ENTITY_LABEL_PATTERN})",
+)
+_PASSIVE_RELATION_RE = re.compile(
+    rf"(?P<target>{_ENTITY_LABEL_PATTERN})\s+is\s+"
+    r"(?P<relation>"
+    + "|".join(re.escape(phrase) for phrase in _PASSIVE_RELATION_PHRASES)
+    + r")\s+"
+    rf"(?P<source>{_ENTITY_LABEL_PATTERN})",
+)
+_ALIAS_RE = re.compile(r"(?P<label>[A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*)+)\s+\((?P<alias>[A-Z]{2,6})\)")
+_ENTITY_MENTION_RE = re.compile(_ENTITY_LABEL_PATTERN)
+
 
 class ExtractedEntity(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -164,6 +201,174 @@ class EntityRelationExtractor(Protocol):
     ) -> EntityRelationExtractionResult: ...
 
 
+class HeuristicEntityRelationExtractor:
+    def extract(
+        self,
+        *,
+        document: Document,
+        chunks: Sequence[Chunk],
+    ) -> EntityRelationExtractionResult:
+        del document
+        entities: dict[str, ExtractedEntity] = {}
+        relations: dict[tuple[str, str, str], ExtractedRelation] = {}
+        alias_map = self._alias_map(chunks)
+
+        for chunk in chunks:
+            for sentence in self._sentences(chunk.text):
+                surface_sentence = re.sub(_ALIAS_RE, lambda match: match.group("label"), sentence)
+
+                for match in _EXPLICIT_RELATION_RE.finditer(surface_sentence):
+                    left_label = self._resolve_alias(match.group("left"), alias_map)
+                    right_label = self._resolve_alias(match.group("right"), alias_map)
+                    relation_phrase = match.group("relation").strip().replace(" ", "_")
+                    relation_type = canonicalize_relation_type(relation_phrase)
+
+                    self._record_relation(
+                        entities,
+                        relations,
+                        left_label=left_label,
+                        right_label=right_label,
+                        relation_type=relation_type,
+                        chunk_id=chunk.chunk_id,
+                        sentence=surface_sentence,
+                    )
+
+                for match in _PASSIVE_RELATION_RE.finditer(surface_sentence):
+                    source_label = self._resolve_alias(match.group("source"), alias_map)
+                    target_label = self._resolve_alias(match.group("target"), alias_map)
+                    relation_phrase = match.group("relation").strip().replace(" ", "_")
+                    relation_type = canonicalize_relation_type(relation_phrase)
+                    self._record_relation(
+                        entities,
+                        relations,
+                        left_label=source_label,
+                        right_label=target_label,
+                        relation_type=relation_type,
+                        chunk_id=chunk.chunk_id,
+                        sentence=surface_sentence,
+                    )
+
+                seen_mentions: set[str] = set()
+                for match in _ENTITY_MENTION_RE.finditer(surface_sentence):
+                    label = self._resolve_alias(match.group(0), alias_map)
+                    normalized_label = re.sub(r"\s+", " ", label).strip()
+                    if normalized_label in seen_mentions:
+                        continue
+                    seen_mentions.add(normalized_label)
+                    if _infer_entity_type(normalized_label) == "concept" and normalized_label not in alias_map.values():
+                        continue
+                    entity = self._build_entity(normalized_label, chunk_id=chunk.chunk_id, sentence=surface_sentence)
+                    existing = entities.get(entity.key)
+                    entities[entity.key] = self._merge_entity(existing, entity)
+
+        return EntityRelationExtractionResult(
+            entities=list(entities.values()),
+            relations=list(relations.values()),
+        )
+
+    @staticmethod
+    def _sentences(text: str) -> list[str]:
+        normalized = re.sub(r"\s+", " ", text).strip()
+        if not normalized:
+            return []
+        return [part.strip() for part in re.split(r"(?<=[.!?。！？])\s+", normalized) if part.strip()]
+
+    @staticmethod
+    def _build_entity(label: str, *, chunk_id: str, sentence: str) -> ExtractedEntity:
+        normalized_label = re.sub(r"\s+", " ", label).strip()
+        entity_key = normalize_entity_key(normalized_label)
+        acronym = _label_acronym(normalized_label)
+        aliases = [normalized_label]
+        if acronym is not None:
+            aliases.append(acronym)
+        return ExtractedEntity(
+            key=entity_key,
+            label=normalized_label,
+            entity_type=_infer_entity_type(normalized_label),
+            description=sentence.strip(),
+            source_chunk_ids=[chunk_id],
+            metadata={"aliases": "||".join(aliases)},
+        )
+
+    @staticmethod
+    def _alias_map(chunks: Sequence[Chunk]) -> dict[str, str]:
+        aliases: dict[str, str] = {}
+        for chunk in chunks:
+            for match in _ALIAS_RE.finditer(chunk.text):
+                label = match.group("label").strip()
+                alias = match.group("alias").strip()
+                aliases[alias] = label
+        return aliases
+
+    @staticmethod
+    def _resolve_alias(label: str, alias_map: dict[str, str]) -> str:
+        normalized = re.sub(r"\s+", " ", label).strip()
+        return alias_map.get(normalized, normalized)
+
+    @classmethod
+    def _record_relation(
+        cls,
+        entities: dict[str, ExtractedEntity],
+        relations: dict[tuple[str, str, str], ExtractedRelation],
+        *,
+        left_label: str,
+        right_label: str,
+        relation_type: str,
+        chunk_id: str,
+        sentence: str,
+    ) -> None:
+        left_entity = cls._build_entity(left_label, chunk_id=chunk_id, sentence=sentence)
+        right_entity = cls._build_entity(right_label, chunk_id=chunk_id, sentence=sentence)
+        for entity in (left_entity, right_entity):
+            existing = entities.get(entity.key)
+            entities[entity.key] = cls._merge_entity(existing, entity)
+
+        relation_pair = canonicalize_relation_pair(left_entity.key, right_entity.key, relation_type)
+        relation_key = (*relation_pair, relation_type)
+        existing_relation = relations.get(relation_key)
+        relation = ExtractedRelation(
+            source_key=relation_key[0],
+            target_key=relation_key[1],
+            relation_type=relation_type,
+            description=sentence.strip(),
+            confidence=1.0,
+            source_chunk_ids=[chunk_id],
+        )
+        relations[relation_key] = cls._merge_relation(existing_relation, relation)
+
+    @staticmethod
+    def _merge_entity(existing: ExtractedEntity | None, current: ExtractedEntity) -> ExtractedEntity:
+        if existing is None:
+            return current
+        aliases = [
+            *[alias for alias in existing.metadata.get("aliases", "").split("||") if alias],
+            *[alias for alias in current.metadata.get("aliases", "").split("||") if alias],
+        ]
+        label = choose_preferred_label(aliases) or current.label or existing.label
+        return ExtractedEntity(
+            key=current.key,
+            label=label,
+            entity_type=existing.entity_type if existing.entity_type != "concept" else current.entity_type,
+            description=_choose_longer(existing.description, current.description),
+            source_chunk_ids=list(dict.fromkeys([*existing.source_chunk_ids, *current.source_chunk_ids])),
+            metadata={"aliases": "||".join(sorted(dict.fromkeys(aliases)))},
+        )
+
+    @staticmethod
+    def _merge_relation(existing: ExtractedRelation | None, current: ExtractedRelation) -> ExtractedRelation:
+        if existing is None:
+            return current
+        return ExtractedRelation(
+            source_key=current.source_key,
+            target_key=current.target_key,
+            relation_type=current.relation_type,
+            description=_choose_longer(existing.description, current.description),
+            confidence=max(existing.confidence, current.confidence),
+            source_chunk_ids=list(dict.fromkeys([*existing.source_chunk_ids, *current.source_chunk_ids])),
+            metadata={**existing.metadata, **current.metadata},
+        )
+
+
 class EmptyEntityRelationExtractor:
     def extract(
         self,
@@ -183,7 +388,7 @@ class PromptedEntityRelationExtractor:
         fallback: EntityRelationExtractor | None = None,
     ) -> None:
         self._model_provider = model_provider
-        self._fallback = fallback or EmptyEntityRelationExtractor()
+        self._fallback = fallback or HeuristicEntityRelationExtractor()
 
     def extract(
         self,
@@ -351,6 +556,15 @@ def _choose_longer(left: str, right: str) -> str:
     if not right:
         return left
     return left if len(left) >= len(right) else right
+
+
+def _infer_entity_type(label: str) -> str:
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9]+", label)]
+    for token in reversed(tokens):
+        entity_type = _ENTITY_TYPE_SUFFIXES.get(token)
+        if entity_type is not None:
+            return entity_type
+    return "concept"
 
 
 class MergedEntity(BaseModel):
@@ -523,5 +737,3 @@ __all__ = [
     "choose_preferred_label",
     "normalize_entity_key",
 ]
-
-HeuristicEntityRelationExtractor = EmptyEntityRelationExtractor

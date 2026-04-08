@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rag.llm.assembly import (
+from rag.assembly import (
     AssemblyConfig,
     AssemblyOverrides,
     AssemblyRequest,
@@ -402,7 +402,12 @@ def test_capability_assembly_uses_legacy_env_profile_for_openai_compatible_provi
 
     service = CapabilityAssemblyService()
     catalog = service.catalog_from_environment()
-    bundle = service.assemble(profile_id="openai-compatible")
+    bundle = service.assemble_request(
+        AssemblyRequest(
+            profile_id="openai-compatible",
+            requirements=CapabilityRequirements(),
+        )
+    )
 
     assert any(profile.profile_id == "openai-compatible" for profile in catalog.profiles)
     assert bundle.chat_bindings[0].provider_name == "openai"
@@ -442,7 +447,9 @@ def test_capability_assembly_builds_env_reranker_outside_business_modules(
     monkeypatch.delenv("RAG_RERANK_MODEL_PATH", raising=False)
     monkeypatch.setenv("RAG_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 
-    bundle = CapabilityAssemblyService().assemble()
+    bundle = CapabilityAssemblyService().assemble_request(
+        AssemblyRequest(requirements=CapabilityRequirements())
+    )
 
     assert bundle.rerank_bindings
     assert bundle.rerank_bindings[0].provider_name == "local-bge"

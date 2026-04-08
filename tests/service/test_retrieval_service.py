@@ -4,12 +4,12 @@ import json
 from dataclasses import dataclass
 from typing import Any, cast
 
-from rag.llm.assembly import ChatCapabilityBinding
-from rag.query.analysis import QueryUnderstandingService
-from rag.query.query import QueryMode
-from rag.query.retrieve import RetrievalService
-from rag.schema._types.access import AccessPolicy, ExternalRetrievalPolicy, Residency
-from rag.schema._types.content import ChunkRole
+from rag.assembly import ChatCapabilityBinding
+from rag.retrieval.analysis import QueryUnderstandingService
+from rag.retrieval.models import QueryMode
+from rag.retrieval.orchestrator import RetrievalService
+from rag.schema.core import ChunkRole
+from rag.schema.runtime import AccessPolicy, ExternalRetrievalPolicy, Residency
 
 
 @dataclass(frozen=True)

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 
-from rag.llm.assembly import ChatCapabilityBinding
-from rag.query.analysis import QueryUnderstandingService, RoutingService
-from rag.schema._types.access import RuntimeMode
-from rag.schema._types.query import ComplexityLevel, TaskType
+from rag.assembly import ChatCapabilityBinding
+from rag.retrieval.analysis import QueryUnderstandingService, RoutingService
+from rag.schema.query import ComplexityLevel, TaskType
+from rag.schema.runtime import RuntimeMode
 
 
 class FakeRoutingBackend:

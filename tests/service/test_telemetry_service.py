@@ -1,5 +1,5 @@
-from rag.schema._types.telemetry import TelemetryEvent
-from rag.utils._telemetry import TelemetryService
+from rag.schema.runtime import TelemetryEvent
+from rag.utils.telemetry import TelemetryService
 
 
 def test_telemetry_service_records_typed_events() -> None:

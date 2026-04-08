@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from rag.llm.generation import AnswerGenerationService
-from rag.schema._types import ChunkRole, EvidenceItem, RuntimeMode
+from rag.providers.generation import AnswerGenerationService
+from rag.schema import ChunkRole, EvidenceItem, RuntimeMode
 
 
 def _evidence_item(

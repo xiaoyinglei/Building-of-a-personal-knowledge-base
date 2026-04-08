@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from rag.query.artifact import ArtifactService
-from rag.schema._types.access import RuntimeMode
-from rag.schema._types.artifact import ArtifactStatus, ArtifactType, KnowledgeArtifact
-from rag.schema._types.envelope import EvidenceItem
+from rag.retrieval.evidence import ArtifactService
+from rag.schema.query import ArtifactStatus, ArtifactType, EvidenceItem, KnowledgeArtifact
+from rag.schema.runtime import RuntimeMode
 
 
 def _evidence(chunk_id: str, doc_id: str, evidence_kind: str = "internal") -> EvidenceItem:

@@ -1,4 +1,4 @@
-from rag.ingest.ingest import (
+from rag.ingest.pipeline import (
     DeletePipeline,
     DeletePipelineRequest,
     DeletePipelineResult,

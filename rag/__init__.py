@@ -1,16 +1,8 @@
-"""Core RAG library."""
+"""Core RAG library public exports."""
 
-from rag.llm.assembly import (
-    AssemblyConfig,
-    AssemblyDiagnostics,
-    AssemblyOverrides,
-    AssemblyProfileSpec,
-    AssemblyRequest,
-    CapabilityAssemblyService,
-    CapabilityRequirements,
-)
-from rag.runtime import RAGRuntime
-from rag.storage import StorageComponentConfig, StorageConfig
+from __future__ import annotations
+
+from importlib import import_module
 
 __all__ = [
     "AssemblyConfig",
@@ -24,3 +16,25 @@ __all__ = [
     "StorageComponentConfig",
     "StorageConfig",
 ]
+
+_EXPORTS = {
+    "AssemblyConfig": ("rag.assembly", "AssemblyConfig"),
+    "AssemblyDiagnostics": ("rag.assembly", "AssemblyDiagnostics"),
+    "AssemblyOverrides": ("rag.assembly", "AssemblyOverrides"),
+    "AssemblyProfileSpec": ("rag.assembly", "AssemblyProfileSpec"),
+    "AssemblyRequest": ("rag.assembly", "AssemblyRequest"),
+    "CapabilityAssemblyService": ("rag.assembly", "CapabilityAssemblyService"),
+    "CapabilityRequirements": ("rag.assembly", "CapabilityRequirements"),
+    "RAGRuntime": ("rag.runtime", "RAGRuntime"),
+    "StorageComponentConfig": ("rag.storage", "StorageComponentConfig"),
+    "StorageConfig": ("rag.storage", "StorageConfig"),
+}
+
+
+def __getattr__(name: str) -> object:
+    export = _EXPORTS.get(name)
+    if export is None:
+        raise AttributeError(f"module 'rag' has no attribute {name!r}")
+    module_name, attr_name = export
+    module = import_module(module_name)
+    return getattr(module, attr_name)

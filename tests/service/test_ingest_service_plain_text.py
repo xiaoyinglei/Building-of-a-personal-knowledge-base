@@ -1,13 +1,13 @@
 from pathlib import Path
 
-from rag.schema._types.access import (
+from rag.schema.core import SourceType
+from rag.schema.runtime import (
     AccessPolicy,
     ExecutionLocation,
     ExternalRetrievalPolicy,
     Residency,
     RuntimeMode,
 )
-from rag.schema._types.content import SourceType
 from tests.support import make_ingest_service
 
 

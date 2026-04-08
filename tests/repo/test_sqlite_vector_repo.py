@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from rag.storage._search.sqlite_vector_repo import SQLiteVectorRepo
+from rag.storage.search_backends.sqlite_vector_repo import SQLiteVectorRepo
 
 
 def test_sqlite_vector_repo_persists_vectors_across_instances(tmp_path: Path) -> None:

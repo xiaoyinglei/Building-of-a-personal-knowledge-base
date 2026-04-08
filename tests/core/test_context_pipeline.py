@@ -5,8 +5,7 @@ import json
 from pytest import MonkeyPatch
 
 from rag import RAGRuntime
-from rag.llm._providers.fallback_embedding_repo import FallbackEmbeddingRepo
-from rag.llm.assembly import (
+from rag.assembly import (
     AssemblyConfig,
     AssemblyOverrides,
     AssemblyRequest,
@@ -14,8 +13,9 @@ from rag.llm.assembly import (
     CapabilityRequirements,
     ProviderConfig,
 )
-from rag.query.query import QueryOptions
-from rag.schema._types.access import ExecutionLocationPreference
+from rag.providers.adapters import FallbackEmbeddingRepo
+from rag.retrieval.models import QueryOptions
+from rag.schema.runtime import ExecutionLocationPreference
 from rag.storage import StorageConfig
 from tests.support import make_runtime
 
@@ -109,7 +109,7 @@ def test_ragcore_query_uses_generation_provider_when_available(monkeypatch: Monk
     result = runtime.query(
         "How is Beta Service related to Alpha Engine?",
         options=QueryOptions(
-            mode="hybrid",
+            mode="mix",
             execution_location_preference=ExecutionLocationPreference.LOCAL_ONLY,
         ),
     )

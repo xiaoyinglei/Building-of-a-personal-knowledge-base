@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from rag.ingest._chunking.multimodal_chunk_router import special_type_for_element
-from rag.ingest._chunking.structured_chunker import ChunkSeed, merge_adjacent_seeds
-from rag.ingest._chunking.token_chunker import chunk_by_tokens
-from rag.ingest.ingest import IngestRequest
-from rag.schema._types import DocumentType, SourceType
-from rag.schema._types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
+from rag.ingest.chunkers.multimodal_chunk_router import special_type_for_element
+from rag.ingest.chunkers.structured_chunker import ChunkSeed, merge_adjacent_seeds
+from rag.ingest.chunkers.token_chunker import chunk_by_tokens
+from rag.ingest.pipeline import IngestRequest
+from rag.schema import DocumentType, SourceType
+from rag.schema.core import ParsedDocument, ParsedElement, ParsedSection
+from rag.schema.runtime import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
 from rag.storage import StorageConfig
-from rag.utils._contracts import ParsedDocument, ParsedElement, ParsedSection
 from tests.support import make_runtime
 
 

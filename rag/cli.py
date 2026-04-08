@@ -10,8 +10,8 @@ import typer
 from pydantic import BaseModel
 
 from rag import AssemblyRequest, CapabilityRequirements, RAGRuntime, StorageConfig
-from rag.query import QueryMode, QueryOptions
-from rag.schema.document import SourceType
+from rag.retrieval import QueryMode, QueryOptions
+from rag.schema.core import SourceType
 from rag.workbench import find_free_port, run_workbench_server
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)

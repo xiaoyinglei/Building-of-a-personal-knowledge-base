@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from rag.schema._types.content import SourceType
-from rag.utils._contracts import WebFetchRepo
+from rag.schema.core import SourceType
+from rag.schema.runtime import WebFetchRepo
 from tests.support import make_ingest_service
 
 

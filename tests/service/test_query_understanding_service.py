@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from rag.llm.assembly import ChatCapabilityBinding
-from rag.query.analysis import QueryUnderstandingService
+from rag.assembly import ChatCapabilityBinding
+from rag.retrieval.analysis import QueryUnderstandingService
 
 
 class FakeQueryUnderstandingBackend:

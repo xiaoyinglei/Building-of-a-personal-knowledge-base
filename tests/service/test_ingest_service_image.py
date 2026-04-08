@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 from PIL import Image, ImageDraw
 
-from rag.utils._contracts import OcrResult, ParsedDocument
+from rag.schema.core import OcrResult, ParsedDocument
 from tests.support import make_ingest_service
 
 

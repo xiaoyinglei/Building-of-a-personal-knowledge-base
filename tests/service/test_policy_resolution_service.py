@@ -1,5 +1,5 @@
-from rag.ingest._policy.service import PolicyResolutionService
-from rag.schema._types.access import (
+from rag.ingest.policy import PolicyResolutionService
+from rag.schema.runtime import (
     AccessPolicy,
     ExecutionLocation,
     ExternalRetrievalPolicy,

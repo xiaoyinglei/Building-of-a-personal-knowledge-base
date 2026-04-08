@@ -6,8 +6,7 @@ from typing import cast
 import pytest
 
 from rag import RAGRuntime, StorageComponentConfig, StorageConfig
-from rag.ingest.ingest import DirectContentItem
-from rag.llm.assembly import (
+from rag.assembly import (
     AssemblyConfig,
     AssemblyOverrides,
     AssemblyRequest,
@@ -15,8 +14,9 @@ from rag.llm.assembly import (
     CapabilityRequirements,
     ProviderConfig,
 )
-from rag.query.query import QueryOptions
-from rag.schema._types.content import GraphEdge, GraphNode
+from rag.ingest.pipeline import DirectContentItem
+from rag.retrieval.models import QueryOptions
+from rag.schema.core import GraphEdge, GraphNode
 from tests.support import make_runtime
 
 

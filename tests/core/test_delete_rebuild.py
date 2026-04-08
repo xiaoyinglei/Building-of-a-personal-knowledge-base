@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rag.schema._types.storage import DocumentProcessingStatus
+from rag.schema.runtime import DocumentProcessingStatus
 from tests.support import make_runtime
 
 

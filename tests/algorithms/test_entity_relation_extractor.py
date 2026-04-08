@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime
 
 from rag.ingest.extract import PromptedEntityRelationExtractor
-from rag.schema._types import AccessPolicy, Chunk, Document, DocumentType
+from rag.schema import AccessPolicy, Chunk, Document, DocumentType
 
 
 class FakeEntityRelationBackend:

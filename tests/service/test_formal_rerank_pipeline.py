@@ -6,10 +6,15 @@ from types import SimpleNamespace
 
 from pytest import MonkeyPatch
 
-from rag.llm._rerank.cross_encoder import CrossEncoderConfig, ProviderBackedCrossEncoder
-from rag.llm._rerank.models import RerankCandidate, RerankRequest
-from rag.llm._rerank.pipeline import FormalRerankService, RerankPipelineConfig
-from rag.schema._types.query import (
+from rag.providers.rerank import (
+    CrossEncoderConfig,
+    FormalRerankService,
+    ProviderBackedCrossEncoder,
+    RerankCandidate,
+    RerankPipelineConfig,
+    RerankRequest,
+)
+from rag.schema.query import (
     MetadataFilters,
     QueryUnderstanding,
     StructureConstraints,
@@ -214,7 +219,7 @@ def test_formal_rerank_pipeline_deduplicates_same_parent_and_preserves_special_d
 
 def test_provider_backed_cross_encoder_uses_provider_ranking_as_scores(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "rag.llm._rerank.cross_encoder.ProviderBackedCrossEncoder._try_flag_embedding_backend",
+        "rag.providers.rerank.ProviderBackedCrossEncoder._try_flag_embedding_backend",
         lambda self: None,
     )
     encoder = ProviderBackedCrossEncoder(provider=FakeProvider(), config=CrossEncoderConfig(batch_size=2))
@@ -268,7 +273,7 @@ def test_provider_backed_cross_encoder_prefers_snapshot_resolved_model_path(
             return [0.88 for _ in pairs]
 
     monkeypatch.setattr(
-        "rag.llm._rerank.cross_encoder.importlib.import_module",
+        "rag.providers.rerank.importlib.import_module",
         lambda _name: SimpleNamespace(FlagReranker=FakeFlagReranker),
     )
     encoder = ProviderBackedCrossEncoder(
@@ -334,7 +339,7 @@ def test_provider_backed_cross_encoder_suppresses_fast_tokenizer_padding_warning
             return [0.88 for _ in pairs]
 
     monkeypatch.setattr(
-        "rag.llm._rerank.cross_encoder.importlib.import_module",
+        "rag.providers.rerank.importlib.import_module",
         lambda _name: SimpleNamespace(FlagReranker=FakeFlagReranker),
     )
     encoder = ProviderBackedCrossEncoder(

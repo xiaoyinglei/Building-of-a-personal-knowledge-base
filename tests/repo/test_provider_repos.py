@@ -6,8 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from rag.llm._providers.ollama_provider_repo import OllamaProviderRepo
-from rag.llm._providers.openai_provider_repo import OpenAIProviderRepo
+from rag.providers.adapters import OllamaProviderRepo, OpenAIProviderRepo
 
 
 class FakeOpenAIClient:

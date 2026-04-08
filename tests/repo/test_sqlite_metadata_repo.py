@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from rag.schema._types import (
+from rag.schema import (
     AccessPolicy,
     ArtifactStatus,
     ArtifactType,
@@ -13,8 +13,8 @@ from rag.schema._types import (
     Source,
     SourceType,
 )
-from rag.schema._types.storage import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
-from rag.storage._repo.sqlite_metadata_repo import SQLiteMetadataRepo
+from rag.schema.runtime import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
+from rag.storage.repositories.sqlite_metadata_repo import SQLiteMetadataRepo
 
 
 def test_sqlite_metadata_repo_persists_source_document_chunks_and_artifacts(tmp_path: Path) -> None:

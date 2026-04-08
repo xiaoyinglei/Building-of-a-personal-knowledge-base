@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from rag import RAGRuntime, StorageConfig
-from rag.llm.assembly import AssemblyConfig, CapabilityAssemblyService, CapabilityRequirements, ProviderConfig
-from rag.query import QueryOptions
+from rag.assembly import AssemblyConfig, CapabilityAssemblyService, CapabilityRequirements, ProviderConfig
+from rag.retrieval import QueryOptions
 
 
 class _FakeProvider:

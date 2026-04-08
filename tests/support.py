@@ -3,10 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from rag import CapabilityRequirements, RAGRuntime, StorageConfig
-from rag.ingest.ingest import IngestService
-from rag.llm.assembly import CapabilityAssemblyService, CapabilityBundle
-from rag.query.query import QueryOptions
-from rag.utils._contracts import OcrVisionRepo, VisualDescriptionRepo, WebFetchRepo
+from rag.assembly import AssemblyConfig, CapabilityAssemblyService, CapabilityBundle
+from rag.ingest.pipeline import IngestService
+from rag.retrieval.models import QueryOptions
+from rag.schema.runtime import OcrVisionRepo, VisualDescriptionRepo, WebFetchRepo
+
+
+def _isolated_assembly_service() -> CapabilityAssemblyService:
+    service = CapabilityAssemblyService(env_path=".env.test-unused")
+    service._load_env = lambda: None  # type: ignore[method-assign]
+    service._compatibility_config_from_environment = lambda: (AssemblyConfig(), {})  # type: ignore[method-assign]
+    return service
 
 
 def make_capability_bundle(
@@ -14,7 +21,7 @@ def make_capability_bundle(
     require_chat: bool = False,
     assembly_service: CapabilityAssemblyService | None = None,
 ) -> CapabilityBundle:
-    service = assembly_service or CapabilityAssemblyService()
+    service = assembly_service or _isolated_assembly_service()
     request = service.request_for_profile(
         "test_minimal",
         requirements=CapabilityRequirements(
@@ -32,7 +39,7 @@ def make_runtime(
     require_chat: bool = False,
     assembly_service: CapabilityAssemblyService | None = None,
 ) -> RAGRuntime:
-    service = assembly_service or CapabilityAssemblyService()
+    service = assembly_service or _isolated_assembly_service()
     request = service.request_for_profile(
         "test_minimal",
         requirements=CapabilityRequirements(

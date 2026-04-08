@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import pytest
 
-from rag.llm.rerank import ModelBackedRerankService
+from rag.providers.rerank import ModelBackedRerankService
 
 
 @dataclass(frozen=True)

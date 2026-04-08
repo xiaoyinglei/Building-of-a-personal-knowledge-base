@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from rag.schema._types.content import GraphEdge, GraphNode
-from rag.storage._graph.sqlite_graph_repo import SQLiteGraphRepo
+from rag.schema.core import GraphEdge, GraphNode
+from rag.storage.graph_backends.sqlite_graph_repo import SQLiteGraphRepo
 
 
 def test_sqlite_graph_repo_tracks_candidates_and_promoted_edges(tmp_path: Path) -> None:

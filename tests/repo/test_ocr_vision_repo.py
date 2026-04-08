@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw
 
-from rag.document._vision.ocr_vision_repo import OCRMacVisionRepo
+from rag.ingest.parser import OCRMacVisionRepo
 
 
 def _write_text_image(path: Path) -> None:

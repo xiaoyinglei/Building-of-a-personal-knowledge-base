@@ -10,11 +10,9 @@ from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.util import Inches
 
-from rag.ingest import chunk as document_processing_module
-from rag.ingest.chunk import TOCService
-from rag.schema._types.content import SourceType
-from rag.schema._types.processing import ChunkingStrategy, ChunkRole
-from rag.utils._contracts import OcrRegion, OcrResult
+import rag.ingest.chunking as document_processing_module
+from rag.ingest.chunking import TOCService
+from rag.schema.core import ChunkingStrategy, ChunkRole, OcrRegion, OcrResult, SourceType
 from tests.support import make_ingest_service
 
 

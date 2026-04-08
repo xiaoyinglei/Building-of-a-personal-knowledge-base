@@ -6,7 +6,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _TARGETS = (
     "rag/query/retrieve.py",
     "rag/query/graph.py",
-    "rag/engine.py",
+    "rag/runtime.py",
     "rag/cli.py",
 )
 _REMOVED_WRAPPER_IMPORTS = (
@@ -19,13 +19,14 @@ _ALLOWED_TOP_LEVEL = {
     "__init__.py",
     "cli.py",
     "document",
-    "engine.py",
     "ingest",
     "llm",
     "query",
+    "runtime.py",
     "schema",
     "storage",
     "utils",
+    "workbench",
 }
 
 
