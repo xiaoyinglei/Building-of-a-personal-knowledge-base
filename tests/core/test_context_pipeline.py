@@ -29,12 +29,13 @@ class FakeGenerationProvider:
 
     def __init__(self) -> None:
         self._fallback = FallbackEmbeddingRepo()
+        self.prompts: list[str] = []
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return self._fallback.embed(texts)
 
     def chat(self, prompt: str) -> str:
-        del prompt
+        self.prompts.append(prompt)
         return json.dumps(
             {
                 "answer_text": "Beta Service depends on Alpha Engine for upstream context.",
@@ -138,3 +139,57 @@ def test_ragcore_query_truncates_context_to_budget() -> None:
     assert result.context.token_count <= 40
     assert result.context.truncated_count >= 0
     assert result.context.evidence[0].selected_token_count <= 40
+
+
+def test_ragcore_query_limits_answer_context_independently_from_retrieval() -> None:
+    provider = FakeGenerationProvider()
+    service = CapabilityAssemblyService(env_path=".env.test-unused")
+    monkeypatch = MonkeyPatch()
+    monkeypatch.setattr(service, "_load_env", lambda: None)
+    monkeypatch.setattr(service, "_compatibility_config_from_environment", lambda: (AssemblyConfig(), {}))
+    monkeypatch.setattr(service, "_build_provider", lambda config: provider)
+    runtime = RAGRuntime.from_request(
+        storage=StorageConfig.in_memory(),
+        request=AssemblyRequest(
+            requirements=CapabilityRequirements(require_chat=True),
+            overrides=AssemblyOverrides(
+                embedding=ProviderConfig(
+                    provider_kind="fake-core",
+                    embedding_model="fake-embed",
+                ),
+                chat=ProviderConfig(
+                    provider_kind="fake-core",
+                    chat_model="fake-chat",
+                ),
+            ),
+        ),
+        assembly_service=service,
+    )
+    runtime.insert(
+        source_type="plain_text",
+        location="memory://many-evidence",
+        owner="user",
+        content_text=(
+            "Alpha Engine validates chunks. "
+            "Beta Service depends on Alpha Engine. "
+            "Gamma Index stores vectors. "
+            "Delta Router chooses query branches."
+        ),
+    )
+
+    result = runtime.query(
+        "How does Beta Service relate to Alpha Engine?",
+        options=QueryOptions(
+            mode="mix",
+            max_evidence_chunks=4,
+            answer_context_top_k=1,
+            execution_location_preference=ExecutionLocationPreference.LOCAL_ONLY,
+        ),
+    )
+
+    assert len(result.context.evidence) == 1
+    assert "E1" in result.context.prompt
+    assert "E2 | kind=internal" not in result.context.prompt
+    assert provider.prompts
+    runtime.close()
+    monkeypatch.undo()

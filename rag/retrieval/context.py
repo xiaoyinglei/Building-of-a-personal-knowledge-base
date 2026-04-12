@@ -125,6 +125,7 @@ class EvidenceTruncator:
                     evidence_id=f"E{len(selected) + 1}",
                     chunk_id=item.chunk_id,
                     doc_id=item.doc_id,
+                    benchmark_doc_id=item.benchmark_doc_id,
                     source_id=item.source_id,
                     citation_anchor=item.citation_anchor,
                     text=selected_text,

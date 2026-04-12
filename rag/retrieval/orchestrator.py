@@ -123,6 +123,7 @@ class FusedCandidateView(CandidateLike):
     source_kind: str
     source_id: str | None
     section_path: Sequence[str]
+    benchmark_doc_id: str | None = None
     effective_access_policy: AccessPolicy | None = None
     chunk_role: ChunkRole | None = None
     special_chunk_type: str | None = None
@@ -193,6 +194,7 @@ class ReciprocalRankFusion:
         return FusedCandidateView(
             chunk_id=item.candidate.chunk_id,
             doc_id=item.candidate.doc_id,
+            benchmark_doc_id=getattr(item.candidate, "benchmark_doc_id", None),
             text=item.candidate.text,
             citation_anchor=item.candidate.citation_anchor,
             score=final_score,
@@ -296,6 +298,21 @@ class RetrievalService:
         self.graph_expander = self._graph_expander
         self.telemetry_service = self._telemetry_service
 
+    @staticmethod
+    def _benchmark_doc_ids(candidates: Sequence[CandidateLike]) -> list[str]:
+        ranked_doc_ids: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            benchmark_doc_id = getattr(candidate, "benchmark_doc_id", None)
+            if not isinstance(benchmark_doc_id, str):
+                continue
+            normalized = benchmark_doc_id.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            ranked_doc_ids.append(normalized)
+        return ranked_doc_ids
+
     def run(
         self,
         query: str,
@@ -348,7 +365,11 @@ class RetrievalService:
         query_understanding: QueryUnderstanding,
         query_options: QueryOptions | None,
     ) -> ModeExecutionSpec:
-        retrieval_limit = max(query_options.top_k, 1) if query_options is not None else 8
+        retrieval_limit = (
+            max(query_options.retrieval_pool_k or query_options.chunk_top_k or query_options.top_k, 1)
+            if query_options is not None
+            else 8
+        )
         final_limit = max(query_options.chunk_top_k or query_options.top_k, 1) if query_options is not None else 8
         aux_branches = tuple(
             BranchExecutionSpec(branch, max(1, retrieval_limit))
@@ -514,6 +535,7 @@ class RetrievalService:
             evidence=evidence.all,
             differences_or_conflicts=[],
         )
+        reranked_benchmark_doc_ids = self._benchmark_doc_ids(reranked_candidates)
         if self.telemetry_service is not None and preservation_suggestion.suggested:
             self.telemetry_service.record_preservation_suggestion(
                 artifact_type=preservation_suggestion.artifact_type or "unknown",
@@ -527,12 +549,14 @@ class RetrievalService:
             evidence=evidence,
             self_check=self_check,
             reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
+            reranked_benchmark_doc_ids=reranked_benchmark_doc_ids,
             graph_expanded=graph_expanded,
             diagnostics=RetrievalDiagnostics(
                 mode_executor=spec.executor_name,
                 branch_hits=branch_hits,
                 branch_limits=branch_limits,
                 reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
+                reranked_benchmark_doc_ids=reranked_benchmark_doc_ids,
                 embedding_provider=self._embedding_provider(),
                 rerank_provider=getattr(self.reranker.reranker, "last_provider", None),
                 attempts=self._provider_attempts(),
@@ -570,12 +594,14 @@ class RetrievalService:
                 claim_supported=False,
             ),
             reranked_chunk_ids=[],
+            reranked_benchmark_doc_ids=[],
             graph_expanded=False,
             diagnostics=RetrievalDiagnostics(
                 mode_executor="bypass",
                 branch_hits={},
                 branch_limits={},
                 reranked_chunk_ids=[],
+                reranked_benchmark_doc_ids=[],
                 fusion_input_count=0,
                 fused_count=0,
                 graph_expanded=False,
@@ -677,7 +703,11 @@ class RetrievalService:
             )
 
         reranked_candidates = (
-            self.reranker.rerank(query, list(fused_candidates))
+            self._rerank_candidates(
+                query=query,
+                fused_candidates=fused_candidates,
+                rerank_pool_k=(query_options.rerank_pool_k if query_options is not None else None),
+            )
             if rerank_required and (query_options is None or query_options.enable_rerank)
             else list(fused_candidates)
         )
@@ -685,10 +715,11 @@ class RetrievalService:
         collapsed_candidate_count = 0
         collapsed_candidates: list[CandidateLike] = []
         seen_keys: set[tuple[str, str, str]] = set()
+        enable_parent_backfill = query_options.enable_parent_backfill if query_options is not None else True
         for candidate in reranked_candidates:
             parent_text = getattr(candidate, "parent_text", None)
             parent_chunk_id = getattr(candidate, "parent_chunk_id", None)
-            if parent_chunk_id and parent_text:
+            if enable_parent_backfill and parent_chunk_id and parent_text:
                 candidate = FusedCandidateView(
                     chunk_id=candidate.chunk_id,
                     doc_id=candidate.doc_id,
@@ -746,6 +777,23 @@ class RetrievalService:
                 top1_changed=(fused_ids[:1] != reranked_ids[:1]),
             )
         return reranked_candidates, candidate_count, parent_backfilled_count, collapsed_candidate_count
+
+    def _rerank_candidates(
+        self,
+        *,
+        query: str,
+        fused_candidates: list[CandidateLike],
+        rerank_pool_k: int | None,
+    ) -> list[CandidateLike]:
+        if not fused_candidates:
+            return []
+        if rerank_pool_k is None:
+            return self.reranker.rerank(query, list(fused_candidates))
+        normalized_limit = max(1, rerank_pool_k)
+        head = list(fused_candidates[:normalized_limit])
+        tail = list(fused_candidates[normalized_limit:])
+        reranked_head = self.reranker.rerank(query, head)
+        return [*reranked_head, *tail]
 
     def _call_branch(
         self,

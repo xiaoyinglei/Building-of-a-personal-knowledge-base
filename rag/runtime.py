@@ -275,10 +275,13 @@ class _QueryPipeline:
         budget: int,
         options: QueryOptions,
     ) -> ContextTruncationResult:
+        max_evidence_chunks = options.max_evidence_chunks
+        if options.answer_context_top_k is not None:
+            max_evidence_chunks = min(max_evidence_chunks, max(options.answer_context_top_k, 1))
         return self.truncator.truncate(
             merged_evidence,
             token_budget=budget,
-            max_evidence_chunks=options.max_evidence_chunks,
+            max_evidence_chunks=max_evidence_chunks,
             mode=options.mode,
         )
 

@@ -132,7 +132,13 @@ def test_ollama_provider_repo_uses_official_http_endpoints_and_rejects_rerank() 
             base_url="http://ollama.test",
             chat_model="llama-test",
             embedding_model="embed-test",
+            batch_size=1,
         )
+
+        repo.set_embedding_batch_size(2)
+        repo.set_embedding_call_logging(True)
+        repo.set_backend_progress_enabled(True)
+        repo.set_device_preference("mps")
 
         chat = repo.chat("Explain adapters")
         embeddings = repo.embed(["alpha", "beta"])
@@ -156,5 +162,23 @@ def test_ollama_provider_repo_uses_official_http_endpoints_and_rejects_rerank() 
             },
         ),
     ]
+    assert repo.embedding_runtime_info() == {
+        "provider": "ollama",
+        "model_name": "embed-test",
+        "device": "ollama-managed",
+        "encode_batch_size": 2,
+        "preferred_device": "mps",
+    }
+    stats = repo.embedding_stats()
+    assert stats["provider"] == "ollama"
+    assert stats["model_name"] == "embed-test"
+    assert stats["device"] == "ollama-managed"
+    assert stats["encode_batch_size"] == 2
+    assert stats["preferred_device"] == "mps"
+    assert stats["call_count"] == 1
+    assert stats["text_count"] == 2
+    assert stats["last_request_size"] == 2
+    assert isinstance(stats["total_duration_ms"], float)
+    assert isinstance(stats["last_duration_ms"], float)
     with pytest.raises(RuntimeError, match="does not provide rerank"):
         repo.rerank("query", ["a", "b"])

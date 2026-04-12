@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import io
+import logging
+import time
 from collections.abc import Callable, MutableMapping, Sequence
+from contextlib import ExitStack, nullcontext, redirect_stderr, redirect_stdout
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -11,6 +15,7 @@ import httpx
 from rag.schema.runtime import ModelProviderRepo
 
 _FAST_TOKENIZER_PADDING_WARNING = "Asking-to-pad-a-fast-tokenizer"
+_LOGGER = logging.getLogger(__name__)
 
 
 def suppress_backend_fast_tokenizer_padding_warning(backend: object) -> object:
@@ -245,6 +250,9 @@ class OllamaProviderRepo(ModelProviderRepo):
         embedding_fallback: FallbackEmbeddingRepo | None = None,
         http_client: httpx.Client | None = None,
         timeout_seconds: float = 120.0,
+        batch_size: int = 8,
+        log_embedding_calls: bool = False,
+        show_backend_progress: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._chat_model = chat_model
@@ -252,20 +260,57 @@ class OllamaProviderRepo(ModelProviderRepo):
         self._fallback = embedding_fallback or FallbackEmbeddingRepo()
         self._http_client = http_client
         self._timeout_seconds = timeout_seconds
+        self._batch_size = batch_size
+        self._preferred_device: str | None = None
+        self._reported_device = "ollama-managed"
+        self._log_embedding_calls = log_embedding_calls
+        self._show_backend_progress = show_backend_progress
+        self._embedding_call_count = 0
+        self._embedded_text_count = 0
+        self._embedding_total_duration_ms = 0.0
+        self._last_embedding_duration_ms = 0.0
+        self._last_embedding_request_size = 0
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         if not self.is_embed_configured or not self._embedding_model:
             raise RuntimeError("Ollama embedding model is not configured")
-        try:
-            response = self._client().post(
-                f"{self._base_url}/api/embed",
-                json={"model": self._embedding_model, "input": list(texts)},
-            )
-            response.raise_for_status()
-            payload = response.json()
-            return [list(vector) for vector in payload["embeddings"]]
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"Ollama embedding request failed: {exc}") from exc
+        if not texts:
+            return []
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), self._batch_size):
+            batch = list(texts[start : start + self._batch_size])
+            started = time.perf_counter()
+            try:
+                response = self._client().post(
+                    f"{self._base_url}/api/embed",
+                    json={"model": self._embedding_model, "input": batch},
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except httpx.HTTPError as exc:
+                raise RuntimeError(f"Ollama embedding request failed: {exc}") from exc
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            batch_vectors = payload.get("embeddings")
+            if not isinstance(batch_vectors, list):
+                raise RuntimeError("Ollama embedding response did not contain embeddings")
+            vectors.extend([list(vector) for vector in batch_vectors])
+            self._embedding_call_count += 1
+            self._embedded_text_count += len(batch)
+            self._embedding_total_duration_ms += duration_ms
+            self._last_embedding_duration_ms = duration_ms
+            self._last_embedding_request_size = len(batch)
+            if self._log_embedding_calls:
+                _LOGGER.info(
+                    "embedding_call provider=%s model=%s device=%s "
+                    "encode_batch_size=%s request_size=%s duration_ms=%.3f",
+                    self.provider_name,
+                    self.embedding_model_name,
+                    self.embedding_device,
+                    self.embedding_batch_size,
+                    len(batch),
+                    duration_ms,
+                )
+        return vectors
 
     def chat(self, prompt: str) -> str:
         try:
@@ -310,9 +355,57 @@ class OllamaProviderRepo(ModelProviderRepo):
     def is_rerank_configured(self) -> bool:
         return False
 
+    @property
+    def embedding_batch_size(self) -> int:
+        return self._batch_size
+
+    @property
+    def embedding_device(self) -> str:
+        return self._reported_device
+
+    def set_embedding_batch_size(self, batch_size: int) -> None:
+        if batch_size <= 0:
+            raise ValueError("embedding batch size must be positive")
+        self._batch_size = batch_size
+
+    def set_device_preference(self, device: str | None) -> None:
+        self._preferred_device = device.strip() if isinstance(device, str) and device.strip() else None
+
+    def set_embedding_call_logging(self, enabled: bool) -> None:
+        self._log_embedding_calls = enabled
+
+    def set_backend_progress_enabled(self, enabled: bool) -> None:
+        self._show_backend_progress = enabled
+
+    def reset_embedding_stats(self) -> None:
+        self._embedding_call_count = 0
+        self._embedded_text_count = 0
+        self._embedding_total_duration_ms = 0.0
+        self._last_embedding_duration_ms = 0.0
+        self._last_embedding_request_size = 0
+
+    def embedding_runtime_info(self) -> dict[str, object]:
+        return {
+            "provider": self.provider_name,
+            "model_name": self.embedding_model_name,
+            "device": self.embedding_device,
+            "encode_batch_size": self.embedding_batch_size,
+            "preferred_device": self._preferred_device,
+        }
+
+    def embedding_stats(self) -> dict[str, object]:
+        return {
+            **self.embedding_runtime_info(),
+            "call_count": self._embedding_call_count,
+            "text_count": self._embedded_text_count,
+            "total_duration_ms": round(self._embedding_total_duration_ms, 3),
+            "last_duration_ms": round(self._last_embedding_duration_ms, 3),
+            "last_request_size": self._last_embedding_request_size,
+        }
+
     def _client(self) -> httpx.Client:
         if self._http_client is None:
-            self._http_client = httpx.Client(timeout=httpx.Timeout(self._timeout_seconds))
+            self._http_client = httpx.Client(timeout=httpx.Timeout(self._timeout_seconds), trust_env=False)
         return self._http_client
 
 
@@ -330,6 +423,9 @@ class LocalBgeProviderRepo:
         max_length: int = 1024,
         rerank_batch_size: int = 8,
         rerank_max_length: int = 512,
+        devices: str | None = None,
+        log_embedding_calls: bool = False,
+        show_backend_progress: bool = False,
     ) -> None:
         self._embedding_model = embedding_model
         self._embedding_model_ref = resolve_local_model_reference(embedding_model, embedding_model_path)
@@ -341,8 +437,18 @@ class LocalBgeProviderRepo:
         self._max_length = max_length
         self._rerank_batch_size = rerank_batch_size
         self._rerank_max_length = rerank_max_length
+        self._preferred_device = devices
+        self._resolved_device = self._resolve_device(devices)
+        self._log_embedding_calls = log_embedding_calls
+        self._show_backend_progress = show_backend_progress
         self._embedding_backend: object | None = None
         self._rerank_backend: object | None = None
+        self._embedding_call_count = 0
+        self._embedded_text_count = 0
+        self._embedding_total_duration_ms = 0.0
+        self._last_embedding_duration_ms = 0.0
+        self._last_embedding_request_size = 0
+        self._actual_embedding_device: str | None = None
 
     @property
     def provider_name(self) -> str:
@@ -370,18 +476,44 @@ class LocalBgeProviderRepo:
         backend = self._embedding_backend or self._load_embedding_backend()
         self._embedding_backend = backend
         encoder = cast(Any, backend)
-        payload = encoder.encode(
-            list(texts),
-            batch_size=self._batch_size,
-            max_length=self._max_length,
-            return_dense=True,
-            return_sparse=False,
-            return_colbert_vecs=False,
-        )
-        dense_vectors = payload.get("dense_vecs") if isinstance(payload, dict) else payload
-        if dense_vectors is None:
-            raise RuntimeError("Local BGE embedding backend returned no dense vectors")
-        return [list(vector) for vector in dense_vectors]
+        dense_vectors: list[list[float]] = []
+        for start in range(0, len(texts), self._batch_size):
+            batch_texts = list(texts[start : start + self._batch_size])
+            started = time.perf_counter()
+            with self._backend_output_context():
+                payload = encoder.encode(
+                    batch_texts,
+                    batch_size=self._batch_size,
+                    max_length=self._max_length,
+                    return_dense=True,
+                    return_sparse=False,
+                    return_colbert_vecs=False,
+                )
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            batch_vectors = payload.get("dense_vecs") if isinstance(payload, dict) else payload
+            if batch_vectors is None:
+                raise RuntimeError("Local BGE embedding backend returned no dense vectors")
+            self._embedding_call_count += 1
+            self._embedded_text_count += len(batch_texts)
+            self._embedding_total_duration_ms += duration_ms
+            self._last_embedding_duration_ms = duration_ms
+            self._last_embedding_request_size = len(batch_texts)
+            if self._log_embedding_calls:
+                _LOGGER.info(
+                    "embedding_call provider=%s model=%s device=%s "
+                    "encode_batch_size=%s request_size=%s duration_ms=%.3f",
+                    self.provider_name,
+                    self.embedding_model_name,
+                    self.embedding_device,
+                    self.embedding_batch_size,
+                    len(batch_texts),
+                    duration_ms,
+                )
+            dense_vectors.extend(list(vector) for vector in batch_vectors)
+        return dense_vectors
+
+    def embed_query(self, texts: Sequence[str]) -> list[list[float]]:
+        return self.embed(texts)
 
     def rerank(self, query: str, candidates: Sequence[object]) -> list[int]:
         if not candidates:
@@ -391,11 +523,12 @@ class LocalBgeProviderRepo:
         reranker = cast(Any, backend)
         candidate_texts = [self._candidate_text(candidate) for candidate in candidates]
         pairs = [[query, candidate_text] for candidate_text in candidate_texts]
-        scores = reranker.compute_score(
-            pairs,
-            batch_size=self._rerank_batch_size,
-            max_length=self._rerank_max_length,
-        )
+        with self._backend_output_context():
+            scores = reranker.compute_score(
+                pairs,
+                batch_size=self._rerank_batch_size,
+                max_length=self._rerank_max_length,
+            )
         indexed = list(enumerate(float(score) for score in scores))
         indexed.sort(key=lambda item: item[1], reverse=True)
         return [index for index, _score in indexed]
@@ -409,20 +542,24 @@ class LocalBgeProviderRepo:
         if encoder_cls is None:
             raise RuntimeError("FlagEmbedding BGEM3FlagModel is unavailable")
         try:
-            backend = cast(
-                object,
-                encoder_cls(
-                    self._embedding_model_ref,
-                    normalize_embeddings=self._normalize_embeddings,
-                    use_fp16=self._use_fp16,
-                    batch_size=self._batch_size,
-                    query_max_length=self._max_length,
-                    passage_max_length=self._max_length,
-                    return_sparse=False,
-                    return_colbert_vecs=False,
-                ),
-            )
-            return suppress_backend_fast_tokenizer_padding_warning(backend)
+            with self._backend_output_context():
+                backend = cast(
+                    object,
+                    encoder_cls(
+                        self._embedding_model_ref,
+                        normalize_embeddings=self._normalize_embeddings,
+                        use_fp16=self._use_fp16,
+                        devices=self._resolved_device,
+                        batch_size=self._batch_size,
+                        query_max_length=self._max_length,
+                        passage_max_length=self._max_length,
+                        return_sparse=False,
+                        return_colbert_vecs=False,
+                    ),
+                )
+            backend = suppress_backend_fast_tokenizer_padding_warning(backend)
+            self._actual_embedding_device = self._infer_backend_device(backend, fallback=self._resolved_device)
+            return backend
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(f"Local BGE embedding load failed: {exc}") from exc
 
@@ -435,16 +572,18 @@ class LocalBgeProviderRepo:
         if reranker_cls is None:
             raise RuntimeError("FlagEmbedding FlagReranker is unavailable")
         try:
-            backend = cast(
-                object,
-                reranker_cls(
-                    self._rerank_model_ref,
-                    use_fp16=self._use_fp16,
-                    batch_size=self._rerank_batch_size,
-                    max_length=self._rerank_max_length,
-                    normalize=False,
-                ),
-            )
+            with self._backend_output_context():
+                backend = cast(
+                    object,
+                    reranker_cls(
+                        self._rerank_model_ref,
+                        use_fp16=self._use_fp16,
+                        devices=self._resolved_device,
+                        batch_size=self._rerank_batch_size,
+                        max_length=self._rerank_max_length,
+                        normalize=False,
+                    ),
+                )
             return suppress_backend_fast_tokenizer_padding_warning(backend)
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(f"Local BGE rerank load failed: {exc}") from exc
@@ -457,6 +596,98 @@ class LocalBgeProviderRepo:
         if isinstance(text, str):
             return text
         return str(candidate)
+
+    @property
+    def embedding_batch_size(self) -> int:
+        return self._batch_size
+
+    @property
+    def embedding_device(self) -> str:
+        return self._actual_embedding_device or self._resolved_device
+
+    def set_embedding_batch_size(self, batch_size: int) -> None:
+        if batch_size <= 0:
+            raise ValueError("embedding batch size must be positive")
+        self._batch_size = batch_size
+
+    def set_device_preference(self, device: str | None) -> None:
+        self._preferred_device = device
+        self._resolved_device = self._resolve_device(device)
+        self._embedding_backend = None
+        self._rerank_backend = None
+        self._actual_embedding_device = None
+
+    def set_embedding_call_logging(self, enabled: bool) -> None:
+        self._log_embedding_calls = enabled
+
+    def set_backend_progress_enabled(self, enabled: bool) -> None:
+        self._show_backend_progress = enabled
+
+    def reset_embedding_stats(self) -> None:
+        self._embedding_call_count = 0
+        self._embedded_text_count = 0
+        self._embedding_total_duration_ms = 0.0
+        self._last_embedding_duration_ms = 0.0
+        self._last_embedding_request_size = 0
+
+    def embedding_runtime_info(self) -> dict[str, object]:
+        return {
+            "provider": self.provider_name,
+            "model_name": self.embedding_model_name,
+            "device": self.embedding_device,
+            "encode_batch_size": self.embedding_batch_size,
+            "resolved_device": self._resolved_device,
+            "preferred_device": self._preferred_device,
+        }
+
+    def embedding_stats(self) -> dict[str, object]:
+        return {
+            **self.embedding_runtime_info(),
+            "call_count": self._embedding_call_count,
+            "text_count": self._embedded_text_count,
+            "total_duration_ms": round(self._embedding_total_duration_ms, 3),
+            "last_duration_ms": round(self._last_embedding_duration_ms, 3),
+            "last_request_size": self._last_embedding_request_size,
+        }
+
+    @staticmethod
+    def _infer_backend_device(backend: object, *, fallback: str) -> str:
+        target_devices = getattr(backend, "target_devices", None)
+        if isinstance(target_devices, list) and target_devices:
+            return str(target_devices[0])
+        model = getattr(backend, "model", None)
+        device = getattr(model, "device", None)
+        if device is not None:
+            return str(device)
+        return fallback
+
+    def _backend_output_context(self) -> ExitStack | nullcontext[None]:
+        if self._show_backend_progress:
+            return nullcontext()
+        sink = io.StringIO()
+        stack = ExitStack()
+        stack.enter_context(redirect_stdout(sink))
+        stack.enter_context(redirect_stderr(sink))
+        return stack
+
+    @staticmethod
+    def _resolve_device(device: str | None) -> str:
+        if isinstance(device, str) and device.strip():
+            normalized = device.strip().lower()
+            if normalized == "auto":
+                device = None
+            else:
+                return device.strip()
+        try:
+            import torch
+        except Exception:  # pragma: no cover
+            return "cpu"
+        if getattr(torch.cuda, "is_available", None) and torch.cuda.is_available():
+            return "cuda:0"
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is not None and mps_backend.is_available():
+            return "mps"
+        return "cpu"
 
 
 suppress_fast_tokenizer_padding_warning = suppress_backend_fast_tokenizer_padding_warning

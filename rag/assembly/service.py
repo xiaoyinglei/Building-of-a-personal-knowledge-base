@@ -284,8 +284,8 @@ class CapabilityAssemblyService:
             AssemblyRequest(
                 requirements=request.requirements,
                 profile_id=None,
-                config=merge_assembly_config(profile.config, request.config),
-                overrides=merge_assembly_overrides(profile.overrides, request.overrides),
+                config=merge_assembly_config(request.config, profile.config),
+                overrides=merge_assembly_overrides(request.overrides, profile.overrides),
             ),
             profile,
         )

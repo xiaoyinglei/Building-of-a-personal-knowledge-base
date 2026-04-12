@@ -154,6 +154,7 @@ class AnswerCitation(BaseModel):
     chunk_type: str
     citation_anchor: str | None = None
     doc_id: str | None = None
+    benchmark_doc_id: str | None = None
     source_id: str | None = None
     source_type: str | None = None
 
@@ -195,6 +196,7 @@ class EvidenceItem(BaseModel):
 
     chunk_id: str
     doc_id: str
+    benchmark_doc_id: str | None = None
     source_id: str | None = None
     citation_anchor: str
     text: str

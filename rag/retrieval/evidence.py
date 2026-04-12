@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 class CandidateLike(Protocol):
     chunk_id: str
     doc_id: str
+    benchmark_doc_id: str | None
     text: str
     citation_anchor: str
     score: float
@@ -247,6 +248,7 @@ class EvidenceService:
         return EvidenceItem(
             chunk_id=candidate.chunk_id,
             doc_id=candidate.doc_id,
+            benchmark_doc_id=getattr(candidate, "benchmark_doc_id", None),
             source_id=getattr(candidate, "source_id", None),
             citation_anchor=candidate.citation_anchor,
             text=candidate.text,

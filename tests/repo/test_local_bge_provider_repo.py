@@ -36,6 +36,7 @@ def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
             *,
             normalize_embeddings: bool,
             use_fp16: bool,
+            devices: str | None,
             batch_size: int,
             query_max_length: int,
             passage_max_length: int,
@@ -45,11 +46,13 @@ def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
             captured["embedding_model_name_or_path"] = model_name_or_path
             captured["normalize_embeddings"] = normalize_embeddings
             captured["embed_use_fp16"] = use_fp16
+            captured["embed_devices"] = devices
             captured["embed_batch_size"] = batch_size
             captured["query_max_length"] = query_max_length
             captured["passage_max_length"] = passage_max_length
             captured["return_sparse"] = return_sparse
             captured["return_colbert_vecs"] = return_colbert_vecs
+            self.target_devices = [devices or "cpu"]
 
         def encode(
             self,
@@ -75,12 +78,14 @@ def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
             model_name_or_path: str,
             *,
             use_fp16: bool,
+            devices: str | None,
             batch_size: int,
             max_length: int,
             normalize: bool,
         ) -> None:
             captured["rerank_model_name_or_path"] = model_name_or_path
             captured["rerank_use_fp16"] = use_fp16
+            captured["rerank_devices"] = devices
             captured["rerank_batch_size"] = batch_size
             captured["rerank_max_length"] = max_length
             captured["rerank_normalize"] = normalize
@@ -119,6 +124,8 @@ def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
     assert ranking == [1, 0]
     assert captured["embedding_model_name_or_path"] == str(embedding_snapshot)
     assert captured["rerank_model_name_or_path"] == str(rerank_snapshot)
+    assert captured["embed_devices"] == provider.embedding_device
+    assert captured["rerank_devices"] == provider.embedding_device
     assert captured["embed_texts"] == ["alpha", "beta"]
     assert captured["pairs"] == [["query", "candidate-a"], ["query", "candidate-b"]]
 
@@ -199,3 +206,56 @@ def test_local_bge_provider_repo_suppresses_fast_tokenizer_padding_warning(
         provider.rerank("query", ["candidate-a"])
 
     assert not any("using the `__call__` method is faster" in str(item.message) for item in caught)
+
+
+def test_local_bge_provider_repo_reports_embedding_runtime_and_stats(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    embedding_root = tmp_path / "models--BAAI--bge-m3"
+    embedding_snapshot = embedding_root / "snapshots" / "embedsha"
+    embedding_snapshot.mkdir(parents=True)
+    (embedding_root / "refs").mkdir(parents=True)
+    (embedding_root / "refs" / "main").write_text("embedsha\n", encoding="utf-8")
+    (embedding_snapshot / "config.json").write_text("{}", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    class FakeBGEM3FlagModel:
+        def __init__(
+            self,
+            *_args: object,
+            devices: str | None,
+            batch_size: int,
+            **_kwargs: object,
+        ) -> None:
+            captured["devices"] = devices
+            captured["batch_size"] = batch_size
+            self.target_devices = [devices or "cpu"]
+
+        def encode(self, texts: list[str], **_kwargs: object) -> dict[str, list[list[float]]]:
+            return {"dense_vecs": [[0.1, 0.2] for _ in texts]}
+
+    monkeypatch.setattr(
+        "rag.providers.adapters.importlib.import_module",
+        lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagReranker=object),
+    )
+
+    provider = LocalBgeProviderRepo(
+        embedding_model_path=str(embedding_root),
+        batch_size=16,
+        devices="mps",
+    )
+    provider.set_embedding_call_logging(True)
+    provider.embed(["alpha", "beta", "gamma"])
+
+    runtime_info = provider.embedding_runtime_info()
+    stats = provider.embedding_stats()
+
+    assert captured["devices"] == "mps"
+    assert captured["batch_size"] == 16
+    assert runtime_info["device"] == "mps"
+    assert runtime_info["encode_batch_size"] == 16
+    assert stats["call_count"] == 1
+    assert stats["text_count"] == 3
+    assert stats["last_request_size"] == 3

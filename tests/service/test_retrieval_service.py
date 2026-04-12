@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from rag.assembly import ChatCapabilityBinding
 from rag.retrieval.analysis import QueryUnderstandingService
-from rag.retrieval.models import QueryMode
+from rag.retrieval.models import QueryMode, QueryOptions
 from rag.retrieval.orchestrator import RetrievalService
 from rag.schema.core import ChunkRole
 from rag.schema.runtime import AccessPolicy, ExternalRetrievalPolicy, Residency
@@ -28,6 +28,7 @@ class FakeCandidate:
     parent_chunk_id: str | None = None
     parent_text: str | None = None
     metadata: dict[str, str] | None = None
+    benchmark_doc_id: str | None = None
 
 
 class FakeRetrievalBackend:
@@ -274,12 +275,12 @@ def _build_service(
 def test_retrieval_service_rrf_fuses_branches_before_rerank_and_honors_source_scope() -> None:
     service, calls = _build_service(
         full_text_candidates=[
-            FakeCandidate("chunk-a", "doc-a", "alpha", "#a", 0.9, 1),
-            FakeCandidate("chunk-b", "doc-b", "beta", "#b", 0.8, 2),
+            FakeCandidate("chunk-a", "doc-a", "alpha", "#a", 0.9, 1, benchmark_doc_id="bench-a"),
+            FakeCandidate("chunk-b", "doc-b", "beta", "#b", 0.8, 2, benchmark_doc_id="bench-b"),
         ],
         vector_candidates=[
-            FakeCandidate("chunk-b", "doc-b", "beta", "#b", 0.95, 1),
-            FakeCandidate("chunk-c", "doc-c", "gamma", "#c", 0.7, 2),
+            FakeCandidate("chunk-b", "doc-b", "beta", "#b", 0.95, 1, benchmark_doc_id="bench-b"),
+            FakeCandidate("chunk-c", "doc-c", "gamma", "#c", 0.7, 2, benchmark_doc_id="bench-c"),
         ],
     )
 
@@ -291,6 +292,7 @@ def test_retrieval_service_rrf_fuses_branches_before_rerank_and_honors_source_sc
 
     assert calls["rerank_inputs"] == [["chunk-b", "chunk-a"]]
     assert [item.chunk_id for item in result.evidence.internal] == ["chunk-b", "chunk-a"]
+    assert result.reranked_benchmark_doc_ids == ["bench-b", "bench-a"]
 
 
 def test_retrieval_service_separates_external_evidence_and_expands_graph() -> None:
@@ -623,6 +625,58 @@ def test_retrieval_service_applies_parent_backfill_to_child_evidence() -> None:
     assert result.evidence.internal[0].text == "命中的子块只有前半句。这里是完整的父块上下文，包含后半句和结论。"
     assert result.evidence.internal[0].parent_chunk_id == "parent-a"
     assert result.diagnostics.parent_backfilled_count == 1
+
+
+def test_retrieval_service_can_disable_parent_backfill() -> None:
+    service, _calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate(
+                "chunk-child",
+                "doc-a",
+                "命中的子块只有前半句。",
+                "#child",
+                0.9,
+                1,
+                parent_chunk_id="parent-a",
+                parent_text="命中的子块只有前半句。这里是完整的父块上下文，包含后半句和结论。",
+            ),
+        ],
+    )
+
+    result = service.retrieve(
+        "这个问题的完整上下文是什么？",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+        query_options=QueryOptions(enable_parent_backfill=False),
+    )
+
+    assert result.evidence.internal[0].text == "命中的子块只有前半句。"
+    assert result.diagnostics.parent_backfilled_count == 0
+
+
+def test_retrieval_service_limits_rerank_inputs_with_rerank_pool_k() -> None:
+    service, calls = _build_service(
+        full_text_candidates=[
+            FakeCandidate("chunk-a", "doc-a", "alpha", "#a", 0.9, 1),
+            FakeCandidate("chunk-b", "doc-b", "beta", "#b", 0.8, 2),
+            FakeCandidate("chunk-c", "doc-c", "gamma", "#c", 0.7, 3),
+        ],
+    )
+
+    result = service.retrieve(
+        "What is Alpha?",
+        access_policy=AccessPolicy.default(),
+        query_options=QueryOptions(
+            top_k=2,
+            chunk_top_k=3,
+            retrieval_pool_k=3,
+            enable_rerank=True,
+            rerank_pool_k=2,
+        ),
+    )
+
+    assert calls["rerank_inputs"] == [["chunk-a", "chunk-b"]]
+    assert result.reranked_chunk_ids[:2] == ["chunk-a", "chunk-b"]
 
 
 def test_retrieval_service_uses_structure_constraints_for_heading_queries() -> None:

@@ -40,12 +40,16 @@ class QueryOptions:
     execution_location_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST
     max_context_tokens: int = 1200
     max_evidence_chunks: int = 8
+    answer_context_top_k: int | None = None
     top_k: int = 8
     chunk_top_k: int | None = None
     response_type: str = "Multiple Paragraphs"
     user_prompt: str | None = None
     conversation_history: tuple[tuple[str, str], ...] = ()
     enable_rerank: bool = True
+    retrieval_pool_k: int | None = None
+    rerank_pool_k: int | None = None
+    enable_parent_backfill: bool = True
 
 
 class ContextEvidence(BaseModel):
@@ -54,6 +58,7 @@ class ContextEvidence(BaseModel):
     evidence_id: str
     chunk_id: str
     doc_id: str
+    benchmark_doc_id: str | None = None
     source_id: str | None = None
     citation_anchor: str
     text: str
@@ -78,6 +83,7 @@ class ContextEvidence(BaseModel):
         return EvidenceItem(
             chunk_id=self.chunk_id,
             doc_id=self.doc_id,
+            benchmark_doc_id=self.benchmark_doc_id,
             source_id=self.source_id,
             citation_anchor=self.citation_anchor,
             text=self.text,
@@ -115,6 +121,7 @@ class RetrievalResult(BaseModel):
     evidence: EvidenceBundle
     self_check: SelfCheckResult
     reranked_chunk_ids: list[str] = Field(default_factory=list)
+    reranked_benchmark_doc_ids: list[str] = Field(default_factory=list)
     graph_expanded: bool = False
     diagnostics: RetrievalDiagnostics = Field(default_factory=RetrievalDiagnostics)
     preservation_suggestion: PreservationSuggestion = Field(

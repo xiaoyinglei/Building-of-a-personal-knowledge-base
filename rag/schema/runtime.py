@@ -116,6 +116,7 @@ class RetrievalDiagnostics(BaseModel):
     branch_hits: dict[str, int] = Field(default_factory=dict)
     branch_limits: dict[str, int] = Field(default_factory=dict)
     reranked_chunk_ids: list[str] = Field(default_factory=list)
+    reranked_benchmark_doc_ids: list[str] = Field(default_factory=list)
     embedding_provider: str | None = None
     rerank_provider: str | None = None
     attempts: list[ProviderAttempt] = Field(default_factory=list)

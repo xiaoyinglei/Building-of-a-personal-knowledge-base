@@ -364,6 +364,7 @@ class AnswerGenerationService:
                         or (item.chunk_role.value if item.chunk_role is not None else "child"),
                         citation_anchor=item.citation_anchor,
                         doc_id=item.doc_id,
+                        benchmark_doc_id=item.benchmark_doc_id,
                         source_id=item.source_id,
                         source_type=item.source_type,
                     )

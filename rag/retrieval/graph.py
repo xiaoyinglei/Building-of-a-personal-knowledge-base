@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -35,6 +35,7 @@ class RetrievedCandidate(CandidateLike):
     rank: int
     source_kind: str = "internal"
     source_id: str | None = None
+    benchmark_doc_id: str | None = None
     section_path: tuple[str, ...] = ()
     effective_access_policy: AccessPolicy | None = None
     chunk_role: ChunkRole | None = None
@@ -151,7 +152,7 @@ class MultiProviderBackedVectorRetriever:
         target_space: str,
     ) -> list[RetrievedCandidate]:
         try:
-            query_vectors = binding.embed([query])
+            query_vectors = binding.embed_query([query])
         except RuntimeError:
             return []
         if not query_vectors:
@@ -240,6 +241,27 @@ class SearchBackedRetrievalFactory:
         self._fts_repo = fts_repo
         self._graph_repo = graph_repo
 
+    @staticmethod
+    def _benchmark_doc_id(
+        *,
+        chunk_metadata: Mapping[str, object] | None = None,
+        document: Document | None = None,
+    ) -> str | None:
+        if chunk_metadata is not None:
+            value = chunk_metadata.get("benchmark_doc_id")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            benchmark_flag = chunk_metadata.get("benchmark")
+            if bool(benchmark_flag) and document is not None:
+                return document.doc_id
+        if document is not None:
+            value = document.metadata.get("benchmark_doc_id")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if document.metadata.get("benchmark"):
+                return document.doc_id
+        return None
+
     def full_text_retriever(
         self,
         query: str,
@@ -290,6 +312,10 @@ class SearchBackedRetrievalFactory:
                     RetrievedCandidate(
                         chunk_id=chunk.chunk_id,
                         doc_id=chunk.doc_id,
+                        benchmark_doc_id=self._benchmark_doc_id(
+                            chunk_metadata=chunk.metadata,
+                            document=document,
+                        ),
                         source_id=document.source_id,
                         text=chunk.text,
                         citation_anchor=chunk.citation_anchor,
@@ -457,6 +483,7 @@ class SearchBackedRetrievalFactory:
             RetrievedCandidate(
                 chunk_id=f"web-{index}",
                 doc_id=f"web-doc-{index}",
+                benchmark_doc_id=None,
                 source_id=result.url,
                 text=result.snippet,
                 citation_anchor=result.title,
@@ -754,6 +781,10 @@ class SearchBackedRetrievalFactory:
                 RetrievedCandidate(
                     chunk_id=chunk.chunk_id,
                     doc_id=chunk.doc_id,
+                    benchmark_doc_id=self._benchmark_doc_id(
+                        chunk_metadata=chunk.metadata,
+                        document=document,
+                    ),
                     source_id=document.source_id,
                     text=chunk.text,
                     citation_anchor=chunk.citation_anchor,

@@ -12,7 +12,12 @@ from rag.assembly.models import (
     ProviderConfig,
     TokenizerConfig,
 )
-from rag.providers.adapters import FallbackEmbeddingRepo, LocalBgeProviderRepo, OllamaProviderRepo, OpenAIProviderRepo
+from rag.providers.adapters import (
+    FallbackEmbeddingRepo,
+    LocalBgeProviderRepo,
+    OllamaProviderRepo,
+    OpenAIProviderRepo,
+)
 
 
 def first_non_blank(*values: str | None) -> str | None:
@@ -138,6 +143,14 @@ def compatibility_config_from_environment() -> tuple[AssemblyConfig, dict[str, s
         "local_bge_embedding_model_path",
         first_env("PKP_LOCAL_BGE__EMBEDDING_MODEL_PATH", "RAG_LOCAL_BGE_EMBEDDING_MODEL_PATH"),
     )
+    local_bge_embedding_batch_size = remember(
+        "local_bge_embedding_batch_size",
+        env_int("PKP_LOCAL_BGE__EMBEDDING_BATCH_SIZE", "RAG_LOCAL_BGE_EMBEDDING_BATCH_SIZE"),
+    )
+    local_bge_device = remember(
+        "local_bge_device",
+        first_env("PKP_LOCAL_BGE__DEVICE", "RAG_LOCAL_BGE_DEVICE"),
+    )
     local_bge_rerank_model = remember(
         "local_bge_rerank_model",
         first_env("RAG_RERANK_MODEL", "PKP_LOCAL_BGE__RERANK_MODEL"),
@@ -145,6 +158,10 @@ def compatibility_config_from_environment() -> tuple[AssemblyConfig, dict[str, s
     local_bge_rerank_model_path = remember(
         "local_bge_rerank_model_path",
         first_env("RAG_RERANK_MODEL_PATH", "PKP_LOCAL_BGE__RERANK_MODEL_PATH"),
+    )
+    local_bge_rerank_batch_size = remember(
+        "local_bge_rerank_batch_size",
+        env_int("PKP_LOCAL_BGE__RERANK_BATCH_SIZE", "RAG_LOCAL_BGE_RERANK_BATCH_SIZE"),
     )
     local_bge_allowed = (str(local_bge_enabled).lower() if local_bge_enabled is not None else "") not in {
         "0",
@@ -168,8 +185,15 @@ def compatibility_config_from_environment() -> tuple[AssemblyConfig, dict[str, s
                 embedding_model_path=None
                 if local_bge_embedding_model_path is None
                 else str(local_bge_embedding_model_path),
+                embedding_batch_size=(
+                    None if local_bge_embedding_batch_size is None else int(local_bge_embedding_batch_size)
+                ),
+                device=None if local_bge_device is None else str(local_bge_device),
                 rerank_model=None if local_bge_rerank_model is None else str(local_bge_rerank_model),
                 rerank_model_path=None if local_bge_rerank_model_path is None else str(local_bge_rerank_model_path),
+                rerank_batch_size=(
+                    None if local_bge_rerank_batch_size is None else int(local_bge_rerank_batch_size)
+                ),
             )
         )
 
@@ -309,6 +333,17 @@ def merge_provider_config(
         rerank_model=first_non_blank(high.rerank_model, low.rerank_model),
         embedding_model_path=first_non_blank(high.embedding_model_path, low.embedding_model_path),
         rerank_model_path=first_non_blank(high.rerank_model_path, low.rerank_model_path),
+        embedding_batch_size=(
+            first_positive_int(high.embedding_batch_size, low.embedding_batch_size)
+            if high.embedding_batch_size or low.embedding_batch_size
+            else None
+        ),
+        rerank_batch_size=(
+            first_positive_int(high.rerank_batch_size, low.rerank_batch_size)
+            if high.rerank_batch_size or low.rerank_batch_size
+            else None
+        ),
+        device=first_non_blank(high.device, low.device),
         enabled=high.enabled if high is not None else low.enabled,
     )
 
@@ -431,6 +466,9 @@ def build_provider(provider_config: ProviderConfig) -> object:
             embedding_model_path=provider_config.embedding_model_path,
             rerank_model=provider_config.rerank_model or "",
             rerank_model_path=provider_config.rerank_model_path,
+            batch_size=provider_config.embedding_batch_size or 8,
+            rerank_batch_size=provider_config.rerank_batch_size or 8,
+            devices=provider_config.device,
         )
     if kind in {"fallback", "default-embedding"}:
         return FallbackEmbeddingRepo()

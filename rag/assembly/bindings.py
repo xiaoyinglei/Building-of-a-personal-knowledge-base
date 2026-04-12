@@ -64,6 +64,12 @@ class EmbeddingCapabilityBinding:
             raise RuntimeError("Embedding capability is not available")
         return list(embed(list(texts)))
 
+    def embed_query(self, texts: Sequence[str]) -> list[list[float]]:
+        embed_query = getattr(self.backend, "embed_query", None)
+        if callable(embed_query):
+            return list(embed_query(list(texts)))
+        return self.embed(texts)
+
 
 @dataclass(frozen=True, slots=True)
 class ChatCapabilityBinding:

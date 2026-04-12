@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterable, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -87,6 +88,7 @@ class QueryUnderstandingDiagnostics(BaseModel):
 
     llm_provider: str | None = None
     llm_model: str | None = None
+    llm_latency_ms: float | None = None
     llm_raw_response: str | None = None
     llm_parsed_result: QueryUnderstanding | None = None
     final_understanding: QueryUnderstanding
@@ -139,7 +141,7 @@ class QueryUnderstandingService:
         access_policy: AccessPolicy | None = None,
         execution_location_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST,
     ) -> tuple[QueryUnderstanding, QueryUnderstandingDiagnostics]:
-        llm_result, llm_provider, llm_model, raw_response, fallback_reason = self._understand_with_llm(
+        llm_result, llm_provider, llm_model, llm_latency_ms, raw_response, fallback_reason = self._understand_with_llm(
             query,
             access_policy=access_policy,
             execution_location_preference=execution_location_preference,
@@ -148,6 +150,7 @@ class QueryUnderstandingService:
         diagnostics = QueryUnderstandingDiagnostics(
             llm_provider=llm_provider,
             llm_model=llm_model,
+            llm_latency_ms=llm_latency_ms,
             llm_raw_response=raw_response,
             llm_parsed_result=llm_result,
             final_understanding=final_understanding,
@@ -174,26 +177,28 @@ class QueryUnderstandingService:
         *,
         access_policy: AccessPolicy | None,
         execution_location_preference: ExecutionLocationPreference,
-    ) -> tuple[QueryUnderstanding | None, str | None, str | None, str | None, str | None]:
+    ) -> tuple[QueryUnderstanding | None, str | None, str | None, float | None, str | None, str | None]:
         if not self._enable_llm:
-            return None, None, None, None, "llm_disabled"
+            return None, None, None, None, None, "llm_disabled"
         bindings = self._ordered_chat_bindings(access_policy, execution_location_preference)
         if not bindings:
-            return None, None, None, None, "no_chat_binding"
+            return None, None, None, None, None, "no_chat_binding"
         prompt = self._build_llm_prompt(query=query)
         fallback_reason = "llm_unavailable"
         for binding in bindings:
+            started = time.perf_counter()
             try:
                 raw_response = binding.chat(prompt)
             except Exception as exc:
                 fallback_reason = f"chat_failed:{binding.provider_name}:{exc}"
                 continue
+            latency_ms = (time.perf_counter() - started) * 1000.0
             parsed = self._parse_llm_response(raw_response)
             if parsed is None:
                 fallback_reason = f"invalid_json:{binding.provider_name}"
                 continue
-            return parsed, binding.provider_name, binding.model_name, raw_response, None
-        return None, None, None, None, fallback_reason
+            return parsed, binding.provider_name, binding.model_name, latency_ms, raw_response, None
+        return None, None, None, None, None, fallback_reason
 
     def _ordered_chat_bindings(
         self,

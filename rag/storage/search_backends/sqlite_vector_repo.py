@@ -32,6 +32,7 @@ class SQLiteVectorRepo:
                 segment_id TEXT NOT NULL,
                 text TEXT NOT NULL,
                 metadata_json TEXT NOT NULL,
+                vector_norm REAL NOT NULL DEFAULT 0.0,
                 vector_json TEXT NOT NULL,
                 PRIMARY KEY(item_id, item_kind, embedding_space)
             );
@@ -46,6 +47,9 @@ class SQLiteVectorRepo:
             ON vectors(item_kind, embedding_space, doc_id);
             """
         )
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(vectors)").fetchall()}
+        if "vector_norm" not in columns:
+            self._conn.execute("ALTER TABLE vectors ADD COLUMN vector_norm REAL NOT NULL DEFAULT 0.0")
         legacy_exists = self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vectors_legacy'"
         ).fetchone()
@@ -60,13 +64,15 @@ class SQLiteVectorRepo:
                     segment_id,
                     text,
                     metadata_json,
+                    vector_norm,
                     vector_json
                 )
-                SELECT chunk_id, 'chunk', 'default', doc_id, segment_id, text, '{}', vector_json
+                SELECT chunk_id, 'chunk', 'default', doc_id, segment_id, text, '{}', 0.0, vector_json
                 FROM vectors_legacy
                 """
             )
             self._conn.execute("DROP TABLE vectors_legacy")
+        self._backfill_vector_norms()
         self._conn.commit()
 
     def upsert(
@@ -79,6 +85,7 @@ class SQLiteVectorRepo:
         item_kind: str = "chunk",
     ) -> None:
         payload = dict(metadata or {})
+        normalized_vector = [float(value) for value in vector]
         self._conn.execute(
             """
             INSERT INTO vectors (
@@ -89,14 +96,16 @@ class SQLiteVectorRepo:
                 segment_id,
                 text,
                 metadata_json,
+                vector_norm,
                 vector_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(item_id, item_kind, embedding_space) DO UPDATE SET
                 doc_id=excluded.doc_id,
                 segment_id=excluded.segment_id,
                 text=excluded.text,
                 metadata_json=excluded.metadata_json,
+                vector_norm=excluded.vector_norm,
                 vector_json=excluded.vector_json
             """,
             (
@@ -107,7 +116,8 @@ class SQLiteVectorRepo:
                 payload.get("segment_id", ""),
                 payload.get("text", ""),
                 json.dumps(payload, ensure_ascii=True, sort_keys=True),
-                json.dumps([float(value) for value in vector], ensure_ascii=True),
+                self._vector_norm(normalized_vector),
+                json.dumps(normalized_vector, ensure_ascii=True),
             ),
         )
         self._conn.commit()
@@ -124,9 +134,12 @@ class SQLiteVectorRepo:
         query_vector = tuple(float(value) for value in query)
         if not query_vector:
             return []
+        query_norm = self._vector_norm(query_vector)
+        if query_norm == 0.0:
+            return []
 
         sql = """
-            SELECT item_id, doc_id, segment_id, text, metadata_json, vector_json
+            SELECT item_id, doc_id, segment_id, text, metadata_json, vector_norm, vector_json
             FROM vectors
             WHERE embedding_space = ? AND item_kind = ?
         """
@@ -142,10 +155,11 @@ class SQLiteVectorRepo:
                 self._vector_scope_tokens(metadata=metadata, row_doc_id=row["doc_id"]) & requested_scope
             ):
                 continue
+            vector_norm = float(row["vector_norm"]) if row["vector_norm"] is not None else self._vector_norm(vector)
             scored.append(
                 VectorSearchResult(
                     item_id=row["item_id"],
-                    score=self._cosine_similarity(query_vector, vector),
+                    score=self._cosine_similarity(query_vector, query_norm, vector, vector_norm),
                     item_kind=str(item_kind),
                     doc_id=str(row["doc_id"]),
                     source_id=str(metadata.get("source_id", "")),
@@ -273,12 +287,44 @@ class SQLiteVectorRepo:
         return tokens
 
     @staticmethod
-    def _cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    def _vector_norm(vector: Iterable[float]) -> float:
+        values = tuple(float(value) for value in vector)
+        return sqrt(sum(value * value for value in values))
+
+    @staticmethod
+    def _cosine_similarity(
+        left: tuple[float, ...],
+        left_norm: float,
+        right: tuple[float, ...],
+        right_norm: float,
+    ) -> float:
         if len(left) != len(right):
             return 0.0
-        left_norm = sqrt(sum(value * value for value in left))
-        right_norm = sqrt(sum(value * value for value in right))
         if left_norm == 0.0 or right_norm == 0.0:
             return 0.0
         dot = sum(lv * rv for lv, rv in zip(left, right, strict=True))
         return dot / (left_norm * right_norm)
+
+    def _backfill_vector_norms(self) -> None:
+        rows = self._conn.execute(
+            """
+            SELECT item_id, item_kind, embedding_space, vector_json
+            FROM vectors
+            WHERE vector_norm = 0.0
+            """
+        ).fetchall()
+        for row in rows:
+            vector = json.loads(row["vector_json"])
+            self._conn.execute(
+                """
+                UPDATE vectors
+                SET vector_norm = ?
+                WHERE item_id = ? AND item_kind = ? AND embedding_space = ?
+                """,
+                (
+                    self._vector_norm(vector),
+                    row["item_id"],
+                    row["item_kind"],
+                    row["embedding_space"],
+                ),
+            )

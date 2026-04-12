@@ -71,6 +71,28 @@ from rag.storage.graph import GraphStore
 from rag.storage.metadata import ChunkStore, DocumentStore, StatusStore
 from rag.storage.vector import VectorStore
 
+_BENCHMARK_METADATA_KEYS = (
+    "benchmark",
+    "dataset",
+    "benchmark_dataset",
+    "benchmark_doc_id",
+    "parent_doc_id",
+)
+
+
+def _benchmark_metadata(mapping: dict[str, str] | None) -> dict[str, str]:
+    if not mapping:
+        return {}
+    metadata = {key: mapping[key] for key in _BENCHMARK_METADATA_KEYS if key in mapping and mapping[key]}
+    benchmark_dataset = metadata.get("benchmark_dataset") or metadata.get("dataset")
+    benchmark_doc_id = metadata.get("benchmark_doc_id") or metadata.get("parent_doc_id")
+    if benchmark_dataset:
+        metadata["benchmark_dataset"] = benchmark_dataset
+    if benchmark_doc_id:
+        metadata["benchmark_doc_id"] = benchmark_doc_id
+        metadata.setdefault("parent_doc_id", benchmark_doc_id)
+    return metadata
+
 
 @dataclass(frozen=True, slots=True)
 class IngestRequest:
@@ -138,6 +160,21 @@ class BatchIngestResult:
     @property
     def failure_count(self) -> int:
         return len(self.errors)
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingBatchIngest:
+    index: int
+    location: str
+    source: Source
+    document: Document
+    segments: list[Segment]
+    stored_chunks: list[Chunk]
+    indexed_chunks: list[Chunk]
+    processing: DocumentProcessingPackage | None
+    content_hash: str
+    visible_text: str
+    visual_semantics: str | None = None
 
 
 @dataclass(slots=True)
@@ -210,6 +247,8 @@ class IngestPipeline:
         *,
         continue_on_error: bool = False,
     ) -> BatchIngestResult:
+        if requests and all(request.parsed_document is not None for request in requests):
+            return self._run_many_preparsed(requests, continue_on_error=continue_on_error)
         results: list[IngestPipelineResult] = []
         errors: list[BatchIngestError] = []
         for index, request in enumerate(requests):
@@ -220,6 +259,84 @@ class IngestPipeline:
                     raise
                 errors.append(BatchIngestError(index=index, location=request.location, error=str(exc)))
         return BatchIngestResult(results=results, errors=errors)
+
+    def _run_many_preparsed(
+        self,
+        requests: Sequence[IngestRequest],
+        *,
+        continue_on_error: bool,
+    ) -> BatchIngestResult:
+        pending: list[_PendingBatchIngest] = []
+        results_by_index: dict[int, IngestPipelineResult] = {}
+        errors: list[BatchIngestError] = []
+
+        for index, request in enumerate(requests):
+            try:
+                staged = self._stage_preparsed_request(index=index, request=request)
+                if isinstance(staged, IngestPipelineResult):
+                    results_by_index[index] = staged
+                else:
+                    pending.append(staged)
+            except Exception as exc:
+                if not continue_on_error:
+                    raise
+                errors.append(BatchIngestError(index=index, location=request.location, error=str(exc)))
+
+        self._index_pending_batch(pending)
+
+        for item in pending:
+            try:
+                self._save_status(
+                    doc_id=item.document.doc_id,
+                    source_id=item.source.source_id,
+                    location=item.location,
+                    content_hash=item.content_hash,
+                    status=DocumentProcessingStatus.PROCESSING,
+                    stage=DocumentPipelineStage.EXTRACT,
+                )
+                entity_count, relation_count = self._extract_and_persist_graph(
+                    source=item.source,
+                    document=item.document,
+                    chunks=item.indexed_chunks,
+                )
+                final_status = self._save_status(
+                    doc_id=item.document.doc_id,
+                    source_id=item.source.source_id,
+                    location=item.location,
+                    content_hash=item.content_hash,
+                    status=DocumentProcessingStatus.READY,
+                    stage=DocumentPipelineStage.INDEX,
+                )
+                results_by_index[item.index] = IngestPipelineResult(
+                    source=item.source,
+                    document=item.document,
+                    segments=item.segments,
+                    chunks=item.indexed_chunks,
+                    is_duplicate=False,
+                    content_hash=item.content_hash,
+                    visible_text=item.visible_text,
+                    visual_semantics=item.visual_semantics,
+                    processing=item.processing,
+                    entity_count=entity_count,
+                    relation_count=relation_count,
+                    status=final_status.status.value,
+                )
+            except Exception as exc:
+                self._save_status(
+                    doc_id=item.document.doc_id,
+                    source_id=item.source.source_id,
+                    location=item.location,
+                    content_hash=item.content_hash,
+                    status=DocumentProcessingStatus.FAILED,
+                    stage=DocumentPipelineStage.EXTRACT,
+                    error_message=str(exc),
+                )
+                if not continue_on_error:
+                    raise
+                errors.append(BatchIngestError(index=item.index, location=item.location, error=str(exc)))
+
+        ordered_results = [results_by_index[index] for index in sorted(results_by_index)]
+        return BatchIngestResult(results=ordered_results, errors=errors)
 
     def run_content_list(
         self,
@@ -426,6 +543,149 @@ class IngestPipeline:
             status=final_status.status.value,
         )
 
+    def _stage_preparsed_request(
+        self,
+        *,
+        index: int,
+        request: IngestRequest,
+    ) -> _PendingBatchIngest | IngestPipelineResult:
+        source_type = SourceType(request.source_type)
+        raw_bytes = self._resolve_raw_bytes(request=request, source_type=source_type)
+        parsed = self._resolve_parsed_document(request=request, source_type=source_type, raw_bytes=raw_bytes)
+        if request.parsed_document is None:
+            raise ValueError("_stage_preparsed_request requires parsed_document input")
+        content_hash = sha256(raw_bytes).hexdigest()
+        existing_source = self.documents.get_source_by_location_and_hash(request.location, content_hash)
+        if existing_source is not None:
+            return self.ingest_parsed_document(
+                location=request.location,
+                raw_bytes=raw_bytes,
+                parsed=parsed,
+                owner=request.owner,
+                access_policy=request.access_policy,
+            )
+
+        normalized_policy = request.access_policy or AccessPolicy.default()
+        latest_source = self.documents.get_latest_source_for_location(request.location)
+        ingest_version = 1 if latest_source is None else latest_source.ingest_version + 1
+        source_id = self._deterministic_id(request.location, content_hash, "source")
+        source_metadata = {"source_type": parsed.source_type.value}
+        if self.object_store is not None:
+            object_key = self.object_store.put_bytes(raw_bytes, suffix=self._suffix_for(parsed.source_type))
+            source_metadata["object_key"] = object_key
+        source = Source(
+            source_id=source_id,
+            source_type=parsed.source_type,
+            location=request.location,
+            owner=request.owner,
+            content_hash=content_hash,
+            effective_access_policy=normalized_policy,
+            ingest_version=ingest_version,
+            metadata=source_metadata,
+        )
+        self.documents.save_source(source)
+        self.documents.deactivate_documents_for_location(request.location)
+
+        document = Document(
+            doc_id=self._deterministic_id(source.source_id, parsed.title, "document"),
+            source_id=source.source_id,
+            doc_type=parsed.doc_type,
+            title=parsed.title,
+            authors=list(parsed.authors or [request.owner]),
+            created_at=datetime.now(UTC),
+            language=parsed.language,
+            effective_access_policy=normalized_policy,
+            metadata={**parsed.metadata, "location": request.location, "content_hash": content_hash},
+        )
+        self.documents.save_document(document, location=request.location, content_hash=content_hash)
+        self._save_status(
+            doc_id=document.doc_id,
+            source_id=source.source_id,
+            location=request.location,
+            content_hash=content_hash,
+            status=DocumentProcessingStatus.PROCESSING,
+            stage=DocumentPipelineStage.CHUNK,
+        )
+        segments, stored_chunks, indexed_chunks, processing = self._prepare_chunks(
+            location=request.location,
+            source=source,
+            document=document,
+            parsed=parsed,
+            access_policy=normalized_policy,
+        )
+        self._save_status(
+            doc_id=document.doc_id,
+            source_id=source.source_id,
+            location=request.location,
+            content_hash=content_hash,
+            status=DocumentProcessingStatus.PROCESSING,
+            stage=DocumentPipelineStage.PERSIST,
+        )
+        for segment in segments:
+            self.documents.save_segment(segment)
+        self.chunks.save_many(stored_chunks)
+        return _PendingBatchIngest(
+            index=index,
+            location=request.location,
+            source=source,
+            document=document,
+            segments=segments,
+            stored_chunks=stored_chunks,
+            indexed_chunks=indexed_chunks,
+            processing=processing,
+            content_hash=content_hash,
+            visible_text=parsed.visible_text,
+            visual_semantics=parsed.visual_semantics,
+        )
+
+    def _index_pending_batch(self, pending: Sequence[_PendingBatchIngest]) -> None:
+        if not pending:
+            return
+        chunk_records: list[tuple[Document, Segment, Chunk]] = []
+        for item in pending:
+            segments_by_id = {segment.segment_id: segment for segment in item.segments}
+            for chunk in item.indexed_chunks:
+                segment = segments_by_id.get(chunk.segment_id)
+                toc_path = [] if segment is None else list(segment.toc_path)
+                self.fts_repo.index_chunk(
+                    chunk_id=chunk.chunk_id,
+                    doc_id=chunk.doc_id,
+                    source_id=item.source.source_id,
+                    title=item.document.title,
+                    toc_path=toc_path,
+                    text=chunk.text,
+                )
+                if segment is not None:
+                    chunk_records.append((item.document, segment, chunk))
+            for segment in item.segments:
+                segment_chunks = [chunk for chunk in item.indexed_chunks if chunk.segment_id == segment.segment_id]
+                self._save_section_graph(
+                    source=item.source,
+                    document=item.document,
+                    segment=segment,
+                    chunks=segment_chunks,
+                )
+
+        if not chunk_records:
+            return
+        texts = [chunk.text for _document, _segment, chunk in chunk_records]
+        for binding in self.embedding_capabilities:
+            vectors = self._embed_texts(binding, texts)
+            if vectors is None:
+                continue
+            for (document, segment, chunk), vector in zip(chunk_records, vectors, strict=True):
+                self.vectors.upsert_chunk(
+                    chunk.chunk_id,
+                    vector,
+                    metadata={
+                        "doc_id": document.doc_id,
+                        "segment_id": segment.segment_id,
+                        "text": chunk.text,
+                        **_benchmark_metadata(chunk.metadata),
+                    },
+                    embedding_space=binding.space,
+                )
+
     def _prepare_chunks(
         self,
         *,
@@ -470,7 +730,7 @@ class IngestPipeline:
                 anchor=anchor,
                 visible_text=section.text or None,
                 visual_semantics=section.metadata.get("visual_semantics"),
-                metadata=section.metadata | {"location": location},
+                metadata=section.metadata | _benchmark_metadata(document.metadata) | {"location": location},
             )
             segments.append(segment)
             path_to_segment_id[tuple(normalized_path)] = segment.segment_id
@@ -483,6 +743,7 @@ class IngestPipeline:
                     source_policy=access_policy,
                     chunk_policy=access_policy,
                 ),
+                document_metadata=_benchmark_metadata(document.metadata),
             )
             indexed_chunks.extend(chunk_list)
 
@@ -988,6 +1249,7 @@ class IngestPipeline:
                         "doc_id": document.doc_id,
                         "segment_id": chunk.segment_id,
                         "text": chunk.text,
+                        **_benchmark_metadata(chunk.metadata),
                     },
                     embedding_space=binding.space,
                 )
@@ -1051,6 +1313,7 @@ class IngestPipeline:
                         "doc_id": document.doc_id,
                         "segment_id": segment.segment_id,
                         "text": chunk.text,
+                        **_benchmark_metadata(chunk.metadata),
                     },
                     embedding_space=binding.space,
                 )

@@ -24,6 +24,9 @@ class ProviderConfig:
     rerank_model: str | None = None
     embedding_model_path: str | None = None
     rerank_model_path: str | None = None
+    embedding_batch_size: int | None = None
+    rerank_batch_size: int | None = None
+    device: str | None = None
     enabled: bool = True
 
 

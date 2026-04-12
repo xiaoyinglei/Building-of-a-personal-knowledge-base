@@ -32,6 +32,27 @@ from rag.schema.core import (
 from rag.schema.runtime import AccessPolicy
 from rag.utils.text import DEFAULT_TOKENIZER_FALLBACK_MODEL, looks_code_like, split_sentences, text_unit_count
 
+_BENCHMARK_METADATA_KEYS = (
+    "benchmark",
+    "dataset",
+    "benchmark_dataset",
+    "benchmark_doc_id",
+    "parent_doc_id",
+)
+
+
+def _document_benchmark_metadata(document: Document) -> dict[str, str]:
+    metadata = document.metadata or {}
+    propagated = {key: metadata[key] for key in _BENCHMARK_METADATA_KEYS if key in metadata and metadata[key]}
+    benchmark_dataset = propagated.get("benchmark_dataset") or propagated.get("dataset")
+    benchmark_doc_id = propagated.get("benchmark_doc_id") or propagated.get("parent_doc_id")
+    if benchmark_dataset:
+        propagated["benchmark_dataset"] = benchmark_dataset
+    if benchmark_doc_id:
+        propagated["benchmark_doc_id"] = benchmark_doc_id
+        propagated.setdefault("parent_doc_id", benchmark_doc_id)
+    return propagated
+
 
 class TOCService:
     def normalize_path(self, headings: list[str] | tuple[str, ...]) -> list[str]:
@@ -332,6 +353,7 @@ class ChunkingService:
         segment: Segment,
         text: str,
         access_policy: AccessPolicy,
+        document_metadata: dict[str, str] | None = None,
     ) -> list[Chunk]:
         normalized = normalize_whitespace(text)
         if not normalized:
@@ -369,7 +391,7 @@ class ChunkingService:
                     extraction_quality=1.0,
                     embedding_ref=chunk_id,
                     order_index=index,
-                    metadata={"order_index": str(index)},
+                    metadata={**(document_metadata or {}), "order_index": str(index)},
                 )
             )
         return results
@@ -649,6 +671,7 @@ class DocumentProcessingService:
                 visible_text=normalize_whitespace(seed.text),
                 visual_semantics=parsed.visual_semantics,
                 metadata={
+                    **_document_benchmark_metadata(document),
                     "chunk_strategy": strategy.value,
                     "location": location,
                 },
@@ -708,7 +731,7 @@ class DocumentProcessingService:
                 anchor=anchor,
                 visible_text=section.text,
                 visual_semantics=parsed.visual_semantics,
-                metadata=section.metadata,
+                metadata=section.metadata | _document_benchmark_metadata(document),
             )
             segments.append(segment)
             parent_chunk = self._make_chunk(
@@ -759,7 +782,11 @@ class DocumentProcessingService:
             anchor=anchor,
             visible_text=parsed.visible_text or parsed.visual_semantics,
             visual_semantics=parsed.visual_semantics,
-            metadata={"chunk_strategy": ChunkingStrategy.IMAGE.value, "location": location},
+            metadata={
+                **_document_benchmark_metadata(document),
+                "chunk_strategy": ChunkingStrategy.IMAGE.value,
+                "location": location,
+            },
         )
         parent_text = parsed.visual_semantics or parsed.visible_text or parsed.title
         parent_chunk = self._make_chunk(
@@ -907,6 +934,7 @@ class DocumentProcessingService:
             special_chunk_type=special_chunk_type,
             parent_chunk_id=parent_chunk_id,
             metadata={
+                **_document_benchmark_metadata(document),
                 "location": location,
                 "source_type": metadata.get("source_type", "") if metadata else "",
                 "toc_path": " > ".join(segment.toc_path),

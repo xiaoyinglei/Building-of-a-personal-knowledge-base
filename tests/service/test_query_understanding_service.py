@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -12,6 +13,7 @@ class FakeQueryUnderstandingBackend:
     chat_model_name = "fake-query-understanding"
 
     def chat(self, prompt: str) -> str:
+        time.sleep(0.001)
         query = prompt.split("Query: ", 1)[1].rsplit("\nJSON only.", 1)[0]
         payload = {
             "这个项目做什么？": {
@@ -161,3 +163,15 @@ def test_query_understanding_service_marks_process_queries_for_graph_expansion()
 
     assert result.query_type == "process"
     assert result.needs_graph_expansion is True
+
+
+def test_query_understanding_service_records_llm_latency_diagnostics() -> None:
+    service = _service()
+
+    service.analyze("这个项目做什么？")
+
+    diagnostics = service.diagnostics_payload()
+    assert diagnostics["llm_provider"] == "fakequeryunderstandingbackend"
+    assert diagnostics["llm_model"] == "fake-query-understanding"
+    assert diagnostics["llm_latency_ms"] is not None
+    assert diagnostics["llm_latency_ms"] >= 0

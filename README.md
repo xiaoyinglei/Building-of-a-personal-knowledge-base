@@ -1,537 +1,736 @@
 # RAG
 
-一个正式版的 RAG / GraphRAG 后端骨架，主线已经收敛到两条：
+一个以 **正式版 RAG / GraphRAG 后端** 为目标的项目骨架。这个仓库不把重点放在 demo 页面，而是把下面几条链路做完整并可评测：
 
-- 查询主线：`查询理解 -> 路由/检索 -> 融合/重排 -> 证据处理 -> 上下文构建 -> 生成`
+- 查询主线：`查询理解 -> 检索编排 -> 融合/重排 -> 证据处理 -> 上下文构建 -> 生成`
 - 入库主线：`文档解析 -> 切分 -> 抽取 -> 入库 -> 索引/图谱构建`
+- Benchmark 主线：`公开数据下载 -> 统一格式转换 -> 正式 ingest -> retrieval baseline -> 离线诊断 -> answer eval`
 
-当前推荐入口只有三个：
+当前最稳定的系统入口只有三个：
 
-- `rag/runtime.py`：唯一系统入口
-- `uv run rag ...`：CLI 入口
-- `uv run rag workbench ...`：浏览器工作台入口
+- [rag/runtime.py](/Users/leixiaoying/LLM/RAG学习/rag/runtime.py)：统一 Python 运行时入口
+- [rag/cli.py](/Users/leixiaoying/LLM/RAG学习/rag/cli.py)：CLI 入口
+- [rag/workbench/server.py](/Users/leixiaoying/LLM/RAG学习/rag/workbench/server.py)：浏览器工作台入口
 
-## 目录结构
+## 项目根目录
 
-说明：`assembly` 现在保留为一个小目录，而不是单文件 `assembly.py`，原因很简单，它已经形成稳定子系统，强行压成一个文件只会变成新的神文件。
+```text
+RAG学习/
+├── README.md                                  # 项目说明、目录地图、命令、评测说明
+├── pyproject.toml                             # 项目依赖与工具配置
+├── uv.lock                                    # uv 锁文件
+├── rag/                                       # 正式代码主目录
+├── scripts/                                   # benchmark / profiling / diagnose 入口脚本
+├── tests/                                     # 回归测试
+├── data/                                      # 统一数据根目录：benchmark 数据、索引、评测结果
+└── .venv/                                     # 本地虚拟环境（通常不提交）
+```
+
+## `rag/` 目录结构
 
 ```text
 rag/
-├── runtime.py                     # 系统入口：统一组装 runtime、ingest、query、delete、rebuild
-├── cli.py                         # 命令行入口：profiles / ingest / query / delete / rebuild / workbench
-├── assembly/                      # 装配中心：profile、provider 选择、tokenizer/runtime contract
-│   ├── __init__.py                # 对外导出 Assembly API
-│   ├── models.py                  # AssemblyRequest / CapabilityRequirements / Diagnostics 等装配模型
-│   ├── service.py                 # CapabilityAssemblyService：解析 profile、选择 provider、生成 capability bundle
-│   ├── support.py                 # 内置 profile、环境变量兼容、默认装配策略
-│   ├── bindings.py                # chat / embedding / rerank 的 capability binding
-│   └── tokenizer.py               # tokenizer contract 与 token accounting
-├── schema/                        # 数据契约：只放跨层共享的模型，不放业务逻辑
-│   ├── core.py                    # Document / Chunk / Segment / Source / GraphNode 等核心实体
-│   ├── query.py                   # QueryUnderstanding / EvidenceItem / GroundedAnswer / QueryRequest 等查询契约
-│   └── runtime.py                 # AccessPolicy / Diagnostics / RuntimeMode / Status / Telemetry 等运行契约
-├── ingest/                        # 文档入库层：解析、切分、抽取、写入索引
-│   ├── pipeline.py                # 入库总流程：insert / insert_many / rebuild / delete 的主执行链
-│   ├── parser.py                  # 解析调度：按 source_type 选择 parser
-│   ├── chunking.py                # 切分调度：结构化切分、多模态切分、token 切分的统一入口
-│   ├── extract.py                 # 实体/关系抽取与图谱写入前处理
-│   ├── policy.py                  # 入库策略：重复内容、内容哈希、处理策略等
-│   ├── parsers/                   # 具体解析实现
-│   │   ├── docling_parser_repo.py # Docling 文档解析
-│   │   ├── pdf_parser_repo.py     # PDF 解析
-│   │   ├── markdown_parser_repo.py# Markdown 解析
-│   │   ├── plain_text_parser_repo.py # 纯文本解析
-│   │   ├── image_parser_repo.py   # 图片/OCR 解析
-│   │   ├── web_fetch_repo.py      # 网页抓取
-│   │   ├── web_parser_repo.py     # 网页正文解析
-│   │   └── util.py                # 解析相关文本清洗与通用辅助
-│   └── chunkers/                  # 具体切分实现
-│       ├── structured_chunker.py  # 结构感知切分
-│       ├── multimodal_chunk_router.py # 多模态 chunk 路由
-│       └── token_chunker.py       # token 级切分
-├── retrieval/                     # 检索编排层：查询理解、检索调度、证据处理、上下文构建
-│   ├── analysis.py                # Query Understanding、policy narrowing、RoutingDecision
-│   ├── orchestrator.py            # 多路检索编排：branch collect、fusion、rerank、graph/web 补检索
-│   ├── evidence.py                # 证据过滤、bundle、自检、artifact suggestion
-│   ├── context.py                 # 上下文构建：budget control、truncation、prompt build
-│   ├── graph.py                   # query-time graph retrieval / graph expansion
-│   └── models.py                  # QueryMode / QueryOptions / RetrievalResult / RAGQueryResult
-├── providers/                     # 基础设施适配：模型能力本身，不负责 runtime 装配
-│   ├── generation.py              # LLM 生成、grounded answer、回答结构化输出
-│   ├── embedding.py               # embedding provider 适配
-│   ├── rerank.py                  # reranker 适配与排序流水线
-│   └── adapters.py                # OpenAI / Gemini / Ollama / Local BGE 等供应商适配
-├── storage/                       # 持久化与搜索
-│   ├── vector.py                  # 向量存储抽象与聚合入口
-│   ├── graph.py                   # 图存储抽象与聚合入口
-│   ├── metadata.py                # 文档、chunk、状态等元数据存储聚合
-│   ├── search.py                  # FTS / web search 聚合入口
-│   ├── object_store.py            # 文件对象存储聚合入口
-│   ├── cache.py                   # cache 抽象与聚合入口
-│   ├── search_backends/           # 具体搜索/向量实现
-│   │   ├── sqlite_vector_repo.py  # SQLite 向量索引
-│   │   ├── sqlite_fts_repo.py     # SQLite 全文检索
-│   │   ├── postgres_fts_repo.py   # Postgres FTS
-│   │   ├── pgvector_vector_repo.py# PGVector
-│   │   ├── milvus_vector_repo.py  # Milvus
-│   │   ├── in_memory_vector_repo.py # 内存向量实现
-│   │   └── web_search_repo.py     # 外部搜索实现
-│   ├── graph_backends/            # 具体图存储实现
-│   │   ├── sqlite_graph_repo.py   # SQLite graph backend
-│   │   └── neo4j_graph_repo.py    # Neo4j backend
-│   └── repositories/              # 具体元数据 / cache / object store 实现
-│       ├── sqlite_metadata_repo.py# SQLite metadata repo
-│       ├── postgres_metadata_repo.py # Postgres metadata repo
-│       ├── redis_cache_repo.py    # Redis cache repo
-│       ├── file_object_store.py   # 本地文件对象存储
-│       └── s3_object_store.py     # S3 / MinIO 对象存储
-├── utils/                         # 底层工具：不放主业务，只放基础设施
-│   ├── text.py                    # 文本清洗、切句、FTS query、token 辅助
-│   └── telemetry.py               # 遥测事件与记录辅助
-└── workbench/                     # 浏览器工作台：文件树、检索证据、问答调试
-    ├── server.py                  # HTTP 服务入口
-    ├── service.py                 # workbench 后端逻辑
-    ├── models.py                  # workbench 数据结构
-    └── static/                    # 前端静态资源
+├── runtime.py                                 # 系统唯一运行时入口：组装 storage / ingest / retrieval / generation
+├── cli.py                                     # CLI 命令入口：ingest/query/rebuild/benchmark/workbench
+├── benchmarks.py                              # 公开 benchmark 主逻辑：下载、prepare、ingest、retrieval eval、profiling
+├── benchmark_diagnostics.py                   # retrieval 后置诊断：failure analysis、branch diagnostics、recommendations
+├── answer_benchmarks.py                       # answer-level eval：证据一致性 + judge 子集正确性评测
+│
+├── assembly/                                  # 能力装配中心
+│   ├── __init__.py                            # 对外导出 assembly 能力
+│   ├── models.py                              # AssemblyRequest / ProviderConfig / CapabilityBundle 等模型
+│   ├── bindings.py                            # embedding/chat/rerank 的 capability binding
+│   ├── service.py                             # CapabilityAssemblyService：按 profile/requirements 装配 provider
+│   ├── support.py                             # profile、环境变量兼容、provider 默认策略
+│   └── tokenizer.py                           # tokenizer contract、token accounting
+│
+├── ingest/                                    # 入库主线
+│   ├── pipeline.py                            # IngestPipeline：source/document/chunk/vector/fts/graph 串联总控
+│   ├── parser.py                              # source_type -> parser 调度入口
+│   ├── chunking.py                            # 正式切分入口：chunk route、多模态/结构化/token 切分
+│   ├── extract.py                             # 实体/关系抽取与图谱前处理
+│   ├── policy.py                              # ingest 策略解析
+│   ├── parsers/                               # 各类具体解析器实现
+│   └── chunkers/                              # 具体 chunking 实现细节
+│
+├── retrieval/                                 # 查询时主线
+│   ├── analysis.py                            # QueryUnderstanding + RoutingDecision + access policy narrowing
+│   ├── orchestrator.py                        # RetrievalService：branch 检索、fusion、rerank、graph/web 补检索
+│   ├── evidence.py                            # evidence filtering、bundle、自检、artifact suggestion
+│   ├── context.py                             # prompt build、context budget、truncation
+│   ├── graph.py                               # graph retrieval / graph expansion
+│   └── models.py                              # QueryOptions、RetrievalResult、BuiltContext 等查询侧模型
+│
+├── providers/                                 # 模型/推理适配层
+│   ├── adapters.py                            # OpenAI/Ollama/Local-BGE 等 provider repo 实现
+│   ├── embedding.py                           # embedding 适配导出入口
+│   ├── rerank.py                              # rerank 适配导出入口
+│   └── generation.py                          # Grounded answer 生成、citation 构造、fallback、judge prompt
+│
+├── schema/                                    # 跨层共享契约，只放公共模型
+│   ├── core.py                                # Document / Chunk / Source / Content 等核心实体
+│   ├── query.py                               # QueryUnderstanding / GroundedAnswer / EvidenceItem / Citation 等
+│   └── runtime.py                             # AccessPolicy / RetrievalDiagnostics / ProviderAttempt / telemetry 相关模型
+│
+├── storage/                                   # 存储抽象与后端实现
+│   ├── __init__.py                            # StorageBundle 组装根
+│   ├── vector.py                              # 向量存储抽象入口
+│   ├── graph.py                               # 图谱存储抽象入口
+│   ├── metadata.py                            # 元数据存储抽象入口
+│   ├── search.py                              # FTS / web search 抽象入口
+│   ├── object_store.py                        # 对象存储抽象入口
+│   ├── cache.py                               # 缓存能力入口
+│   ├── search_backends/                       # sqlite / pgvector / milvus / web search 等具体实现
+│   ├── repositories/                          # sqlite/postgres/object store 等 repository 实现
+│   └── graph_backends/                        # sqlite / neo4j 图谱后端实现
+│
+├── utils/                                     # 通用工具
+│   ├── text.py                                # 文本处理、token/span/fts 查询辅助
+│   └── telemetry.py                           # 运行指标与评测聚合辅助
+│
+└── workbench/                                 # 浏览器工作台
+    ├── models.py                              # workbench 请求/响应模型
+    ├── service.py                             # workbench 服务层
+    ├── server.py                              # HTTP 服务入口
+    └── static/                                # 前端静态资源
 ```
 
-## 这个项目现在能做什么
+## `data/` 目录结构
 
-- 文档导入：`plain_text`、`markdown`、`pdf`、`docx`、`pptx`、`xlsx`、`image`、`web`
-- 查询模式：`bypass`、`naive`、`local`、`global`、`hybrid`、`mix`
-- Query Understanding：显式硬约束抽取 + LLM structured output
-- Retrieval：多 branch 检索、RRF / fusion、rerank、graph expansion、web 补检索
-- Evidence：过滤、自检、上下文预算控制、citation-grounded answer
-- Storage：`sqlite`、`postgres`、`pgvector`、`milvus`、`neo4j`、`redis`、`s3/minio/local object store`
-- 调试：CLI JSON 输出 + 浏览器 workbench + retrieval diagnostics
+所有 benchmark 数据、索引和评测输出统一放在 `data/` 下。
 
-## 安装
+```text
+data/
+├── benchmarks/
+│   ├── fiqa/
+│   │   ├── raw/                               # 原始公开数据：corpus / queries / qrels
+│   │   ├── prepared/
+│   │   │   ├── full/                          # 统一格式 JSONL（完整集）
+│   │   │   └── mini/                          # 统一格式 JSONL（小子集）
+│   │   ├── index/                             # ingest 后的正式检索库
+│   │   └── eval/
+│   │       ├── retrieval/                     # retrieval baseline 输出
+│   │       └── ingest/                        # ingest profiling 输出
+│   │
+│   └── medical_retrieval/
+│       ├── raw/                               # C-MTEB MedicalRetrieval 原始数据
+│       ├── prepared/
+│       │   ├── full/                          # full 文档/问题/qrels JSONL
+│       │   └── mini/                          # mini 文档/问题/qrels JSONL
+│       ├── index/
+│       │   ├── full/                          # full 索引
+│       │   ├── mini/                          # 速度优先线索引：BAAI/bge-m3
+│       │   └── mini-qwen3-4b-ab/              # 质量优先线索引：qwen3-embedding:4b
+│       ├── eval/
+│       │   ├── retrieval/
+│       │   │   ├── full/                      # full retrieval 输出
+│       │   │   └── mini/                      # mini retrieval 输出与 run 历史
+│       │   └── ingest/
+│       │       ├── full/                      # full ingest profiling 输出
+│       │       └── mini/                      # mini ingest profiling 输出
+│       └── subsets/                           # 手工或脚本切出来的实验子集
+│
+└── eval/
+    ├── diagnostics/
+    │   └── medical_retrieval/
+    │       └── <run_id>/                      # retrieval 离线诊断：failure / branch / profile / recommendations
+    └── answers/
+        └── medical_retrieval/
+            └── mini/
+                ├── baseline.csv               # answer benchmark 总表
+                ├── per_query_answers.jsonl    # 所有 run 累计的逐 query answer 结果
+                ├── run_history.jsonl          # 所有 answer run 摘要历史
+                └── runs/
+                    └── <run_id>/              # 单次 answer eval 快照
+```
 
-要求：
+## 主线路：代码如何流转
 
-- Python `>=3.12,<3.14`
-- 推荐使用 [`uv`](https://docs.astral.sh/uv/)
+### 1. 运行时装配主线
 
-安装：
+入口是 [rag/runtime.py](/Users/leixiaoying/LLM/RAG学习/rag/runtime.py)。
+
+流转顺序：
+
+1. `RAGRuntime.from_request()` / `RAGRuntime.from_profile()`
+2. 调 [rag/assembly/service.py](/Users/leixiaoying/LLM/RAG学习/rag/assembly/service.py) 的 `CapabilityAssemblyService`
+3. 根据 [rag/assembly/support.py](/Users/leixiaoying/LLM/RAG学习/rag/assembly/support.py) 的 profile 和环境变量，装配：
+   - embedding binding
+   - chat binding
+   - rerank binding
+   - tokenizer contract
+4. `storage.build()` 构建 storage bundle
+5. `runtime._build_pipelines()` 组装：
+   - ingest pipeline
+   - delete / rebuild pipeline
+   - retrieval service
+   - query pipeline
+
+你可以把 `runtime.py` 理解成：
+**全系统唯一的组合根**。
+
+---
+
+### 2. 入库主线
+
+入口通常来自：
+- CLI：`uv run rag ingest ...`
+- benchmark ingest：`scripts/ingest_public_benchmark.py`
+- Python：`runtime.insert(...)` / `runtime.insert_many(...)`
+
+代码流转：
+
+1. [rag/cli.py](/Users/leixiaoying/LLM/RAG学习/rag/cli.py) / [scripts/ingest_public_benchmark.py](/Users/leixiaoying/LLM/RAG学习/scripts/ingest_public_benchmark.py)
+2. [rag/runtime.py](/Users/leixiaoying/LLM/RAG学习/rag/runtime.py)
+   - `runtime.insert()` 或 `runtime.insert_many()`
+3. [rag/ingest/pipeline.py](/Users/leixiaoying/LLM/RAG学习/rag/ingest/pipeline.py)
+   - `IngestPipeline`
+4. [rag/ingest/parser.py](/Users/leixiaoying/LLM/RAG学习/rag/ingest/parser.py)
+   - 根据 `source_type` 分派到 `ingest/parsers/*`
+5. [rag/ingest/chunking.py](/Users/leixiaoying/LLM/RAG学习/rag/ingest/chunking.py)
+   - 文档结构分析
+   - segment -> chunk
+   - benchmark metadata 透传（如 `benchmark_doc_id`）
+6. [rag/ingest/extract.py](/Users/leixiaoying/LLM/RAG学习/rag/ingest/extract.py)
+   - 实体/关系抽取
+7. [rag/storage/*](/Users/leixiaoying/LLM/RAG学习/rag/storage)
+   - metadata repo
+   - vector repo
+   - FTS repo
+   - graph repo
+   - object store
+
+入库主线最终产物：
+- `document`
+- `chunk`
+- `vector`
+- `fts`
+- `graph`
+- `status`
+
+---
+
+### 3. 查询主线
+
+入口通常来自：
+- CLI：`uv run rag query ...`
+- workbench
+- benchmark retrieval eval
+- benchmark answer eval
+
+代码流转：
+
+1. [rag/runtime.py](/Users/leixiaoying/LLM/RAG学习/rag/runtime.py)
+   - `runtime.query(query, options=QueryOptions(...))`
+2. `_QueryPipeline.run()`
+3. [rag/retrieval/orchestrator.py](/Users/leixiaoying/LLM/RAG学习/rag/retrieval/orchestrator.py)
+   - `RetrievalService.retrieve(...)`
+4. [rag/retrieval/analysis.py](/Users/leixiaoying/LLM/RAG学习/rag/retrieval/analysis.py)
+   - Query Understanding
+   - RoutingDecision
+   - access policy 收缩
+5. [rag/retrieval/orchestrator.py](/Users/leixiaoying/LLM/RAG学习/rag/retrieval/orchestrator.py)
+   - branch 检索
+   - RRF / fusion
+   - rerank
+   - graph / web 等补召回
+6. [rag/retrieval/evidence.py](/Users/leixiaoying/LLM/RAG学习/rag/retrieval/evidence.py)
+   - evidence filtering
+   - bundle
+   - self-check
+7. [rag/runtime.py](/Users/leixiaoying/LLM/RAG学习/rag/runtime.py)
+   - `_build_bounded_context()`
+8. [rag/retrieval/context.py](/Users/leixiaoying/LLM/RAG学习/rag/retrieval/context.py)
+   - context truncation
+   - prompt build
+9. [rag/providers/generation.py](/Users/leixiaoying/LLM/RAG学习/rag/providers/generation.py)
+   - grounded candidate
+   - answer generation
+   - citation / evidence link 组装
+10. 返回 [RAGQueryResult](/Users/leixiaoying/LLM/RAG学习/rag/retrieval/models.py)
+    - `answer`
+    - `retrieval`
+    - `context`
+    - `generation_provider`
+    - `generation_model`
+
+---
+
+### 4. Retrieval Benchmark 主线
+
+入口：
+- [scripts/download_public_benchmark.py](/Users/leixiaoying/LLM/RAG学习/scripts/download_public_benchmark.py)
+- [scripts/prepare_public_benchmark.py](/Users/leixiaoying/LLM/RAG学习/scripts/prepare_public_benchmark.py)
+- [scripts/ingest_public_benchmark.py](/Users/leixiaoying/LLM/RAG学习/scripts/ingest_public_benchmark.py)
+- [scripts/evaluate_retrieval_benchmark.py](/Users/leixiaoying/LLM/RAG学习/scripts/evaluate_retrieval_benchmark.py)
+
+代码流转：
+
+1. `scripts/*`
+2. [rag/benchmarks.py](/Users/leixiaoying/LLM/RAG学习/rag/benchmarks.py)
+3. `build_runtime_for_benchmark(...)`
+4. 复用正式：
+   - ingest pipeline
+   - retrieval service
+5. 落盘：
+   - `baseline.csv`
+   - `per_query.jsonl`
+   - `run_summary.json`
+   - `run_history.jsonl`
+   - `runs/<run_id>/...`
+
+这条链主要回答：
+- 检索能不能命中 gold
+- 排名好不好
+- 模式、embedding、rerank 对 retrieval 指标的影响
+
+---
+
+### 5. Retrieval 离线诊断主线
+
+入口：
+- [scripts/diagnose_benchmark_run.py](/Users/leixiaoying/LLM/RAG学习/scripts/diagnose_benchmark_run.py)
+
+代码流转：
+
+1. 脚本读取已有 retrieval run
+2. [rag/benchmark_diagnostics.py](/Users/leixiaoying/LLM/RAG学习/rag/benchmark_diagnostics.py)
+3. `BenchmarkDiagnosticsPostProcessor`
+4. 复跑 retrieval 主链并补 branch 信息
+5. 落盘：
+   - `failure_analysis.jsonl`
+   - `failure_summary.json`
+   - `branch_diagnostics.jsonl`
+   - `branch_summary.json`
+   - `recall_failure_profile.json`
+   - `rerank_profile.json`
+   - `full_text_profile.json`
+   - `recommendations.json`
+
+这条链主要回答：
+- 当前失败主要是召回失败还是排序失败
+- full-text 是否真有独立价值
+- rerank 在帮哪些 query、伤哪些 query
+- 下一步更应该投哪一层
+
+---
+
+### 6. Answer Benchmark 主线
+
+入口：
+- [scripts/evaluate_answer_benchmark.py](/Users/leixiaoying/LLM/RAG学习/scripts/evaluate_answer_benchmark.py)
+- CLI 等价入口：`uv run rag benchmark-answer-evaluate ...`
+
+代码流转：
+
+1. 脚本读取 benchmark 的 `queries/qrels/documents`
+2. [rag/answer_benchmarks.py](/Users/leixiaoying/LLM/RAG学习/rag/answer_benchmarks.py)
+3. 对每个 query 调 `runtime.query(...)`
+4. 基于 `RAGQueryResult` 生成：
+   - `AnswerPerQueryRecord`
+   - 证据一致性统计
+5. 对固定子集运行 judge：
+   - 本地 judge 初筛
+   - 强模型复核（可选）
+6. 落盘：
+   - `per_query_answers.jsonl`
+   - `evidence_consistency_summary.json`
+   - `judge_subset.jsonl`
+   - `judge_summary.json`
+   - `answer_recommendations.json`
+   - `run_summary.json`
+   - `baseline.csv`
+
+这条链主要回答：
+- 生成有没有基于证据
+- 检索命中了但答案为什么还没答出来
+- 哪些 query 更适合改 prompt / answer guard
+
+## 当前两条正式 baseline
+
+### 质量优先线
+
+- embedding：`qwen3-embedding:4b`
+- mode：`naive`
+- chunk：`480/64`
+- chunk_top_k：`20`
+- rerank：`on`
+- rerank_pool_k：`10`
+- 索引目录：`data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab`
+
+### 速度优先线
+
+- embedding：`BAAI/bge-m3`
+- mode：`naive`
+- chunk：`480/64`
+- chunk_top_k：`20`
+- rerank：`on`
+- rerank_pool_k：`10`
+- 索引目录：`data/benchmarks/medical_retrieval/index/mini`
+
+### 历史对照线
+
+- `multilingual-e5-large-instruct`
+  - 已验证输给 `bge-m3`
+  - 只保留 benchmark 历史记录，不再作为主线候选
+
+## 指标说明
+
+### Retrieval 指标
+
+- `Recall@10`
+  - 前 10 个结果里有没有找回 gold 文档
+- `MRR@10`
+  - 第一个正确文档排得有多靠前
+- `NDCG@10`
+  - top10 的整体排序质量
+- `avg_latency_ms`
+  - 平均单 query 时延
+- `p95_latency_ms`
+  - 95 分位时延，反映尾部慢查询
+- `queries_per_second`
+  - 检索吞吐
+
+### Ingest Profiling 指标
+
+- `docs_per_second`
+  - 每秒入库多少文档
+- `chunks_per_second`
+  - 每秒处理多少 chunk
+- `embedding_elapsed_ms`
+  - embedding 编码阶段耗时
+
+### Diagnostics 指标
+
+- `top1_hit_ratio`
+  - 第 1 名就是正确文档的比例
+- `top10_hit_but_low_rank_ratio`
+  - 前 10 命中，但排位不够靠前的比例
+- `top10_miss_ratio`
+  - 前 10 完全 miss 的比例
+- `recall_failure_ratio`
+  - 召回层根本没找回 gold 的比例
+- `fusion_loss_ratio`
+  - 某分支召回了 gold，但融合后丢掉的比例
+- `mapping_failure_ratio`
+  - chunk -> benchmark_doc_id 映射异常的比例
+- `independent_hit_ratio`
+  - 某分支独立命中 gold 的比例
+- `rerank_helped_query_count`
+  - rerank 帮到的 query 数
+- `rerank_hurt_query_count`
+  - rerank 伤到的 query 数
+
+### Answer Benchmark 指标
+
+- `evidence_consistent_rate`
+  - 回答是否总体与给定证据一致
+- `grounded_answer_rate`
+  - 回答是否以 grounded answer 结构产出
+- `citation_presence_rate`
+  - 是否带 citation
+- `citation_gold_hit_rate`
+  - citation 映射到 benchmark doc 后，是否覆盖 gold 文档
+- `answer_correct_rate`
+  - judge 子集上的答案正确率
+
+## 常用命令
+
+### 1. 下载与准备 benchmark
+
+FiQA：
 
 ```bash
-uv sync
+uv run python scripts/download_public_benchmark.py --dataset fiqa
+uv run python scripts/prepare_public_benchmark.py --dataset fiqa
 ```
 
-确认 CLI 可用：
+MedicalRetrieval：
 
 ```bash
-uv run rag --help
-uv run rag profiles
+uv run python scripts/download_public_benchmark.py --dataset medical_retrieval
+uv run python scripts/prepare_public_benchmark.py --dataset medical_retrieval
 ```
 
-## 推荐 profile
+### 2. 正式 ingest
 
-先查看当前环境下有哪些 profile：
+速度优先线：
 
 ```bash
-uv run rag profiles
+uv run python scripts/ingest_public_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --storage-root data/benchmarks/medical_retrieval/index/mini \
+  --batch-size 32 \
+  --embedding-batch-size 8 \
+  --embedding-device mps \
+  --chunk-token-size 480 \
+  --chunk-overlap-tokens 64 \
+  --skip-graph-extraction
 ```
 
-当前默认会根据环境变量和本地 provider 情况生成推荐 profile，常见的是：
-
-| profile | 用途 |
-| --- | --- |
-| `local_full` | 本地 chat + embedding + rerank |
-| `local_retrieval_cloud_chat` | 本地检索，云端回答 |
-| `cloud_full` | 云端 chat + embedding |
-| `test_minimal` | 最小测试链路，适合不接真实模型先跑通 |
-
-## 快速开始
-
-### 1. 建一个独立索引目录
+质量优先线：
 
 ```bash
-export RAG_DEMO_ROOT=.rag-demo
-rm -rf "$RAG_DEMO_ROOT"
+uv run python scripts/ingest_public_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab \
+  --batch-size 32 \
+  --embedding-batch-size 8 \
+  --embedding-provider ollama \
+  --embedding-model qwen3-embedding:4b \
+  --chunk-token-size 480 \
+  --chunk-overlap-tokens 64 \
+  --skip-graph-extraction
 ```
 
-### 2. 导入一段文本
+### 3. Retrieval baseline
+
+速度优先线：
 
 ```bash
-uv run rag ingest \
-  --storage-root "$RAG_DEMO_ROOT" \
-  --profile test_minimal \
-  --source-type plain_text \
-  --location memory://note-1 \
-  --content "Alpha Engine handles ingestion. Beta Service depends on Alpha Engine."
+uv run python scripts/evaluate_retrieval_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --retrieval-pool-k 20 \
+  --rerank-pool-k 10
 ```
 
-### 3. 发起查询
+质量优先线：
 
 ```bash
-uv run rag query \
-  --storage-root "$RAG_DEMO_ROOT" \
-  --profile test_minimal \
-  --mode mix \
-  --query "What does Alpha Engine handle?" \
-  --json
+uv run python scripts/evaluate_retrieval_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --retrieval-pool-k 20 \
+  --rerank-pool-k 10 \
+  --embedding-provider ollama \
+  --embedding-model qwen3-embedding:4b
 ```
 
-### 4. 删除或重建
+### 4. Retrieval 离线诊断
+
+速度优先线：
 
 ```bash
-uv run rag delete --storage-root "$RAG_DEMO_ROOT" --location memory://note-1
-uv run rag rebuild --storage-root "$RAG_DEMO_ROOT" --location memory://note-1
+uv run python scripts/diagnose_benchmark_run.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --run-id <bge_run_id> \
+  --profile local_full \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --rerank \
+  --rerank-pool-k 10
 ```
 
-## 怎么用：只看检索效果
-
-如果你现在的目标不是回答写得漂不漂亮，而是看“检索有没有把正确证据找回来”，做法很简单：
-
-1. 用你准备上线的检索 profile，不要用纯测试 profile 误判效果
-2. 查询时加 `--json`
-3. 重点看 `retrieval` 和 `context`，先不要盯 `answer.answer_text`
-
-示例：
+质量优先线：
 
 ```bash
-uv run rag query \
-  --storage-root .rag \
-  --profile local_retrieval_cloud_chat \
-  --mode mix \
-  --query "第一批核心资料包括哪些内容？" \
-  --json > retrieval.json
+uv run python scripts/diagnose_benchmark_run.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --run-id <qwen_run_id> \
+  --profile local_full \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --rerank \
+  --rerank-pool-k 10 \
+  --embedding-provider ollama \
+  --embedding-model qwen3-embedding:4b
 ```
 
-你应该优先检查这些字段：
+### 5. Answer benchmark
 
-- `retrieval.diagnostics.branch_hits`：各 branch 命中了多少候选
-- `retrieval.diagnostics.reranked_chunk_ids`：rerank 后保留下来的 chunk 顺序
-- `retrieval.decision`：本次查询的路由/执行决策
-- `retrieval.self_check`：证据是否足够、是否建议继续检索
-- `retrieval.diagnostics.query_understanding`：Query Understanding 最终结果
-- `context.evidence`：真正进入生成上下文的证据列表
-
-可以直接这样看：
+速度优先线：
 
 ```bash
-jq '.retrieval.diagnostics.branch_hits' retrieval.json
-jq '.retrieval.self_check' retrieval.json
-jq '.retrieval.decision' retrieval.json
-jq '.context.evidence[] | {chunk_id, score, file_name, section_path, retrieval_channels}' retrieval.json
+uv run python scripts/evaluate_answer_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --retrieval-pool-k 20 \
+  --rerank-pool-k 10 \
+  --judge-subset-size 250
 ```
 
-判断检索效果时，最值得看的不是一句 answer，而是：
-
-- 正确文档有没有被召回
-- 正确 chunk 有没有排到前面
-- `context.evidence` 里有没有混进明显无关证据
-- `self_check.evidence_sufficient` 是否稳定
-- `branch_hits` 和 `reranked_chunk_ids` 是否符合你的预期
-
-如果你要做更严肃的 retrieval eval，建议固定一批 query，然后比较：
-
-- `mode=local`
-- `mode=global`
-- `mode=hybrid`
-- `mode=mix`
-
-看哪种模式下 `context.evidence` 最稳定地包含 gold chunk。
-
-## 怎么用：端到端 RAG 检验
-
-如果你要看的是完整 RAG 效果，而不是单纯检索，检查顺序应该是：
-
-1. `answer.answer_text`：回答本身是否正确
-2. `answer.citations`：引用是否真的落在对的 chunk 上
-3. `answer.groundedness_flag`：回答是否被证据支撑
-4. `answer.insufficient_evidence_flag`：证据不足时是否明确拒答/降级
-5. `context.token_count / token_budget`：上下文是否超预算或被截断得过狠
-6. `generation_provider / generation_model`：本次到底用了哪个生成模型
-
-示例：
+质量优先线：
 
 ```bash
-uv run rag query \
-  --storage-root .rag \
-  --profile local_retrieval_cloud_chat \
-  --mode mix \
-  --query "这个方案为什么强调证据优先，而不是先做复杂路由？" \
-  --json > rag-result.json
+uv run python scripts/evaluate_answer_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --retrieval-pool-k 20 \
+  --rerank-pool-k 10 \
+  --embedding-provider ollama \
+  --embedding-model qwen3-embedding:4b \
+  --judge-subset-size 250
 ```
 
-建议重点看：
+只做证据一致性，不跑 judge：
 
 ```bash
-jq '.answer.answer_text' rag-result.json
-jq '.answer.citations' rag-result.json
-jq '.answer.groundedness_flag, .answer.insufficient_evidence_flag' rag-result.json
-jq '.context.token_budget, .context.token_count, .context.truncated_count' rag-result.json
-jq '.generation_provider, .generation_model' rag-result.json
+uv run python scripts/evaluate_answer_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --retrieval-pool-k 20 \
+  --rerank-pool-k 10 \
+  --judge-subset-size 0 \
+  --disable-review
 ```
 
-如果你要做端到端对比，建议固定：
-
-- 同一批 query
-- 同一批文档
-- 同一 profile
-- 分别比较 `mix / local / hybrid`
-
-然后记录：
-
-- answer 是否正确
-- citation 是否合理
-- groundedness 是否为 `true`
-- insufficient evidence 时是否乱答
-
-## 从头到尾的完整流程
-
-### 方案 A：CLI 跑完整链路
-
-#### 第 1 步：看 profile
+做 `answer_context_top_k` A/B：
 
 ```bash
-uv run rag profiles
+uv run python scripts/evaluate_answer_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --retrieval-pool-k 20 \
+  --rerank-pool-k 10 \
+  --answer-context-top-k 4 \
+  --judge-subset-size 0
 ```
 
-#### 第 2 步：导入文档
+把 `4` 改成 `6 / 8` 即可做生成侧 A/B。这个参数只影响生成用 evidence，不影响 retrieval `chunk_top_k=20`。
+
+### 6. ingest profiling
 
 ```bash
-uv run rag ingest \
-  --storage-root .rag \
-  --profile local_retrieval_cloud_chat \
-  --source-type markdown \
-  --location data/test_corpus/tech_docs/chinese_enterprise_rag_practice_guide.md
+uv run python scripts/profile_benchmark_ingest.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --doc-counts 100 \
+  --ingest-batch-sizes 32 \
+  --encode-batch-sizes 8,16,32,64 \
+  --embedding-device mps \
+  --skip-graph-extraction
 ```
 
-或者：
+## 当前实验结论（基于已跑结果）
 
-```bash
-uv run rag ingest \
-  --storage-root .rag \
-  --profile local_retrieval_cloud_chat \
-  --source-type pdf \
-  --location /absolute/path/to/your.pdf
-```
+### Retrieval
 
-#### 第 3 步：发起查询
+已收敛：
+- `mode = naive`
+- `chunk = 480/64`
+- `chunk_top_k = 20`
+- `rerank = on`
+- `rerank_pool_k = 10`
 
-```bash
-uv run rag query \
-  --storage-root .rag \
-  --profile local_retrieval_cloud_chat \
-  --mode mix \
-  --query "第一批核心资料包括哪些内容？" \
-  --json > query-result.json
-```
+已证伪或已收敛：
+- `stream` 入库不优于 `preload`
+- `local / global / hybrid` 没独立价值
+- `mix` 比 `naive` 更差
+- `chunk_top_k=20/30/40` 分数相同
+- `rerank_pool_k=20/40` 不涨分，只拉高时延
+- `parent_backfill` 无收益
+- `256` 小 chunk 系列没有优于 `480/64`
 
-#### 第 4 步：看结果，不要只看一段 answer
+### Diagnostics
 
-先看回答：
+已知事实：
+- 当前 retrieval 主问题是 `recall_failure`
+- `fusion_loss = 0`
+- `mapping_failure = 0`
+- `vector` 是唯一主力分支
+- `full_text` 有极窄场景价值
+- `local/global` 可以继续降级处理
+- `rerank` 有净收益，但副作用不小，后续更适合做 guard 实验
 
-```bash
-jq '.answer.answer_text' query-result.json
-```
+### Answer Eval
 
-再看证据：
+目前已经确认：
+- 生成层真正的问题不是“纯乱编”，而是：
+  - 检索命中了但仍然模板化拒答
+  - citation benchmark 映射之前被内部 `document-*` 污染，现在已修正为优先用 `benchmark_doc_id`
+  - 本地长上下文生成非常慢，不适合直接当客户在线链路
+- 新增的 `answer_context_top_k` 用来只压 generation context，不影响 retrieval 结果，便于做 `4 / 6 / 8` A/B
 
-```bash
-jq '.context.evidence[] | {chunk_id, file_name, section_path, score}' query-result.json
-```
+## 下一步更值得投的方向
 
-再看诊断：
+按当前诊断和实验结果，优先级建议：
 
-```bash
-jq '.retrieval.diagnostics' query-result.json
-```
+1. `query normalization / alias expansion`
+   - 先解决 recall failure 的表达问题
+2. `conditional full-text`
+   - 不恢复常驻 hybrid，只做条件触发式稀疏检索
+3. `rerank guard`
+   - 不默认所有 query 都强 rerank
+4. `answer_context_top_k` A/B
+   - 降生成时延，减少“检索命中但生成拒答”
+5. `在线链路和评测链路分线`
+   - benchmark 用高质量参数
+   - 在线用更小上下文、更轻 chat 模型或云端 chat
 
-#### 第 5 步：如果文档更新，做 rebuild
+不建议优先再投：
+- `hybrid / mix` 重写
+- `local / global` 调参
+- `fusion` 重写
+- `multilingual-e5-large-instruct` 再实验
 
-```bash
-uv run rag rebuild \
-  --storage-root .rag \
-  --profile local_retrieval_cloud_chat \
-  --location data/test_corpus/tech_docs/chinese_enterprise_rag_practice_guide.md
-```
-
-#### 第 6 步：如果不再需要，做 delete
-
-```bash
-uv run rag delete \
-  --storage-root .rag \
-  --profile local_retrieval_cloud_chat \
-  --location data/test_corpus/tech_docs/chinese_enterprise_rag_practice_guide.md
-```
-
-### 方案 B：浏览器工作台
+## Workbench
 
 启动：
 
 ```bash
-uv run rag workbench \
-  --storage-root .rag \
-  --workspace-root data/test_corpus/tech_docs
+uv run rag workbench --storage-root .rag
 ```
 
-工作台适合做三件事：
+它适合做：
+- 文档导入
+- 单 query 调试
+- 查看 retrieval diagnostics
+- 查看 context evidence
+- 快速验证 answer/citation 输出
 
-- 左侧看文件树和索引状态
-- 中间看检索证据、路由信息、context budget
-- 右侧直接问答，快速观察 answer / evidence / diagnostics 是否一致
+## 测试
 
-如果你在调 retrieval，而不是调回答文案，workbench 的中间栏比终端更高效。
-
-## Python API
-
-### 推荐写法：按 profile 创建 runtime
-
-```python
-from rag import CapabilityRequirements, RAGRuntime, StorageConfig
-from rag.retrieval import QueryOptions
-
-runtime = RAGRuntime.from_profile(
-    storage=StorageConfig(root=".rag"),
-    profile_id="local_retrieval_cloud_chat",
-    requirements=CapabilityRequirements(
-        require_embedding=True,
-        require_chat=False,
-        require_rerank=True,
-    ),
-)
-
-try:
-    runtime.insert(
-        source_type="markdown",
-        location="data/test_corpus/tech_docs/chinese_enterprise_rag_practice_guide.md",
-        owner="user",
-    )
-
-    result = runtime.query(
-        "第一批核心资料包括哪些内容？",
-        options=QueryOptions(mode="mix", max_context_tokens=1200),
-    )
-
-    print(result.answer.answer_text)
-    print(result.retrieval.diagnostics.branch_hits)
-    print([item.chunk_id for item in result.context.evidence])
-finally:
-    runtime.close()
-```
-
-### 批量注入内容列表
-
-```python
-from pathlib import Path
-
-from rag import CapabilityRequirements, RAGRuntime, StorageConfig
-from rag.ingest.pipeline import DirectContentItem
-
-runtime = RAGRuntime.from_profile(
-    storage=StorageConfig(root=".rag"),
-    profile_id="test_minimal",
-    requirements=CapabilityRequirements(require_chat=False),
-)
-
-try:
-    result = runtime.insert_content_list(
-        [
-            DirectContentItem(
-                location="memory://note-1",
-                source_type="plain_text",
-                content="Alpha Engine handles ingestion.",
-            ),
-            DirectContentItem(
-                location="memory://note-2",
-                source_type="markdown",
-                content=Path("data/test_corpus/tech_docs/chinese_enterprise_rag_practice_guide.md"),
-            ),
-        ]
-    )
-    print(result.success_count, result.failure_count)
-finally:
-    runtime.close()
-```
-
-### 显式装配：按 request 创建 runtime
-
-```python
-from rag import AssemblyRequest, CapabilityRequirements, RAGRuntime, StorageConfig
-
-runtime = RAGRuntime.from_request(
-    storage=StorageConfig(root=".rag"),
-    request=AssemblyRequest(
-        requirements=CapabilityRequirements(
-            require_embedding=True,
-            require_chat=False,
-            require_rerank=True,
-        )
-    ),
-)
-
-try:
-    result = runtime.query("What does Alpha Engine handle?")
-    print(result.retrieval.diagnostics.branch_hits)
-finally:
-    runtime.close()
-```
-
-## 常用环境变量
-
-云端 chat / OpenAI-compatible：
+常用：
 
 ```bash
-export OPENAI_API_KEY=...
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL=gpt-4.1-mini
+uv run pytest -q
+uv run ruff check rag scripts tests
+python3 -m py_compile $(find rag scripts tests -name '*.py' -not -path '*/__pycache__/*')
 ```
 
-Gemini 兼容写法：
+如果只验证 benchmark 相关：
 
 ```bash
-export GEMINI_API_KEY=...
-export GEMINI_CHAT_MODEL=gemini-2.5-pro
+uv run pytest \
+  tests/core/test_public_benchmark.py \
+  tests/core/test_benchmark_diagnostics.py \
+  tests/core/test_benchmark_diagnostics_context.py \
+  tests/core/test_answer_benchmarks.py -q
 ```
-
-Ollama：
-
-```bash
-export OLLAMA_BASE_URL=http://localhost:11434
-export OLLAMA_CHAT_MODEL=qwen3:14b
-export OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-```
-
-本地 BGE 检索：
-
-```bash
-export RAG_LOCAL_BGE_ENABLED=1
-export RAG_LOCAL_BGE_EMBEDDING_MODEL=BAAI/bge-m3
-export RAG_RERANK_MODEL=BAAI/bge-reranker-v2-m3
-```
-
-tokenizer / chunk / context：
-
-```bash
-export RAG_TOKENIZER_MODEL=text-embedding-3-small
-export RAG_CHUNK_TOKEN_SIZE=480
-export RAG_CHUNK_OVERLAP_TOKENS=64
-export RAG_MAX_CONTEXT_TOKENS=1200
-export RAG_PROMPT_RESERVED_TOKENS=256
-```
-
-## 怎么判断自己现在到底在测什么
-
-如果你现在在做的是：
-
-- 检索评估：重点看 `retrieval.*` 和 `context.evidence`
-- RAG 评估：同时看 `answer.*`、`context.*`、`retrieval.*`
-- 解析/切分评估：重点看 ingest 结果、chunk 数量、graph 抽取、rebuild 前后差异
-
-最容易犯的错是：
-
-- 用 `answer.answer_text` 代替 retrieval 评估
-- 用 `test_minimal` 的结果判断真实上线效果
-- 不看 `citations / groundedness / insufficient_evidence_flag`
-- 不保留 `--json` 结果，导致后面没法回溯 branch hits 和证据链
-
-## 一句话建议
-
-- 想先跑通：用 `test_minimal`
-- 想看检索：看 `retrieval` 和 `context.evidence`
-- 想看端到端效果：看 `answer + citations + groundedness + diagnostics`
-- 想最高效调试：开 `workbench`
