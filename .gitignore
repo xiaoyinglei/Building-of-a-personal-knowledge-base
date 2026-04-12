@@ -16,3 +16,6 @@ data/runtime/
 *.db
 *.sqlite
 *.sqlite3
+data/benchmarks/
+data/eval/answers/
+data/eval/diagnostics/
