@@ -36,6 +36,10 @@ def main() -> int:
     parser.add_argument("--embedding-provider", default=None, choices=["local-bge", "ollama"])
     parser.add_argument("--embedding-model", default=None)
     parser.add_argument("--embedding-model-path", default=None)
+    parser.add_argument("--vector-backend", default="sqlite", choices=["sqlite", "milvus", "pgvector"])
+    parser.add_argument("--vector-dsn", default=None)
+    parser.add_argument("--vector-namespace", default=None)
+    parser.add_argument("--vector-collection-prefix", default=None)
     parser.add_argument("--chunk-token-size", type=int, default=None)
     parser.add_argument("--chunk-overlap-tokens", type=int, default=None)
     parser.add_argument("--log-embedding-calls", action="store_true")
@@ -68,6 +72,10 @@ def main() -> int:
         embedding_provider_kind=args.embedding_provider,
         embedding_model=args.embedding_model,
         embedding_model_path=args.embedding_model_path,
+        vector_backend=args.vector_backend,
+        vector_dsn=args.vector_dsn,
+        vector_namespace=args.vector_namespace,
+        vector_collection_prefix=args.vector_collection_prefix,
     )
     try:
         embedding_info = configure_runtime_embedding(
@@ -91,6 +99,9 @@ def main() -> int:
                         "chunk_overlap_tokens": args.chunk_overlap_tokens,
                         "embedding_provider": args.embedding_provider,
                         "embedding_model_override": args.embedding_model,
+                        "vector_backend": args.vector_backend,
+                        "vector_namespace": args.vector_namespace,
+                        "vector_collection_prefix": args.vector_collection_prefix,
                     },
                     ensure_ascii=False,
                 )
@@ -117,6 +128,9 @@ def main() -> int:
                 "chunk_overlap_tokens": args.chunk_overlap_tokens,
                 "embedding_provider": args.embedding_provider,
                 "embedding_model_override": args.embedding_model,
+                "vector_backend": args.vector_backend,
+                "vector_namespace": args.vector_namespace,
+                "vector_collection_prefix": args.vector_collection_prefix,
                 "embedding_stats": embedding_stats,
             }
         )

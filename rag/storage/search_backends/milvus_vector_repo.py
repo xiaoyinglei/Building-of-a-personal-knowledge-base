@@ -9,6 +9,8 @@ from rag.schema.runtime import StoredVectorEntry, VectorSearchResult
 
 
 class MilvusVectorRepo:
+    _UPSERT_BUFFER_SIZE = 128
+
     def __init__(
         self,
         uri: str,
@@ -24,6 +26,8 @@ class MilvusVectorRepo:
         self._alias = f"rag_milvus_{abs(hash((uri, collection_prefix))) % 1000000}"
         self._connected = False
         self._collections: dict[str, Any] = {}
+        self._dirty_collections: set[str] = set()
+        self._pending_upserts: dict[str, list[dict[str, Any]]] = {}
         self._connect()
 
     def upsert(
@@ -42,22 +46,21 @@ class MilvusVectorRepo:
             embedding_space=embedding_space,
             dimension=len(vector_values),
         )
-        cast(Any, collection).upsert(
-            [
-                {
-                    "item_id": item_id,
-                    "doc_id": payload.get("doc_id", ""),
-                    "source_id": payload.get("source_id", ""),
-                    "segment_id": payload.get("segment_id", ""),
-                    "text": payload.get("text", ""),
-                    "doc_ids": payload.get("doc_ids", ""),
-                    "source_ids": payload.get("source_ids", ""),
-                    "metadata_json": json.dumps(payload, ensure_ascii=True, sort_keys=True),
-                    "embedding": vector_values,
-                }
-            ]
-        )
-        cast(Any, collection).flush()
+        row = {
+            "item_id": item_id,
+            "doc_id": payload.get("doc_id", ""),
+            "source_id": payload.get("source_id", ""),
+            "segment_id": payload.get("segment_id", ""),
+            "text": payload.get("text", ""),
+            "doc_ids": payload.get("doc_ids", ""),
+            "source_ids": payload.get("source_ids", ""),
+            "metadata_json": json.dumps(payload, ensure_ascii=True, sort_keys=True),
+            "embedding": vector_values,
+        }
+        pending = self._pending_upserts.setdefault(collection.name, [])
+        pending.append(row)
+        if len(pending) >= self._UPSERT_BUFFER_SIZE:
+            self._drain_pending_collection(collection.name)
 
     def search(
         self,
@@ -71,6 +74,7 @@ class MilvusVectorRepo:
         query_vector = [float(value) for value in query]
         if not query_vector:
             return []
+        self._flush_dirty_collections()
         if not self._has_collection(item_kind=item_kind, embedding_space=embedding_space):
             return []
         collection = self._collection(item_kind=item_kind, embedding_space=embedding_space)
@@ -109,6 +113,7 @@ class MilvusVectorRepo:
         embedding_space: str = "default",
         item_kind: str = "chunk",
     ) -> StoredVectorEntry | None:
+        self._flush_dirty_collections()
         if not self._has_collection(item_kind=item_kind, embedding_space=embedding_space):
             return None
         collection = self._collection(item_kind=item_kind, embedding_space=embedding_space)
@@ -154,6 +159,7 @@ class MilvusVectorRepo:
         normalized_ids = tuple(dict.fromkeys(item_ids))
         if not normalized_ids:
             return set()
+        self._flush_dirty_collections()
         collected: set[str] = set()
         for collection in self._iter_target_collections(item_kind=item_kind, embedding_space=embedding_space):
             expr = " or ".join(f'item_id == "{self._escape(item_id)}"' for item_id in normalized_ids)
@@ -171,6 +177,7 @@ class MilvusVectorRepo:
         item_kind: str | None = None,
         distinct_chunks: bool = False,
     ) -> int:
+        self._flush_dirty_collections()
         chunk_ids: set[str] = set()
         total = 0
         for collection in self._iter_target_collections(item_kind=item_kind, embedding_space=embedding_space):
@@ -193,6 +200,7 @@ class MilvusVectorRepo:
         normalized_ids = tuple(dict.fromkeys(doc_ids))
         if not normalized_ids:
             return 0
+        self._flush_dirty_collections()
         deleted = 0
         expr = " or ".join(f'doc_id == "{self._escape(doc_id)}"' for doc_id in normalized_ids)
         for collection in self._iter_target_collections(item_kind=item_kind, embedding_space=None):
@@ -206,6 +214,7 @@ class MilvusVectorRepo:
             return
         from pymilvus import connections  # type: ignore[import-untyped]
 
+        self._flush_dirty_collections()
         for collection in self._collections.values():
             release = getattr(collection, "release", None)
             if callable(release):
@@ -223,9 +232,27 @@ class MilvusVectorRepo:
         if self._token:
             kwargs["token"] = self._token
         if self._db_name:
+            self._ensure_database_exists()
             kwargs["db_name"] = self._db_name
         connections.connect(**kwargs)
         self._connected = True
+
+    def _ensure_database_exists(self) -> None:
+        from pymilvus import connections, db
+
+        if not self._db_name or self._db_name == "default":
+            return
+        bootstrap_alias = f"{self._alias}_bootstrap"
+        kwargs: dict[str, object] = {"alias": bootstrap_alias, "uri": self._uri}
+        if self._token:
+            kwargs["token"] = self._token
+        connections.connect(**kwargs)
+        try:
+            existing = set(cast(list[str], db.list_database(using=bootstrap_alias)))
+            if self._db_name not in existing:
+                db.create_database(self._db_name, using=bootstrap_alias)
+        finally:
+            connections.disconnect(bootstrap_alias)
 
     def _collection(self, *, item_kind: str, embedding_space: str, dimension: int | None = None) -> Any:
         from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, utility
@@ -268,6 +295,31 @@ class MilvusVectorRepo:
 
         name = self._collection_name(item_kind=item_kind, embedding_space=embedding_space)
         return bool(utility.has_collection(name, using=self._alias))
+
+    def _flush_dirty_collections(self) -> None:
+        pending_names = list(self._pending_upserts)
+        for name in pending_names:
+            self._drain_pending_collection(name)
+        if not self._dirty_collections:
+            return
+        pending = list(self._dirty_collections)
+        for name in pending:
+            collection = self._collections.get(name)
+            if collection is None:
+                continue
+            cast(Any, collection).flush()
+            self._dirty_collections.discard(name)
+
+    def _drain_pending_collection(self, name: str) -> None:
+        rows = self._pending_upserts.get(name)
+        if not rows:
+            return
+        collection = self._collections.get(name)
+        if collection is None:
+            return
+        cast(Any, collection).upsert(rows)
+        self._dirty_collections.add(name)
+        rows.clear()
 
     def _iter_target_collections(self, *, item_kind: str | None, embedding_space: str | None) -> list[Any]:
         from pymilvus import utility

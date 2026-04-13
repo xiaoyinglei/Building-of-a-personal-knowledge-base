@@ -20,7 +20,7 @@ import httpx
 from datasets import load_dataset
 from tqdm.auto import tqdm
 
-from rag import CapabilityRequirements, RAGRuntime, StorageConfig
+from rag import CapabilityRequirements, RAGRuntime, StorageComponentConfig, StorageConfig
 from rag.assembly import AssemblyOverrides, CapabilityAssemblyService, ProviderConfig, TokenizerConfig
 from rag.ingest.pipeline import IngestRequest
 from rag.retrieval import QueryOptions
@@ -1506,6 +1506,103 @@ def append_baseline_row(path: Path, summary: BenchmarkRunSummary) -> None:
         writer.writerow(row)
 
 
+def load_baseline_rows(path: Path) -> list[dict[str, object]]:
+    def _coerce(value: str) -> object:
+        lowered = value.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        if value == "":
+            return ""
+        for caster in (int, float):
+            try:
+                return caster(value)
+            except ValueError:
+                continue
+        return value
+
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return [{key: _coerce(value) for key, value in row.items()} for row in csv.DictReader(handle)]
+
+
+def write_dataset_baseline_summary(
+    path: Path,
+    *,
+    dataset: str,
+    baselines: Sequence[Mapping[str, object]],
+    reference_run_id: str | None = None,
+    latency_priority_run_id: str | None = None,
+    quality_priority_run_id: str | None = None,
+) -> None:
+    def _queries_per_second(record: Mapping[str, object]) -> float:
+        raw = record.get("queries_per_second", "")
+        if isinstance(raw, (int, float)):
+            return float(raw)
+        if isinstance(raw, str) and raw.strip():
+            return float(raw)
+        avg_latency_ms = float(record.get("avg_latency_ms", 0.0))
+        if avg_latency_ms <= 0:
+            return 0.0
+        return 1000.0 / avg_latency_ms
+
+    ordered = sorted(
+        (dict(record) for record in baselines),
+        key=lambda item: (
+            float(item.get("Recall@10", 0.0)),
+            float(item.get("MRR@10", 0.0)),
+            -float(item.get("avg_latency_ms", 0.0)),
+        ),
+        reverse=True,
+    )
+    index = {str(record["run_id"]): record for record in ordered if record.get("run_id")}
+
+    def _comparison(target_run_id: str | None) -> dict[str, object] | None:
+        if not reference_run_id or not target_run_id:
+            return None
+        reference = index.get(reference_run_id)
+        target = index.get(target_run_id)
+        if reference is None or target is None:
+            return None
+        return {
+            "from_run_id": reference_run_id,
+            "to_run_id": target_run_id,
+            "Recall@10_delta": round(
+                float(target.get("Recall@10", 0.0)) - float(reference.get("Recall@10", 0.0)), 6
+            ),
+            "MRR@10_delta": round(
+                float(target.get("MRR@10", 0.0)) - float(reference.get("MRR@10", 0.0)), 6
+            ),
+            "NDCG@10_delta": round(
+                float(target.get("NDCG@10", 0.0)) - float(reference.get("NDCG@10", 0.0)), 6
+            ),
+            "avg_latency_ms_delta": round(
+                float(target.get("avg_latency_ms", 0.0)) - float(reference.get("avg_latency_ms", 0.0)), 3
+            ),
+            "queries_per_second_delta": round(
+                _queries_per_second(target) - _queries_per_second(reference),
+                3,
+            ),
+        }
+
+    payload = {
+        "dataset": dataset,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "reference_run_id": reference_run_id,
+        "latency_priority_run_id": latency_priority_run_id,
+        "quality_priority_run_id": quality_priority_run_id,
+        "baseline_count": len(ordered),
+        "baselines": ordered,
+        "comparison": {
+            "latency_priority_vs_reference": _comparison(latency_priority_run_id),
+            "quality_priority_vs_reference": _comparison(quality_priority_run_id),
+        },
+    }
+    write_json(path, payload)
+
+
 
 def append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1551,6 +1648,10 @@ def build_runtime_for_benchmark(
     embedding_provider_kind: str | None = None,
     embedding_model: str | None = None,
     embedding_model_path: str | None = None,
+    vector_backend: str | None = None,
+    vector_dsn: str | None = None,
+    vector_namespace: str | None = None,
+    vector_collection_prefix: str | None = None,
 ) -> RAGRuntime:
     storage_root.mkdir(parents=True, exist_ok=True)
     assembly_service = CapabilityAssemblyService()
@@ -1590,8 +1691,15 @@ def build_runtime_for_benchmark(
             else None
         ),
     )
+    storage = _benchmark_storage_config(
+        root=storage_root,
+        vector_backend=vector_backend,
+        vector_dsn=vector_dsn,
+        vector_namespace=vector_namespace,
+        vector_collection_prefix=vector_collection_prefix,
+    )
     runtime = RAGRuntime.from_request(
-        storage=StorageConfig(root=storage_root),
+        storage=storage,
         request=request,
         assembly_service=assembly_service,
     )
@@ -1606,6 +1714,28 @@ def build_runtime_for_benchmark(
         show_backend_progress=show_backend_progress,
     )
     return runtime
+
+
+def _benchmark_storage_config(
+    *,
+    root: Path,
+    vector_backend: str | None = None,
+    vector_dsn: str | None = None,
+    vector_namespace: str | None = None,
+    vector_collection_prefix: str | None = None,
+) -> StorageConfig:
+    backend = (vector_backend or "sqlite").strip().lower()
+    if backend in {"", "sqlite", "in_memory"}:
+        return StorageConfig(root=root)
+    return StorageConfig(
+        root=root,
+        vectors=StorageComponentConfig(
+            backend=backend,
+            dsn=vector_dsn,
+            namespace=vector_namespace,
+            collection=vector_collection_prefix,
+        ),
+    )
 
 
 def configure_runtime_embedding(
@@ -2005,6 +2135,7 @@ __all__ = [
     "ingest_prepared_documents",
     "ingest_prepared_requests",
     "iter_jsonl",
+    "load_baseline_rows",
     "load_qrels",
     "load_qrels_jsonl",
     "load_qrels_tsv",
@@ -2016,5 +2147,6 @@ __all__ = [
     "profile_benchmark_ingest",
     "prepared_document_to_ingest_request",
     "runtime_embedding_stats",
+    "write_dataset_baseline_summary",
     "write_json",
 ]

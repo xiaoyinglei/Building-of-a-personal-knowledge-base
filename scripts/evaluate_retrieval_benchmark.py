@@ -43,6 +43,10 @@ def main() -> int:
     parser.add_argument("--embedding-provider", default=None, choices=["local-bge", "ollama"])
     parser.add_argument("--embedding-model", default=None)
     parser.add_argument("--embedding-model-path", default=None)
+    parser.add_argument("--vector-backend", default="sqlite", choices=["sqlite", "milvus", "pgvector"])
+    parser.add_argument("--vector-dsn", default=None)
+    parser.add_argument("--vector-namespace", default=None)
+    parser.add_argument("--vector-collection-prefix", default=None)
     args = parser.parse_args()
 
     paths = ensure_benchmark_layout(default_benchmark_paths(args.dataset))
@@ -77,6 +81,10 @@ def main() -> int:
         embedding_provider_kind=args.embedding_provider,
         embedding_model=args.embedding_model,
         embedding_model_path=args.embedding_model_path,
+        vector_backend=args.vector_backend,
+        vector_dsn=args.vector_dsn,
+        vector_namespace=args.vector_namespace,
+        vector_collection_prefix=args.vector_collection_prefix,
     )
     try:
         runtime.retrieval_service.query_understanding_service._enable_llm = args.enable_query_understanding_llm
@@ -111,6 +119,9 @@ def main() -> int:
         payload["query_limit"] = args.query_limit
         payload["embedding_provider"] = args.embedding_provider
         payload["embedding_model_override"] = args.embedding_model
+        payload["vector_backend"] = args.vector_backend
+        payload["vector_namespace"] = args.vector_namespace
+        payload["vector_collection_prefix"] = args.vector_collection_prefix
         payload["execution_location_preference"] = ExecutionLocationPreference.LOCAL_ONLY.value
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     finally:

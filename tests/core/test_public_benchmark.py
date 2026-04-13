@@ -23,7 +23,9 @@ from rag.benchmarks import (
     download_public_benchmark,
     ensure_benchmark_layout,
     ingest_prepared_documents,
+    load_baseline_rows,
     prepared_document_to_ingest_request,
+    write_dataset_baseline_summary,
 )
 from rag.retrieval.analysis import RoutingDecision
 from rag.retrieval.evidence import EvidenceBundle, SelfCheckResult
@@ -191,6 +193,92 @@ def test_append_baseline_row_upgrades_existing_csv_header(tmp_path: Path) -> Non
     assert rows[1]["queries_per_second"] == "0.417"
 
 
+def test_load_baseline_rows_coerces_common_types(tmp_path: Path) -> None:
+    path = tmp_path / "baseline.csv"
+    path.write_text(
+        "run_id,dataset,query_count,top_k,embedding_model,retrieval_mode,"
+        "rerank_enabled,Recall@10,MRR@10,NDCG@10,avg_latency_ms,p95_latency_ms,queries_per_second\n"
+        "run-1,medical_retrieval,300,10,BAAI/bge-m3,naive,True,0.7,0.6,0.65,2500.0,3200.0,0.4\n",
+        encoding="utf-8",
+    )
+
+    rows = load_baseline_rows(path)
+
+    assert rows == [
+        {
+            "run_id": "run-1",
+            "dataset": "medical_retrieval",
+            "query_count": 300,
+            "top_k": 10,
+            "embedding_model": "BAAI/bge-m3",
+            "retrieval_mode": "naive",
+            "rerank_enabled": True,
+            "Recall@10": 0.7,
+            "MRR@10": 0.6,
+            "NDCG@10": 0.65,
+            "avg_latency_ms": 2500.0,
+            "p95_latency_ms": 3200.0,
+            "queries_per_second": 0.4,
+        }
+    ]
+
+
+def test_write_dataset_baseline_summary_includes_priority_deltas(tmp_path: Path) -> None:
+    path = tmp_path / "medical_retrieval.json"
+
+    write_dataset_baseline_summary(
+        path,
+        dataset="medical_retrieval",
+        reference_run_id="sqlite-run",
+        latency_priority_run_id="milvus-bge-run",
+        quality_priority_run_id="milvus-qwen-run",
+        baselines=[
+            {
+                "run_id": "sqlite-run",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_backend": "sqlite",
+                "Recall@10": 0.776667,
+                "MRR@10": 0.690972,
+                "NDCG@10": 0.712199,
+                "avg_latency_ms": 2472.225,
+            },
+            {
+                "run_id": "milvus-bge-run",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_backend": "milvus",
+                "Recall@10": 0.67,
+                "MRR@10": 0.588259,
+                "NDCG@10": 0.608173,
+                "avg_latency_ms": 563.793,
+                "queries_per_second": 1.774,
+            },
+            {
+                "run_id": "milvus-qwen-run",
+                "embedding_model": "qwen3-embedding:8b",
+                "vector_backend": "milvus",
+                "Recall@10": 0.82,
+                "MRR@10": 0.705854,
+                "NDCG@10": 0.733644,
+                "avg_latency_ms": 695.559,
+                "queries_per_second": 1.438,
+            },
+        ],
+    )
+
+    payload = benchmarks.json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["dataset"] == "medical_retrieval"
+    assert payload["reference_run_id"] == "sqlite-run"
+    assert payload["latency_priority_run_id"] == "milvus-bge-run"
+    assert payload["quality_priority_run_id"] == "milvus-qwen-run"
+    assert payload["baseline_count"] == 3
+    assert payload["comparison"]["latency_priority_vs_reference"]["avg_latency_ms_delta"] == -1908.432
+    assert payload["comparison"]["quality_priority_vs_reference"]["Recall@10_delta"] == 0.043333
+    assert payload["comparison"]["latency_priority_vs_reference"]["queries_per_second_delta"] == pytest.approx(
+        1.37, abs=1e-3
+    )
+
+
 def test_benchmark_access_policy_forces_local_retrieval_only() -> None:
     policy = benchmark_access_policy()
 
@@ -246,6 +334,48 @@ def test_build_runtime_for_benchmark_creates_storage_root(tmp_path) -> None:
         assert storage_root.is_dir()
     finally:
         runtime.close()
+
+
+def test_build_runtime_for_benchmark_passes_milvus_vector_config(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRuntime:
+        def __init__(self) -> None:
+            self.capability_bundle = type("_Bundle", (), {"embedding_bindings": []})()
+
+        def close(self) -> None:
+            return None
+
+    def _fake_from_request(*, storage, request, assembly_service):
+        captured["storage"] = storage
+        captured["request"] = request
+        captured["assembly_service"] = assembly_service
+        return _FakeRuntime()
+
+    monkeypatch.setattr(benchmarks.RAGRuntime, "from_request", staticmethod(_fake_from_request))
+
+    runtime = build_runtime_for_benchmark(
+        storage_root=tmp_path / "benchmarks" / "medical_retrieval" / "index",
+        profile_id="test_minimal",
+        require_chat=False,
+        require_rerank=False,
+        vector_backend="milvus",
+        vector_dsn="http://127.0.0.1:19530",
+        vector_namespace="rag_benchmarks",
+        vector_collection_prefix="medical_retrieval_mini",
+    )
+    try:
+        storage = captured["storage"]
+        assert isinstance(storage, benchmarks.StorageConfig)
+        assert storage.vectors is not None
+        assert storage.vectors.backend == "milvus"
+        assert storage.vectors.dsn == "http://127.0.0.1:19530"
+        assert storage.vectors.namespace == "rag_benchmarks"
+        assert storage.vectors.collection == "medical_retrieval_mini"
+    finally:
+        runtime.close()
+
+
 def test_build_runtime_for_benchmark_accepts_ollama_embedding_override(tmp_path) -> None:
     runtime = build_runtime_for_benchmark(
         storage_root=tmp_path / "benchmarks" / "medical_retrieval" / "index",
