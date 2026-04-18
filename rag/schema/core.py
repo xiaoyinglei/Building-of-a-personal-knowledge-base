@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -31,6 +31,34 @@ class DocumentType(StrEnum):
     WEB_PAGE = "web_page"
 
 
+class DocumentStatus(StrEnum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    RETIRED = "retired"
+
+
+class PiiStatus(StrEnum):
+    UNKNOWN = "unknown"
+    CLEAN = "clean"
+    MASKED = "masked"
+    RESTRICTED = "restricted"
+
+
+class IndexingMode(StrEnum):
+    EAGER = "eager"
+    LAZY = "lazy"
+
+
+class StorageTier(StrEnum):
+    HOT = "hot"
+    COLD = "cold"
+
+
+class PartitionKey(StrEnum):
+    HOT = "hot"
+    COLD = "cold"
+
+
 class ChunkRole(StrEnum):
     PARENT = "parent"
     CHILD = "child"
@@ -40,28 +68,57 @@ class ChunkRole(StrEnum):
 class Source(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    source_id: str
+    source_id: int = 0
     source_type: SourceType
     location: str
-    owner: str
+    original_file_name: str | None = None
+    bucket: str | None = None
+    object_key: str | None = None
     content_hash: str
-    effective_access_policy: AccessPolicy
-    ingest_version: int
-    metadata: dict[str, str] = Field(default_factory=dict)
+    file_size_bytes: int | None = None
+    mime_type: str | None = None
+    owner_id: str | None = None
+    ingest_version: int = 1
+    pii_status: PiiStatus = PiiStatus.UNKNOWN
+    effective_access_policy: AccessPolicy = Field(default_factory=AccessPolicy.default)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class Document(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    doc_id: str
-    source_id: str
+    doc_id: int = 0
+    source_id: int
+    title: str | None = None
     doc_type: DocumentType
-    title: str
-    authors: list[str]
-    created_at: datetime
-    language: str
-    effective_access_policy: AccessPolicy
-    metadata: dict[str, str] = Field(default_factory=dict)
+    language: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    file_hash: str
+    version_group_id: int = 0
+    version_no: int = 1
+    doc_status: DocumentStatus | str = DocumentStatus.PUBLISHED
+    effective_date: datetime | None = None
+    is_active: bool = True
+    is_indexed: bool = False
+    index_ready: bool = False
+    index_priority: str = "high"
+    indexing_mode: IndexingMode = IndexingMode.EAGER
+    storage_tier: StorageTier = StorageTier.HOT
+    pii_status: PiiStatus = PiiStatus.UNKNOWN
+    reference_count: int = 1
+    page_count: int | None = None
+    tenant_id: str | None = None
+    department_id: str | None = None
+    auth_tag: str | None = None
+    embedding_model_id: str = "default"
+    indexed_at: datetime | None = None
+    last_index_error: str | None = None
+    effective_access_policy: AccessPolicy = Field(default_factory=AccessPolicy.default)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class Segment(BaseModel):
@@ -243,6 +300,161 @@ class OcrResult:
     visual_semantics: str
     regions: list[OcrRegion] = field(default_factory=list)
 
+class SectionRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    section_id: int = 0
+    doc_id: int
+    source_id: int
+    parent_section_id: int | None = None
+    toc_path: list[str] = Field(default_factory=list)
+    heading_level: int | None = None
+    order_index: int
+    anchor: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    raw_locator: dict[str, Any] = Field(default_factory=dict)
+    byte_range_start: int | None = None
+    byte_range_end: int | None = None
+    visible_text_key: str | None = None
+    section_kind: str
+    content_hash: str
+    has_table: bool = False
+    has_figure: bool = False
+    neighbor_asset_count: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssetRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    asset_id: int = 0
+    doc_id: int
+    source_id: int
+    section_id: int | None = None
+    asset_type: str
+    element_ref: str | None = None
+    page_no: int
+    bbox: dict[str, Any] = Field(default_factory=dict)
+    caption: str | None = None
+    raw_locator: dict[str, Any] = Field(default_factory=dict)
+    neighbor_section_id: int | None = None
+    content_hash: str
+    storage_key: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class DocSummaryRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    doc_id: int
+    source_id: int
+    version_group_id: int
+    version_no: int = 1
+    doc_status: DocumentStatus | str = DocumentStatus.PUBLISHED
+    effective_date: datetime | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    is_active: bool = True
+    index_ready: bool = True
+    tenant_id: str | None = None
+    department_id: str | None = None
+    auth_tag: str | None = None
+    source_type: SourceType | None = None
+    embedding_model_id: str = "default"
+    partition_key: PartitionKey = PartitionKey.HOT
+    title: str | None = None
+    summary_text: str
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SectionSummaryRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    section_id: int
+    doc_id: int
+    source_id: int
+    version_group_id: int
+    version_no: int = 1
+    doc_status: DocumentStatus | str = DocumentStatus.PUBLISHED
+    effective_date: datetime | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    is_active: bool = True
+    index_ready: bool = True
+    tenant_id: str | None = None
+    department_id: str | None = None
+    auth_tag: str | None = None
+    source_type: SourceType | None = None
+    embedding_model_id: str = "default"
+    partition_key: PartitionKey = PartitionKey.HOT
+    page_start: int | None = None
+    page_end: int | None = None
+    section_kind: str
+    toc_path: list[str] = Field(default_factory=list)
+    summary_text: str
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssetSummaryRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    asset_id: int
+    doc_id: int
+    source_id: int
+    section_id: int | None = None
+    version_group_id: int
+    version_no: int = 1
+    doc_status: DocumentStatus | str = DocumentStatus.PUBLISHED
+    effective_date: datetime | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    is_active: bool = True
+    index_ready: bool = True
+    tenant_id: str | None = None
+    department_id: str | None = None
+    auth_tag: str | None = None
+    embedding_model_id: str = "default"
+    partition_key: PartitionKey = PartitionKey.HOT
+    asset_type: str
+    page_no: int | None = None
+    caption: str | None = None
+    summary_text: str
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class LayoutMetaCacheRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    cache_id: int = 0
+    source_id: int
+    doc_id: int | None = None
+    content_hash: str
+    object_key: str | None = None
+    layout_json: dict[str, Any] = Field(default_factory=dict)
+    layout_version: str = "v1"
+    page_count: int | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ProcessingStateRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    doc_id: int
+    source_id: int
+    stage: str
+    status: str
+    attempts: int = 0
+    priority: str = "normal"
+    worker_id: str | None = None
+    lease_expires_at: datetime | None = None
+    error_message: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
 
 __all__ = [
     "Chunk",
@@ -252,16 +464,29 @@ __all__ = [
     "ChunkingStrategy",
     "Document",
     "DocumentFeatures",
+    "DocumentStatus",
     "DocumentProcessingPackage",
     "DocumentType",
     "GraphEdge",
     "GraphNode",
+    "IndexingMode",
     "OcrRegion",
     "OcrResult",
     "ParsedDocument",
     "ParsedElement",
     "ParsedSection",
+    "PartitionKey",
+    "PiiStatus",
     "Segment",
     "Source",
     "SourceType",
+    "StorageTier",
+
+    "SectionRecord",
+    "AssetRecord",
+    "DocSummaryRecord",
+    "SectionSummaryRecord",
+    "AssetSummaryRecord",
+    "LayoutMetaCacheRecord",
+    "ProcessingStateRecord",
 ]

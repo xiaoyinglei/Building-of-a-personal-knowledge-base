@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from datetime import datetime
 from typing import Any, cast
 
+from rag.schema.core import AssetSummaryRecord, DocSummaryRecord, SectionSummaryRecord
 from rag.schema.runtime import StoredVectorEntry, VectorSearchResult
 
 
+SummaryRecord = DocSummaryRecord | SectionSummaryRecord | AssetSummaryRecord
+
+
 class MilvusVectorRepo:
-    _UPSERT_BUFFER_SIZE = 128
+    _UPSERT_BUFFER_SIZE = 256
+    _SUPPORTED_KINDS = ("doc_summary", "section_summary", "asset_summary")
+    _PARTITIONS = ("hot", "cold")
 
     def __init__(
         self,
@@ -17,17 +25,19 @@ class MilvusVectorRepo:
         *,
         token: str | None = None,
         db_name: str | None = None,
-        collection_prefix: str = "rag_vectors",
+        collection_prefix: str = "knowledge_index",
+        consistency_level: str = "Bounded",
     ) -> None:
         self._uri = uri
         self._token = token
         self._db_name = db_name
         self._collection_prefix = collection_prefix
+        self._consistency_level = consistency_level
         self._alias = f"rag_milvus_{abs(hash((uri, collection_prefix))) % 1000000}"
         self._connected = False
         self._collections: dict[str, Any] = {}
         self._dirty_collections: set[str] = set()
-        self._pending_upserts: dict[str, list[dict[str, Any]]] = {}
+        self._pending_upserts: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
         self._connect()
 
     def upsert(
@@ -35,32 +45,47 @@ class MilvusVectorRepo:
         item_id: str,
         vector: Iterable[float],
         *,
-        metadata: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
         embedding_space: str = "default",
-        item_kind: str = "chunk",
+        item_kind: str = "section_summary",
     ) -> None:
-        payload = dict(metadata or {})
-        vector_values = [float(value) for value in vector]
+        self._validate_item_kind(item_kind)
+        row, partition_name = self._build_row(
+            item_id=item_id,
+            vector=vector,
+            metadata=dict(metadata or {}),
+            item_kind=item_kind,
+        )
         collection = self._collection(
             item_kind=item_kind,
             embedding_space=embedding_space,
-            dimension=len(vector_values),
+            dimension=len(cast(list[float], row["embedding"])),
         )
-        row = {
-            "item_id": item_id,
-            "doc_id": payload.get("doc_id", ""),
-            "source_id": payload.get("source_id", ""),
-            "segment_id": payload.get("segment_id", ""),
-            "text": payload.get("text", ""),
-            "doc_ids": payload.get("doc_ids", ""),
-            "source_ids": payload.get("source_ids", ""),
-            "metadata_json": json.dumps(payload, ensure_ascii=True, sort_keys=True),
-            "embedding": vector_values,
-        }
-        pending = self._pending_upserts.setdefault(collection.name, [])
-        pending.append(row)
-        if len(pending) >= self._UPSERT_BUFFER_SIZE:
+        self._pending_upserts[collection.name].append((partition_name, row))
+        if len(self._pending_upserts[collection.name]) >= self._UPSERT_BUFFER_SIZE:
             self._drain_pending_collection(collection.name)
+
+    def upsert_record(
+        self,
+        record: SummaryRecord,
+        vector: Iterable[float],
+        *,
+        embedding_space: str = "default",
+    ) -> None:
+        item_kind = self._item_kind_for_record(record)
+        metadata = cast(dict[str, Any], record.model_dump(mode="python"))
+        item_id = str(self._record_item_id(record))
+        self.upsert(item_id, vector, metadata=metadata, embedding_space=embedding_space, item_kind=item_kind)
+
+    def upsert_records(
+        self,
+        items: Sequence[tuple[SummaryRecord, Iterable[float]]],
+        *,
+        embedding_space: str = "default",
+    ) -> None:
+        for record, vector in items:
+            self.upsert_record(record, vector, embedding_space=embedding_space)
+        self._flush_dirty_collections()
 
     def search(
         self,
@@ -68,9 +93,11 @@ class MilvusVectorRepo:
         *,
         limit: int = 10,
         doc_ids: list[str] | None = None,
+        expr: str | None = None,
         embedding_space: str = "default",
-        item_kind: str = "chunk",
+        item_kind: str = "section_summary",
     ) -> list[VectorSearchResult]:
+        self._validate_item_kind(item_kind)
         query_vector = [float(value) for value in query]
         if not query_vector:
             return []
@@ -78,73 +105,61 @@ class MilvusVectorRepo:
         if not self._has_collection(item_kind=item_kind, embedding_space=embedding_space):
             return []
         collection = self._collection(item_kind=item_kind, embedding_space=embedding_space)
-        raw_limit = max(limit, limit * 8 if doc_ids else limit)
-        results = cast(
-            list[Any],
-            cast(Any, collection).search(
-                data=[query_vector],
-                anns_field="embedding",
-                param={"metric_type": "COSINE", "params": {}},
-                limit=raw_limit,
-                output_fields=[
-                    "item_id",
-                    "doc_id",
-                    "source_id",
-                    "segment_id",
-                    "text",
-                    "doc_ids",
-                    "source_ids",
-                    "metadata_json",
-                ],
-            ),
+        final_expr = self._search_expr(doc_ids=doc_ids, user_expr=expr)
+        output_fields = self._output_fields(item_kind=item_kind, include_embedding=False)
+        hits = self._search_collection(
+            collection,
+            query_vector,
+            expr=final_expr,
+            limit=limit,
+            output_fields=output_fields,
+            partitions=["hot"],
         )
-        hits = [] if not results else list(results[0])
-        scoped = [self._vector_result_from_hit(hit, item_kind=item_kind) for hit in hits]
-        if doc_ids:
-            allowed = set(doc_ids)
-            scoped = [result for result in scoped if self._result_scope_tokens(result) & allowed]
-        scoped.sort(key=lambda item: (-item.score, item.item_id))
-        return scoped[:limit]
+        if not hits:
+            hits = self._search_collection(
+                collection,
+                query_vector,
+                expr=final_expr,
+                limit=limit,
+                output_fields=output_fields,
+                partitions=None,
+            )
+        results = [self._vector_result_from_hit(hit, item_kind=item_kind) for hit in hits]
+        results.sort(key=lambda item: (-item.score, item.item_id))
+        return results[:limit]
 
     def get_entry(
         self,
         item_id: str,
         *,
         embedding_space: str = "default",
-        item_kind: str = "chunk",
+        item_kind: str = "section_summary",
     ) -> StoredVectorEntry | None:
+        self._validate_item_kind(item_kind)
         self._flush_dirty_collections()
         if not self._has_collection(item_kind=item_kind, embedding_space=embedding_space):
             return None
         collection = self._collection(item_kind=item_kind, embedding_space=embedding_space)
-        rows = cast(
-            list[dict[str, Any]],
-            cast(Any, collection).query(
-                expr=f'item_id == "{self._escape(item_id)}"',
-                output_fields=[
-                    "item_id",
-                    "doc_id",
-                    "source_id",
-                    "segment_id",
-                    "text",
-                    "doc_ids",
-                    "source_ids",
-                    "metadata_json",
-                    "embedding",
-                ],
-            ),
+        rows = self._query_collection(
+            collection,
+            expr=self._item_id_expr(item_id),
+            output_fields=self._output_fields(item_kind=item_kind, include_embedding=True),
         )
         if not rows:
             return None
         row = rows[0]
-        metadata = self._load_metadata(str(row["metadata_json"]))
+        metadata = self._load_metadata(row.get("metadata_json", "{}"))
+        if (section_id := row.get("section_id")) is not None:
+            metadata.setdefault("section_id", str(section_id))
+        if (asset_id := row.get("asset_id")) is not None:
+            metadata.setdefault("asset_id", str(asset_id))
         return StoredVectorEntry(
             item_id=str(row["item_id"]),
             item_kind=item_kind,
             embedding_space=embedding_space,
             doc_id=str(row["doc_id"]),
-            segment_id=str(row["segment_id"]),
-            text=str(row["text"]),
+            segment_id=str(row.get("section_id") or row["item_id"]),
+            text=self._entry_text(row, item_kind=item_kind),
             metadata=metadata,
             vector=[float(value) for value in cast(list[float], row.get("embedding", []))],
         )
@@ -154,21 +169,21 @@ class MilvusVectorRepo:
         item_ids: Sequence[str],
         *,
         embedding_space: str | None = None,
-        item_kind: str | None = "chunk",
+        item_kind: str | None = "section_summary",
     ) -> set[str]:
-        normalized_ids = tuple(dict.fromkeys(item_ids))
-        if not normalized_ids:
+        normalized = tuple(dict.fromkeys(item_ids))
+        if not normalized:
             return set()
         self._flush_dirty_collections()
-        collected: set[str] = set()
+        rows_found: set[str] = set()
         for collection in self._iter_target_collections(item_kind=item_kind, embedding_space=embedding_space):
-            expr = " or ".join(f'item_id == "{self._escape(item_id)}"' for item_id in normalized_ids)
-            rows = cast(
-                list[dict[str, Any]],
-                cast(Any, collection).query(expr=expr, output_fields=["item_id"]),
+            rows = self._query_collection(
+                collection,
+                expr=self._item_ids_expr(normalized),
+                output_fields=["item_id"],
             )
-            collected.update(str(row["item_id"]) for row in rows)
-        return collected
+            rows_found.update(str(row["item_id"]) for row in rows)
+        return rows_found
 
     def count_vectors(
         self,
@@ -177,19 +192,13 @@ class MilvusVectorRepo:
         item_kind: str | None = None,
         distinct_chunks: bool = False,
     ) -> int:
+        del distinct_chunks
         self._flush_dirty_collections()
-        chunk_ids: set[str] = set()
         total = 0
         for collection in self._iter_target_collections(item_kind=item_kind, embedding_space=embedding_space):
-            rows = cast(
-                list[dict[str, Any]],
-                cast(Any, collection).query(expr='item_id != ""', output_fields=["item_id"]),
-            )
-            if distinct_chunks:
-                chunk_ids.update(str(row["item_id"]) for row in rows)
-                continue
+            rows = self._query_collection(collection, expr="item_id >= 0", output_fields=["item_id"])
             total += len(rows)
-        return len(chunk_ids) if distinct_chunks else total
+        return total
 
     def delete_for_documents(
         self,
@@ -197,14 +206,13 @@ class MilvusVectorRepo:
         *,
         item_kind: str | None = None,
     ) -> int:
-        normalized_ids = tuple(dict.fromkeys(doc_ids))
-        if not normalized_ids:
+        normalized = tuple(dict.fromkeys(doc_ids))
+        if not normalized:
             return 0
         self._flush_dirty_collections()
         deleted = 0
-        expr = " or ".join(f'doc_id == "{self._escape(doc_id)}"' for doc_id in normalized_ids)
         for collection in self._iter_target_collections(item_kind=item_kind, embedding_space=None):
-            result = cast(Any, collection).delete(expr)
+            result = cast(Any, collection).delete(self._doc_ids_expr(normalized))
             cast(Any, collection).flush()
             deleted += int(getattr(result, "delete_count", 0))
         return deleted
@@ -255,6 +263,7 @@ class MilvusVectorRepo:
             connections.disconnect(bootstrap_alias)
 
     def _collection(self, *, item_kind: str, embedding_space: str, dimension: int | None = None) -> Any:
+        self._validate_item_kind(item_kind)
         from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, utility
 
         name = self._collection_name(item_kind=item_kind, embedding_space=embedding_space)
@@ -265,45 +274,105 @@ class MilvusVectorRepo:
             if dimension is None:
                 raise RuntimeError(f"Milvus collection {name} does not exist and no vector dimension was provided")
             schema = CollectionSchema(
-                fields=[
-                    FieldSchema(name="item_id", dtype=DataType.VARCHAR, is_primary=True, max_length=512),
-                    FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=512),
-                    FieldSchema(name="source_id", dtype=DataType.VARCHAR, max_length=512),
-                    FieldSchema(name="segment_id", dtype=DataType.VARCHAR, max_length=512),
-                    FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
-                    FieldSchema(name="doc_ids", dtype=DataType.VARCHAR, max_length=4096),
-                    FieldSchema(name="source_ids", dtype=DataType.VARCHAR, max_length=4096),
-                    FieldSchema(name="metadata_json", dtype=DataType.VARCHAR, max_length=65535),
-                    FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dimension),
-                ],
-                description=f"RAG vectors for {item_kind}/{embedding_space}",
+                fields=self._collection_fields(item_kind=item_kind, dimension=dimension, DataType=DataType, FieldSchema=FieldSchema),
+                description=f"Summary index for {item_kind}",
                 enable_dynamic_field=False,
             )
             collection = Collection(name=name, schema=schema, using=self._alias)
-            collection.create_index(
-                field_name="embedding",
-                index_params={"index_type": "AUTOINDEX", "metric_type": "COSINE", "params": {}},
-            )
+            self._ensure_partitions(collection)
+            self._create_indexes(collection, item_kind=item_kind)
         else:
             collection = Collection(name=name, using=self._alias)
+            self._ensure_partitions(collection)
         collection.load()
         self._collections[name] = collection
         return collection
 
+    def _collection_fields(self, *, item_kind: str, dimension: int, DataType: Any, FieldSchema: Any) -> list[Any]:
+        common = [
+            FieldSchema(name="item_id", dtype=DataType.INT64, is_primary=True),
+            FieldSchema(name="doc_id", dtype=DataType.INT64),
+            FieldSchema(name="source_id", dtype=DataType.INT64),
+            FieldSchema(name="version_group_id", dtype=DataType.INT64),
+            FieldSchema(name="version_no", dtype=DataType.INT32),
+            FieldSchema(name="doc_status", dtype=DataType.VARCHAR, max_length=32),
+            FieldSchema(name="effective_date", dtype=DataType.INT64),
+            FieldSchema(name="updated_at", dtype=DataType.INT64),
+            FieldSchema(name="is_active", dtype=DataType.BOOL),
+            FieldSchema(name="index_ready", dtype=DataType.BOOL),
+            FieldSchema(name="tenant_id", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="department_id", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="auth_tag", dtype=DataType.VARCHAR, max_length=128),
+            FieldSchema(name="embedding_model_id", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="partition_key", dtype=DataType.VARCHAR, max_length=16),
+            FieldSchema(name="metadata_json", dtype=DataType.VARCHAR, max_length=65535),
+            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dimension),
+        ]
+        if item_kind == "doc_summary":
+            return common + [
+                FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=4096),
+                FieldSchema(name="source_type", dtype=DataType.VARCHAR, max_length=32),
+                FieldSchema(name="summary_text", dtype=DataType.VARCHAR, max_length=65535),
+            ]
+        if item_kind == "section_summary":
+            return common + [
+                FieldSchema(name="section_id", dtype=DataType.INT64),
+                FieldSchema(name="page_start", dtype=DataType.INT32),
+                FieldSchema(name="page_end", dtype=DataType.INT32),
+                FieldSchema(name="section_kind", dtype=DataType.VARCHAR, max_length=64),
+                FieldSchema(name="toc_path_text", dtype=DataType.VARCHAR, max_length=4096),
+                FieldSchema(name="source_type", dtype=DataType.VARCHAR, max_length=32),
+                FieldSchema(name="summary_text", dtype=DataType.VARCHAR, max_length=65535),
+            ]
+        return common + [
+            FieldSchema(name="asset_id", dtype=DataType.INT64),
+            FieldSchema(name="section_id", dtype=DataType.INT64),
+            FieldSchema(name="asset_type", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="page_no", dtype=DataType.INT32),
+            FieldSchema(name="caption", dtype=DataType.VARCHAR, max_length=65535),
+            FieldSchema(name="summary_text", dtype=DataType.VARCHAR, max_length=65535),
+        ]
+
+    def _ensure_partitions(self, collection: Any) -> None:
+        for partition_name in self._PARTITIONS:
+            try:
+                has_partition = getattr(collection, "has_partition", None)
+                if callable(has_partition) and has_partition(partition_name):
+                    continue
+                cast(Any, collection).create_partition(partition_name)
+            except Exception:
+                continue
+
+    def _create_indexes(self, collection: Any, *, item_kind: str) -> None:
+        if item_kind == "asset_summary":
+            vector_index = {"index_type": "HNSW", "metric_type": "COSINE", "params": {"M": 16, "efConstruction": 200}}
+        else:
+            vector_index = {"index_type": "IVF_SQ8", "metric_type": "COSINE", "params": {"nlist": 1024}}
+        self._safe_create_index(collection, "embedding", vector_index)
+        self._safe_create_index(collection, "is_active", {"index_type": "BITMAP"})
+        self._safe_create_index(collection, "index_ready", {"index_type": "BITMAP"})
+        self._safe_create_index(collection, "tenant_id", {"index_type": "INVERTED"})
+        self._safe_create_index(collection, "department_id", {"index_type": "INVERTED"})
+        self._safe_create_index(collection, "auth_tag", {"index_type": "INVERTED"})
+        self._safe_create_index(collection, "embedding_model_id", {"index_type": "INVERTED"})
+        self._safe_create_index(collection, "partition_key", {"index_type": "INVERTED"})
+
+    def _safe_create_index(self, collection: Any, field_name: str, index_params: dict[str, Any]) -> None:
+        try:
+            cast(Any, collection).create_index(field_name=field_name, index_params=index_params)
+        except Exception:
+            return
+
     def _has_collection(self, *, item_kind: str, embedding_space: str) -> bool:
+        self._validate_item_kind(item_kind)
         from pymilvus import utility
 
-        name = self._collection_name(item_kind=item_kind, embedding_space=embedding_space)
-        return bool(utility.has_collection(name, using=self._alias))
+        return bool(utility.has_collection(self._collection_name(item_kind=item_kind, embedding_space=embedding_space), using=self._alias))
 
     def _flush_dirty_collections(self) -> None:
-        pending_names = list(self._pending_upserts)
-        for name in pending_names:
+        for name in list(self._pending_upserts):
             self._drain_pending_collection(name)
-        if not self._dirty_collections:
-            return
-        pending = list(self._dirty_collections)
-        for name in pending:
+        for name in list(self._dirty_collections):
             collection = self._collections.get(name)
             if collection is None:
                 continue
@@ -311,15 +380,25 @@ class MilvusVectorRepo:
             self._dirty_collections.discard(name)
 
     def _drain_pending_collection(self, name: str) -> None:
-        rows = self._pending_upserts.get(name)
-        if not rows:
+        buffered = self._pending_upserts.get(name)
+        if not buffered:
             return
         collection = self._collections.get(name)
         if collection is None:
             return
-        cast(Any, collection).upsert(rows)
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for partition_name, row in buffered:
+            grouped[partition_name].append(row)
+        for partition_name, rows in grouped.items():
+            self._upsert_rows(collection, rows, partition_name=partition_name)
         self._dirty_collections.add(name)
-        rows.clear()
+        buffered.clear()
+
+    def _upsert_rows(self, collection: Any, rows: list[dict[str, Any]], *, partition_name: str) -> None:
+        try:
+            cast(Any, collection).upsert(rows, partition_name=partition_name)
+        except TypeError:
+            cast(Any, collection).upsert(rows)
 
     def _iter_target_collections(self, *, item_kind: str | None, embedding_space: str | None) -> list[Any]:
         from pymilvus import utility
@@ -334,12 +413,12 @@ class MilvusVectorRepo:
             parts = suffix.split("__", 1)
             if len(parts) != 2:
                 continue
-            collection_kind, collection_space = parts
-            if item_kind is not None and collection_kind != self._sanitize(item_kind):
+            current_kind, current_space = parts
+            if item_kind is not None and current_kind != self._sanitize(item_kind):
                 continue
-            if embedding_space is not None and collection_space != self._sanitize(embedding_space):
+            if embedding_space is not None and current_space != self._sanitize(embedding_space):
                 continue
-            targets.append(self._collection(item_kind=collection_kind, embedding_space=collection_space))
+            targets.append(self._collection(item_kind=current_kind, embedding_space=current_space))
         return targets
 
     def _collection_name(self, *, item_kind: str, embedding_space: str) -> str:
@@ -354,41 +433,284 @@ class MilvusVectorRepo:
         cleaned = re.sub(r"[^A-Za-z0-9_]", "_", value)
         return cleaned[:200] or "default"
 
+    def _build_row(
+        self,
+        *,
+        item_id: str,
+        vector: Iterable[float],
+        metadata: dict[str, Any],
+        item_kind: str,
+    ) -> tuple[dict[str, Any], str]:
+        record = self._normalize_metadata(metadata)
+        partition_name = self._partition_name(record)
+        row: dict[str, Any] = {
+            "item_id": int(item_id),
+            "doc_id": int(record.get("doc_id", item_id)),
+            "source_id": int(record.get("source_id", 0)),
+            "version_group_id": int(record.get("version_group_id", record.get("doc_id", item_id))),
+            "version_no": int(record.get("version_no", 1)),
+            "doc_status": self._text(record.get("doc_status", "published"), limit=32),
+            "effective_date": self._timestamp_ms(record.get("effective_date")),
+            "updated_at": self._timestamp_ms(record.get("updated_at")),
+            "is_active": bool(record.get("is_active", True)),
+            "index_ready": bool(record.get("index_ready", True)),
+            "tenant_id": self._text(record.get("tenant_id"), limit=64),
+            "department_id": self._text(record.get("department_id"), limit=64),
+            "auth_tag": self._text(record.get("auth_tag"), limit=128),
+            "embedding_model_id": self._text(record.get("embedding_model_id", "default"), limit=64),
+            "partition_key": partition_name,
+            "metadata_json": json.dumps(self._serialize_metadata(record), ensure_ascii=True, sort_keys=True),
+            "embedding": [float(value) for value in vector],
+        }
+        if item_kind == "doc_summary":
+            row.update(
+                {
+                    "title": self._text(record.get("title"), limit=4096),
+                    "source_type": self._text(record.get("source_type"), limit=32),
+                    "summary_text": self._text(record.get("summary_text"), limit=65535),
+                }
+            )
+        elif item_kind == "section_summary":
+            row.update(
+                {
+                    "section_id": int(record.get("section_id", item_id)),
+                    "page_start": int(record.get("page_start") or 0),
+                    "page_end": int(record.get("page_end") or 0),
+                    "section_kind": self._text(record.get("section_kind", "section"), limit=64),
+                    "toc_path_text": self._text(" / ".join(cast(list[str], record.get("toc_path", []))), limit=4096),
+                    "source_type": self._text(record.get("source_type"), limit=32),
+                    "summary_text": self._text(record.get("summary_text"), limit=65535),
+                }
+            )
+        else:
+            row.update(
+                {
+                    "asset_id": int(record.get("asset_id", item_id)),
+                    "section_id": int(record.get("section_id") or 0),
+                    "asset_type": self._text(record.get("asset_type", "asset"), limit=64),
+                    "page_no": int(record.get("page_no") or 0),
+                    "caption": self._text(record.get("caption"), limit=65535),
+                    "summary_text": self._text(record.get("summary_text"), limit=65535),
+                }
+            )
+        return row, partition_name
+
+    def _search_collection(
+        self,
+        collection: Any,
+        query_vector: list[float],
+        *,
+        expr: str,
+        limit: int,
+        output_fields: list[str],
+        partitions: list[str] | None,
+    ) -> list[Any]:
+        kwargs: dict[str, Any] = {
+            "data": [query_vector],
+            "anns_field": "embedding",
+            "param": {"metric_type": "COSINE", "params": {}},
+            "limit": limit,
+            "expr": expr,
+            "output_fields": output_fields,
+            "partition_names": partitions,
+            "consistency_level": self._consistency_level,
+        }
+        try:
+            results = cast(list[Any], cast(Any, collection).search(**kwargs))
+        except TypeError:
+            kwargs.pop("consistency_level", None)
+            results = cast(list[Any], cast(Any, collection).search(**kwargs))
+        return [] if not results else list(results[0])
+
+    def _query_collection(self, collection: Any, *, expr: str, output_fields: list[str]) -> list[dict[str, Any]]:
+        kwargs: dict[str, Any] = {
+            "expr": expr,
+            "output_fields": output_fields,
+            "consistency_level": self._consistency_level,
+        }
+        try:
+            rows = cast(list[dict[str, Any]], cast(Any, collection).query(**kwargs))
+        except TypeError:
+            kwargs.pop("consistency_level", None)
+            rows = cast(list[dict[str, Any]], cast(Any, collection).query(**kwargs))
+        return rows
+
+    @classmethod
+    def _output_fields(cls, *, item_kind: str, include_embedding: bool) -> list[str]:
+        common = [
+            "item_id",
+            "doc_id",
+            "source_id",
+            "version_group_id",
+            "version_no",
+            "doc_status",
+            "is_active",
+            "index_ready",
+            "embedding_model_id",
+            "metadata_json",
+        ]
+        if item_kind == "doc_summary":
+            fields = common + ["title", "summary_text"]
+        elif item_kind == "section_summary":
+            fields = common + ["section_id", "page_start", "page_end", "section_kind", "toc_path_text", "summary_text"]
+        else:
+            fields = common + ["asset_id", "section_id", "asset_type", "page_no", "caption", "summary_text"]
+        if include_embedding:
+            fields.append("embedding")
+        return fields
+
+    def _validate_item_kind(self, item_kind: str) -> None:
+        if item_kind not in self._SUPPORTED_KINDS:
+            raise ValueError(f"unsupported Milvus item kind: {item_kind}")
+
+    def _search_expr(self, *, doc_ids: list[str] | None, user_expr: str | None) -> str:
+        system_expr = "is_active == true and index_ready == true"
+        user_clauses: list[str] = []
+        if doc_ids:
+            user_clauses.append(self._doc_ids_expr(doc_ids))
+        if user_expr:
+            user_clauses.append(user_expr)
+        if not user_clauses:
+            return system_expr
+        return f"({system_expr}) and " + " and ".join(f"({clause})" for clause in user_clauses)
+
+    def delete(
+        self,
+        *,
+        expr: str,
+        item_kind: str | None = None,
+        embedding_space: str | None = None,
+    ) -> int:
+        self._flush_dirty_collections()
+        deleted = 0
+        for collection in self._iter_target_collections(item_kind=item_kind, embedding_space=embedding_space):
+            result = cast(Any, collection).delete(expr)
+            cast(Any, collection).flush()
+            deleted += int(getattr(result, "delete_count", 0))
+        return deleted
+
     @staticmethod
-    def _vector_result_from_hit(hit: object, *, item_kind: str) -> VectorSearchResult:
+    def _item_id_expr(item_id: str) -> str:
+        return f"item_id in [{int(item_id)}]"
+
+    @staticmethod
+    def _item_ids_expr(item_ids: Sequence[str]) -> str:
+        return "item_id in [" + ", ".join(str(int(item_id)) for item_id in item_ids) + "]"
+
+    @staticmethod
+    def _doc_ids_expr(doc_ids: Sequence[str]) -> str:
+        return "doc_id in [" + ", ".join(str(int(doc_id)) for doc_id in doc_ids) + "]"
+
+    @staticmethod
+    def _load_metadata(raw_json: object) -> dict[str, str]:
+        raw: dict[str, Any]
+        if isinstance(raw_json, str):
+            loaded = json.loads(raw_json)
+            raw = cast(dict[str, Any], loaded if isinstance(loaded, dict) else {})
+        else:
+            raw = cast(dict[str, Any], raw_json if isinstance(raw_json, dict) else {})
+        normalized: dict[str, str] = {}
+        for key, value in raw.items():
+            if isinstance(value, (dict, list)):
+                normalized[key] = json.dumps(value, ensure_ascii=True, sort_keys=True)
+            elif value is None:
+                normalized[key] = ""
+            else:
+                normalized[key] = str(value)
+        return normalized
+
+    @classmethod
+    def _vector_result_from_hit(cls, hit: object, *, item_kind: str) -> VectorSearchResult:
         entity = getattr(hit, "entity", None)
         if entity is None:
-            raise RuntimeError("Milvus search hit did not include entity payload")
-        metadata = MilvusVectorRepo._load_metadata(str(entity.get("metadata_json", "{}")))
+            raise RuntimeError("Milvus search hit did not include entity data")
+        metadata = cls._load_metadata(entity.get("metadata_json", "{}"))
+        if (section_id := entity.get("section_id")) is not None:
+            metadata.setdefault("section_id", str(section_id))
+        if (asset_id := entity.get("asset_id")) is not None:
+            metadata.setdefault("asset_id", str(asset_id))
         return VectorSearchResult(
             item_id=str(entity.get("item_id", "")),
             score=float(getattr(hit, "score", 0.0) or 0.0),
             item_kind=item_kind,
             doc_id=str(entity.get("doc_id", "")),
-            source_id=str(entity.get("source_id", "")),
-            segment_id=str(entity.get("segment_id", "")),
-            text=str(entity.get("text", "")),
+            source_id=str(entity.get("source_id", metadata.get("source_id", ""))),
+            segment_id=str(entity.get("section_id") or entity.get("item_id", "")),
+            text=cls._entry_text(entity, item_kind=item_kind),
             metadata=metadata,
         )
 
     @staticmethod
-    def _result_scope_tokens(result: VectorSearchResult) -> set[str]:
-        tokens = {result.doc_id}
-        metadata = result.metadata
-        for key in ("source_id", "doc_id"):
-            value = metadata.get(key)
-            if value:
-                tokens.add(value)
-        for key in ("doc_ids", "source_ids"):
-            value = metadata.get(key)
-            if value:
-                tokens.update(item.strip() for item in value.split(",") if item.strip())
-        return tokens
+    def _entry_text(mapping: Any, *, item_kind: str) -> str:
+        if item_kind == "doc_summary":
+            return str(mapping.get("summary_text") or mapping.get("title") or "")
+        if item_kind == "asset_summary":
+            return str(mapping.get("summary_text") or mapping.get("caption") or "")
+        return str(mapping.get("summary_text") or "")
 
     @staticmethod
-    def _load_metadata(payload: str) -> dict[str, str]:
-        return cast(dict[str, str], json.loads(payload))
+    def _item_kind_for_record(record: SummaryRecord) -> str:
+        if isinstance(record, DocSummaryRecord):
+            return "doc_summary"
+        if isinstance(record, SectionSummaryRecord):
+            return "section_summary"
+        return "asset_summary"
 
     @staticmethod
-    def _escape(value: str) -> str:
-        return value.replace("\\", "\\\\").replace('"', '\\"')
+    def _record_item_id(record: SummaryRecord) -> int:
+        if isinstance(record, DocSummaryRecord):
+            return record.doc_id
+        if isinstance(record, SectionSummaryRecord):
+            return record.section_id
+        return record.asset_id
+
+    @staticmethod
+    def _normalize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+        data = dict(metadata)
+        toc_path = data.get("toc_path")
+        if toc_path is None:
+            data["toc_path"] = []
+        elif isinstance(toc_path, tuple):
+            data["toc_path"] = list(toc_path)
+        return data
+
+    @staticmethod
+    def _serialize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+        serialized: dict[str, Any] = {}
+        for key, value in metadata.items():
+            if isinstance(value, datetime):
+                serialized[key] = value.isoformat()
+            elif hasattr(value, "value"):
+                serialized[key] = getattr(value, "value")
+            elif isinstance(value, tuple):
+                serialized[key] = list(value)
+            else:
+                serialized[key] = value
+        return serialized
+
+    @staticmethod
+    def _timestamp_ms(value: object) -> int:
+        if isinstance(value, datetime):
+            return int(value.timestamp() * 1000)
+        if isinstance(value, str) and value:
+            return int(datetime.fromisoformat(value).timestamp() * 1000)
+        if isinstance(value, (int, float)):
+            return int(value)
+        return 0
+
+    @staticmethod
+    def _text(value: object, *, limit: int) -> str:
+        if value is None:
+            return ""
+        text = getattr(value, "value", value)
+        return str(text)[:limit]
+
+    @staticmethod
+    def _partition_name(metadata: dict[str, Any]) -> str:
+        raw = metadata.get("partition_key") or metadata.get("storage_tier")
+        normalized = str(getattr(raw, "value", raw or "")).lower()
+        if normalized in {"cold", "archive", "historical"}:
+            return "cold"
+        if metadata.get("is_active") is False:
+            return "cold"
+        return "hot"

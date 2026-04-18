@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import sys
 import types
+from datetime import UTC, datetime
 
 import pytest
 
+from rag.schema.core import PartitionKey, SectionSummaryRecord, SourceType
 from rag.storage.search_backends.milvus_vector_repo import MilvusVectorRepo
 
 
@@ -29,20 +31,16 @@ def test_milvus_vector_repo_creates_missing_database(monkeypatch: pytest.MonkeyP
     fake_pymilvus = types.SimpleNamespace(connections=_Connections(), db=_Db())
     monkeypatch.setitem(sys.modules, "pymilvus", fake_pymilvus)
 
-    repo = MilvusVectorRepo(
-        "http://127.0.0.1:19530",
-        db_name="rag_benchmarks",
-        collection_prefix="medical_retrieval_mini",
-    )
+    repo = MilvusVectorRepo("http://127.0.0.1:19530", db_name="rag_v1", collection_prefix="summary_index")
     try:
         assert ("list_database", f"{repo._alias}_bootstrap", None) in events
-        assert ("create_database", f"{repo._alias}_bootstrap", "rag_benchmarks") in events
-        assert ("connect", repo._alias, "rag_benchmarks") in events
+        assert ("create_database", f"{repo._alias}_bootstrap", "rag_v1") in events
+        assert ("connect", repo._alias, "rag_v1") in events
     finally:
         repo.close()
 
 
-def test_milvus_vector_repo_batches_upserts_before_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_milvus_vector_repo_upserts_v1_section_summary_with_partition(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(MilvusVectorRepo, "_connect", lambda self: setattr(self, "_connected", True))
 
     class _Connections:
@@ -52,14 +50,14 @@ def test_milvus_vector_repo_batches_upserts_before_flush(monkeypatch: pytest.Mon
     monkeypatch.setitem(sys.modules, "pymilvus", types.SimpleNamespace(connections=_Connections()))
 
     class _FakeCollection:
-        name = "rag_vectors__chunk__default"
+        name = "summary_index__section_summary__default"
 
         def __init__(self) -> None:
-            self.upsert_calls: list[list[dict[str, object]]] = []
+            self.upsert_calls: list[tuple[list[dict[str, object]], str | None]] = []
             self.flush_count = 0
 
-        def upsert(self, rows: list[dict[str, object]]) -> None:
-            self.upsert_calls.append([dict(row) for row in rows])
+        def upsert(self, rows: list[dict[str, object]], partition_name: str | None = None) -> None:
+            self.upsert_calls.append(([dict(row) for row in rows], partition_name))
 
         def flush(self) -> None:
             self.flush_count += 1
@@ -70,17 +68,75 @@ def test_milvus_vector_repo_batches_upserts_before_flush(monkeypatch: pytest.Mon
     repo = MilvusVectorRepo("http://127.0.0.1:19530")
     fake_collection = _FakeCollection()
     monkeypatch.setattr(repo, "_collection", lambda **kwargs: fake_collection)
-    monkeypatch.setattr(repo, "_UPSERT_BUFFER_SIZE", 2)
+    monkeypatch.setattr(repo, "_UPSERT_BUFFER_SIZE", 1)
+    repo._collections[fake_collection.name] = fake_collection
+    record = SectionSummaryRecord(
+        section_id=7,
+        doc_id=42,
+        source_id=9,
+        version_group_id=42,
+        version_no=3,
+        doc_status="published",
+        effective_date=datetime(2026, 4, 18, tzinfo=UTC),
+        updated_at=datetime(2026, 4, 18, 12, 0, tzinfo=UTC),
+        is_active=False,
+        tenant_id="tenant-a",
+        department_id="dept-a",
+        auth_tag="internal",
+        source_type=SourceType.MARKDOWN,
+        embedding_model_id="bge-m3",
+        partition_key=PartitionKey.COLD,
+        page_start=1,
+        page_end=2,
+        section_kind="body",
+        toc_path=["A", "B"],
+        summary_text="Section summary",
+        metadata_json={"rank": 1},
+    )
+    try:
+        repo.upsert_record(record, [0.1, 0.2])
+        repo._flush_dirty_collections()
+        rows, partition_name = fake_collection.upsert_calls[0]
+        assert partition_name == "cold"
+        assert rows[0]["item_id"] == 7
+        assert rows[0]["doc_id"] == 42
+        assert rows[0]["source_id"] == 9
+        assert rows[0]["version_group_id"] == 42
+        assert rows[0]["section_id"] == 7
+        assert rows[0]["toc_path_text"] == "A / B"
+        assert rows[0]["embedding_model_id"] == "bge-m3"
+        assert rows[0]["index_ready"] is True
+        assert fake_collection.flush_count == 1
+    finally:
+        repo.close()
+
+
+def test_milvus_vector_repo_search_injects_system_guardrail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(MilvusVectorRepo, "_connect", lambda self: setattr(self, "_connected", True))
+
+    class _Connections:
+        def disconnect(self, alias: str) -> None:
+            return None
+
+    monkeypatch.setitem(sys.modules, "pymilvus", types.SimpleNamespace(connections=_Connections()))
+
+    class _FakeCollection:
+        name = "summary_index__section_summary__default"
+
+        def search(self, **kwargs):
+            assert kwargs["expr"] == "(is_active == true and index_ready == true) and (doc_id in [42]) and (tenant_id == \"tenant-a\")"
+            return [[]]
+
+        def release(self) -> None:
+            return None
+
+    repo = MilvusVectorRepo("http://127.0.0.1:19530")
+    fake_collection = _FakeCollection()
+    monkeypatch.setattr(repo, "_has_collection", lambda **kwargs: True)
+    monkeypatch.setattr(repo, "_collection", lambda **kwargs: fake_collection)
     repo._collections[fake_collection.name] = fake_collection
     try:
-        repo.upsert("chunk-1", [0.1, 0.2], metadata={"doc_id": "d1"})
-        assert fake_collection.upsert_calls == []
-
-        repo.upsert("chunk-2", [0.3, 0.4], metadata={"doc_id": "d2"})
-        assert len(fake_collection.upsert_calls) == 1
-        assert [row["item_id"] for row in fake_collection.upsert_calls[0]] == ["chunk-1", "chunk-2"]
-
-        repo._flush_dirty_collections()
-        assert fake_collection.flush_count == 1
+        results = repo.search([0.1, 0.2], doc_ids=["42"], expr='tenant_id == "tenant-a"')
+        assert results == []
     finally:
         repo.close()

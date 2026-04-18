@@ -23,6 +23,7 @@ from rag.storage.search_backends.pgvector_vector_repo import PgvectorVectorRepo
 from rag.storage.search_backends.postgres_fts_repo import PostgresFTSRepo
 from rag.storage.search_backends.sqlite_fts_repo import SQLiteFTSRepo
 from rag.storage.search_backends.sqlite_vector_repo import SQLiteVectorRepo
+from rag.storage.v1_data_contract_service import V1DataContractService
 from rag.storage.vector import VectorStore
 
 
@@ -357,5 +358,6 @@ __all__ = [
     "StorageBundle",
     "StorageComponentConfig",
     "StorageConfig",
+    "V1DataContractService",
     "VectorStore",
 ]
