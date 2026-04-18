@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
@@ -624,8 +625,10 @@ class AnswerGenerator:
                 model=binding.model_name,
                 status="success",
             )
+            started = time.perf_counter()
             try:
                 output = binding.chat(prompt)
+                latency_ms = (time.perf_counter() - started) * 1000.0
                 answer = self.answer_generation_service.answer_from_model_output(
                     query=query,
                     evidence_pack=evidence_pack,
@@ -634,7 +637,7 @@ class AnswerGenerator:
                     enforce_grounding=True,
                     trust_evidence_pack=True,
                 )
-                attempts.append(attempt)
+                attempts.append(attempt.model_copy(update={"latency_ms": latency_ms}))
                 return AnswerGenerationResult(
                     answer=answer,
                     provider=attempt.provider,
@@ -642,7 +645,10 @@ class AnswerGenerator:
                     attempts=attempts,
                 )
             except Exception as exc:
-                attempts.append(attempt.model_copy(update={"status": "failed", "error": str(exc)}))
+                latency_ms = (time.perf_counter() - started) * 1000.0
+                attempts.append(
+                    attempt.model_copy(update={"status": "failed", "error": str(exc), "latency_ms": latency_ms})
+                )
 
         fallback = self.answer_generation_service.generate(
             query=query,
@@ -676,11 +682,16 @@ class AnswerGenerator:
                 model=binding.model_name,
                 status="success",
             )
+            started = time.perf_counter()
             try:
                 output = binding.chat(prompt).strip()
             except Exception as exc:
-                attempts.append(attempt.model_copy(update={"status": "failed", "error": str(exc)}))
+                latency_ms = (time.perf_counter() - started) * 1000.0
+                attempts.append(
+                    attempt.model_copy(update={"status": "failed", "error": str(exc), "latency_ms": latency_ms})
+                )
                 continue
+            latency_ms = (time.perf_counter() - started) * 1000.0
             answer_text = output or "模型没有返回内容。"
             answer = GroundedAnswer(
                 answer_text=answer_text,
@@ -698,7 +709,7 @@ class AnswerGenerator:
                 groundedness_flag=False,
                 insufficient_evidence_flag=False,
             )
-            attempts.append(attempt)
+            attempts.append(attempt.model_copy(update={"latency_ms": latency_ms}))
             return AnswerGenerationResult(
                 answer=answer,
                 provider=attempt.provider,

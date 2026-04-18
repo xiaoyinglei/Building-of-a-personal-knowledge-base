@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import io
 import logging
+import re
 import time
 from collections.abc import Callable, MutableMapping, Sequence
 from contextlib import ExitStack, nullcontext, redirect_stderr, redirect_stdout
@@ -16,6 +17,7 @@ from rag.schema.runtime import ModelProviderRepo
 
 _FAST_TOKENIZER_PADDING_WARNING = "Asking-to-pad-a-fast-tokenizer"
 _LOGGER = logging.getLogger(__name__)
+_DECODER_ONLY_RERANKER_MARKERS = ("qwen", "gemma", "minicpm", "llm-reranker")
 
 
 def suppress_backend_fast_tokenizer_padding_warning(backend: object) -> object:
@@ -82,6 +84,145 @@ def resolve_huggingface_snapshot_path(model_root: str | Path) -> Path:
 
 def _looks_like_model_dir(path: Path) -> bool:
     return (path / "config.json").exists() or (path / "tokenizer_config.json").exists()
+
+
+def _patch_transformers_import_utils_for_flagembedding() -> None:
+    try:
+        import transformers.utils.import_utils as import_utils
+    except Exception:
+        return
+    if hasattr(import_utils, "is_torch_fx_available"):
+        return
+    import_utils.is_torch_fx_available = import_utils.is_torch_available  # type: ignore[attr-defined]
+
+
+def _prepare_for_model_fallback(
+    tokenizer: object,
+    ids: Sequence[int],
+    pair_ids: Sequence[int] | None = None,
+    *,
+    add_special_tokens: bool = True,
+    truncation: str | bool | None = None,
+    max_length: int | None = None,
+    padding: bool | str = False,
+    return_attention_mask: bool = True,
+    return_token_type_ids: bool | None = None,
+    **_: object,
+) -> dict[str, list[int]]:
+    del padding
+    first = list(ids)
+    second = list(pair_ids) if pair_ids is not None else None
+
+    def special_token_count(has_pair: bool) -> int:
+        counter = getattr(tokenizer, "num_special_tokens_to_add", None)
+        if callable(counter) and add_special_tokens:
+            try:
+                return int(counter(pair=has_pair))
+            except Exception:
+                return 0
+        return 0
+
+    def apply_truncation() -> tuple[list[int], list[int] | None]:
+        local_first = list(first)
+        local_second = list(second) if second is not None else None
+        if max_length is None:
+            return local_first, local_second
+
+        budget = max(0, int(max_length) - special_token_count(local_second is not None))
+        if local_second is None:
+            return local_first[:budget], None
+
+        strategy = truncation
+        if strategy in (None, False):
+            if len(local_first) + len(local_second) <= budget:
+                return local_first, local_second
+            strategy = "only_second"
+
+        if strategy == "only_first":
+            keep = max(0, budget - len(local_second))
+            return local_first[:keep], local_second
+        if strategy == "only_second":
+            keep = max(0, budget - len(local_first))
+            return local_first, local_second[:keep]
+
+        # Fall back to longest-first style trimming.
+        while len(local_first) + len(local_second) > budget and (local_first or local_second):
+            if len(local_second) >= len(local_first) and local_second:
+                local_second.pop()
+                continue
+            if local_first:
+                local_first.pop()
+                continue
+            break
+        return local_first, local_second
+
+    def build_input_ids(local_first: list[int], local_second: list[int] | None) -> list[int]:
+        if not add_special_tokens:
+            return local_first + (local_second or [])
+
+        cls_id = getattr(tokenizer, "cls_token_id", None)
+        sep_id = getattr(tokenizer, "sep_token_id", None)
+        bos_id = getattr(tokenizer, "bos_token_id", None)
+        eos_id = getattr(tokenizer, "eos_token_id", None)
+        class_name = tokenizer.__class__.__name__.lower()
+
+        if cls_id is not None or sep_id is not None:
+            prefix = [int(cls_id)] if cls_id is not None else []
+            sep = [int(sep_id)] if sep_id is not None else ([int(eos_id)] if eos_id is not None else [])
+            if local_second is None:
+                return prefix + local_first + sep
+            middle = sep + sep if "roberta" in class_name and sep else sep
+            return prefix + local_first + middle + local_second + sep
+
+        prefix = [int(bos_id)] if bos_id is not None else []
+        suffix = [int(eos_id)] if eos_id is not None else []
+        if local_second is None:
+            return prefix + local_first + suffix
+        return prefix + local_first + suffix + local_second + suffix
+
+    truncated_first, truncated_second = apply_truncation()
+    input_ids = build_input_ids(truncated_first, truncated_second)
+    encoded: dict[str, list[int]] = {"input_ids": input_ids}
+    if return_attention_mask:
+        encoded["attention_mask"] = [1] * len(input_ids)
+    if return_token_type_ids:
+        if truncated_second is None:
+            encoded["token_type_ids"] = [0] * len(input_ids)
+        else:
+            encoded["token_type_ids"] = [0] * len(input_ids)
+    return encoded
+
+
+def _patch_transformers_tokenizer_prepare_for_model() -> None:
+    try:
+        from transformers.tokenization_utils_tokenizers import TokenizersBackend
+    except Exception:
+        return
+    if hasattr(TokenizersBackend, "prepare_for_model"):
+        return
+
+    def prepare_for_model(
+        self: object,
+        ids: Sequence[int],
+        pair_ids: Sequence[int] | None = None,
+        **kwargs: object,
+    ) -> dict[str, list[int]]:
+        return _prepare_for_model_fallback(self, ids, pair_ids, **kwargs)
+
+    TokenizersBackend.prepare_for_model = prepare_for_model  # type: ignore[attr-defined]
+
+
+def _load_flagembedding_module() -> object:
+    _patch_transformers_import_utils_for_flagembedding()
+    _patch_transformers_tokenizer_prepare_for_model()
+    return cast(object, importlib.import_module("FlagEmbedding"))
+
+
+def _infer_flagembedding_reranker_model_class(model_ref: str) -> str:
+    normalized = model_ref.strip().lower()
+    if any(marker in normalized for marker in _DECODER_ONLY_RERANKER_MARKERS):
+        return "decoder-only-base"
+    return "encoder-only-base"
 
 
 class FallbackEmbeddingRepo(ModelProviderRepo):
@@ -409,6 +550,268 @@ class OllamaProviderRepo(ModelProviderRepo):
         return self._http_client
 
 
+class LocalHfChatProviderRepo(ModelProviderRepo):
+    def __init__(
+        self,
+        *,
+        chat_model: str | None = None,
+        chat_model_path: str | Path | None = None,
+        backend: str | None = None,
+        device: str | None = None,
+        max_new_tokens: int = 512,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+    ) -> None:
+        self._chat_model = chat_model.strip() if isinstance(chat_model, str) else ""
+        self._chat_model_path = None if chat_model_path is None else str(expand_optional_path(chat_model_path) or "")
+        self._backend_preference = (backend or "auto").strip().lower() or "auto"
+        self._preferred_device = None if device is None else device.strip() or None
+        self._max_new_tokens = max(1, int(max_new_tokens))
+        self._temperature = max(0.0, float(temperature))
+        self._top_p = min(max(float(top_p), 0.0), 1.0)
+        self._resolved_model_ref = self._resolve_chat_model_reference(
+            chat_model=self._chat_model,
+            chat_model_path=chat_model_path,
+        )
+        self._backend_name: str | None = None
+        self._backend_impl: object | None = None
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        del texts
+        raise RuntimeError("LocalHfChatProviderRepo does not provide embeddings")
+
+    def chat(self, prompt: str) -> str:
+        backend = self._backend()
+        chat = getattr(backend, "chat", None)
+        if not callable(chat):
+            raise RuntimeError("Local HF chat backend is not available")
+        return _normalize_chat_text(str(chat(prompt)))
+
+    def rerank(self, query: str, candidates: Sequence[str]) -> list[int]:
+        del query, candidates
+        raise RuntimeError("LocalHfChatProviderRepo does not provide rerank")
+
+    @property
+    def provider_name(self) -> str:
+        return "local-hf"
+
+    @property
+    def chat_model_name(self) -> str:
+        return self._chat_model or self._resolved_model_ref
+
+    @property
+    def is_chat_configured(self) -> bool:
+        return bool(self._resolved_model_ref)
+
+    @property
+    def is_embed_configured(self) -> bool:
+        return False
+
+    @property
+    def is_rerank_configured(self) -> bool:
+        return False
+
+    @property
+    def backend_name(self) -> str | None:
+        return self._backend_name
+
+    def _backend(self) -> object:
+        if self._backend_impl is not None:
+            return self._backend_impl
+        errors: list[str] = []
+        for backend_name in self._backend_candidates():
+            try:
+                backend = self._load_backend(backend_name)
+            except Exception as exc:
+                errors.append(f"{backend_name}: {exc}")
+                continue
+            self._backend_name = backend_name
+            self._backend_impl = backend
+            return backend
+        detail = "; ".join(errors) if errors else "no backend candidates were available"
+        raise RuntimeError(f"Failed to initialize local HF chat backend for {self._resolved_model_ref}: {detail}")
+
+    def _backend_candidates(self) -> tuple[str, ...]:
+        if self._backend_preference in {"mlx", "transformers"}:
+            return (self._backend_preference,)
+        likely_mlx = any(
+            marker in value.lower()
+            for marker in ("mlx-community", "/mlx", "models--mlx-community--", "mlx_community")
+            for value in filter(None, (self._chat_model, self._chat_model_path, self._resolved_model_ref))
+        )
+        return ("mlx", "transformers") if likely_mlx else ("transformers", "mlx")
+
+    def _load_backend(self, backend_name: str) -> object:
+        if backend_name == "mlx":
+            return self._load_mlx_backend()
+        if backend_name == "transformers":
+            return self._load_transformers_backend()
+        raise RuntimeError(f"Unsupported local HF chat backend: {backend_name}")
+
+    def _load_mlx_backend(self) -> object:
+        from mlx_lm import generate, load
+
+        model, tokenizer = load(self._resolved_model_ref)
+
+        class _MlxBackend:
+            def __init__(
+                self,
+                *,
+                model: object,
+                tokenizer: object,
+                max_new_tokens: int,
+                temperature: float,
+                top_p: float,
+            ) -> None:
+                self._model = model
+                self._tokenizer = tokenizer
+                self._max_new_tokens = max_new_tokens
+                self._temperature = temperature
+                self._top_p = top_p
+
+            def chat(self, prompt: str) -> str:
+                rendered = _render_chat_prompt(self._tokenizer, prompt)
+                kwargs: dict[str, object] = {
+                    "verbose": False,
+                    "max_tokens": self._max_new_tokens,
+                }
+                if self._temperature > 0.0:
+                    kwargs["temp"] = self._temperature
+                    kwargs["top_p"] = self._top_p
+                return str(generate(self._model, self._tokenizer, rendered, **kwargs)).strip()
+
+        return _MlxBackend(
+            model=model,
+            tokenizer=tokenizer,
+            max_new_tokens=self._max_new_tokens,
+            temperature=self._temperature,
+            top_p=self._top_p,
+        )
+
+    def _load_transformers_backend(self) -> object:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        device = self._resolve_transformers_device(self._preferred_device)
+        dtype = torch.float16 if device in {"mps", "cuda"} else torch.float32
+        tokenizer = AutoTokenizer.from_pretrained(self._resolved_model_ref, trust_remote_code=True)
+        if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
+            tokenizer.pad_token = tokenizer.eos_token
+        model = AutoModelForCausalLM.from_pretrained(
+            self._resolved_model_ref,
+            trust_remote_code=True,
+            torch_dtype=dtype,
+        )
+        model.to(device)
+        model.eval()
+
+        class _TransformersBackend:
+            def __init__(
+                self,
+                *,
+                model: object,
+                tokenizer: object,
+                device: str,
+                max_new_tokens: int,
+                temperature: float,
+                top_p: float,
+            ) -> None:
+                self._model = model
+                self._tokenizer = tokenizer
+                self._device = device
+                self._max_new_tokens = max_new_tokens
+                self._temperature = temperature
+                self._top_p = top_p
+
+            def chat(self, prompt: str) -> str:
+                import torch
+
+                rendered = _render_chat_prompt(self._tokenizer, prompt)
+                encoded = self._tokenizer(rendered, return_tensors="pt")
+                encoded = {name: tensor.to(self._device) for name, tensor in encoded.items()}
+                generation_kwargs: dict[str, object] = {
+                    "max_new_tokens": self._max_new_tokens,
+                    "pad_token_id": self._tokenizer.pad_token_id or self._tokenizer.eos_token_id,
+                }
+                if self._temperature > 0.0:
+                    generation_kwargs.update(
+                        {
+                            "do_sample": True,
+                            "temperature": self._temperature,
+                            "top_p": self._top_p,
+                        }
+                    )
+                else:
+                    generation_kwargs["do_sample"] = False
+                with torch.inference_mode():
+                    outputs = self._model.generate(**encoded, **generation_kwargs)
+                prompt_tokens = int(encoded["input_ids"].shape[-1])
+                generated = outputs[0][prompt_tokens:]
+                return str(self._tokenizer.decode(generated, skip_special_tokens=True)).strip()
+
+        return _TransformersBackend(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            max_new_tokens=self._max_new_tokens,
+            temperature=self._temperature,
+            top_p=self._top_p,
+        )
+
+    @staticmethod
+    def _resolve_chat_model_reference(*, chat_model: str, chat_model_path: str | Path | None) -> str:
+        explicit_path = expand_optional_path(chat_model_path)
+        if explicit_path is not None:
+            return str(resolve_huggingface_snapshot_path(explicit_path))
+        return chat_model.strip()
+
+    @staticmethod
+    def _resolve_transformers_device(device: str | None) -> str:
+        if isinstance(device, str) and device.strip():
+            normalized = device.strip().lower()
+            if normalized != "auto":
+                return normalized
+        import torch
+
+        if getattr(torch.cuda, "is_available", None) and torch.cuda.is_available():
+            return "cuda"
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is not None and mps_backend.is_available():
+            return "mps"
+        return "cpu"
+
+
+def _render_chat_prompt(tokenizer: object, prompt: str) -> str:
+    apply_chat_template = getattr(tokenizer, "apply_chat_template", None)
+    if callable(apply_chat_template):
+        preferred_calls = (
+            {"tokenize": False, "add_generation_prompt": True, "enable_thinking": False},
+            {"tokenize": False, "add_generation_prompt": True},
+        )
+        for kwargs in preferred_calls:
+            try:
+                rendered = apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    **kwargs,
+                )
+            except Exception:
+                continue
+            if isinstance(rendered, str) and rendered.strip():
+                return rendered
+        try:
+            rendered = apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
+            if isinstance(rendered, str) and rendered.strip():
+                return rendered
+        except Exception:
+            return prompt
+    return prompt
+
+
+def _normalize_chat_text(text: str) -> str:
+    normalized = re.sub(r"<think>\s*.*?\s*</think>\s*", "", text, flags=re.DOTALL).strip()
+    return normalized or text.strip()
+
+
 class LocalBgeProviderRepo:
     def __init__(
         self,
@@ -535,7 +938,7 @@ class LocalBgeProviderRepo:
 
     def _load_embedding_backend(self) -> object:
         try:
-            module = importlib.import_module("FlagEmbedding")
+            module = _load_flagembedding_module()
         except ModuleNotFoundError as exc:  # pragma: no cover
             raise RuntimeError("FlagEmbedding is required for local BGE embeddings") from exc
         encoder_cls = getattr(module, "BGEM3FlagModel", None)
@@ -565,19 +968,22 @@ class LocalBgeProviderRepo:
 
     def _load_rerank_backend(self) -> object:
         try:
-            module = importlib.import_module("FlagEmbedding")
+            module = _load_flagembedding_module()
         except ModuleNotFoundError as exc:  # pragma: no cover
             raise RuntimeError("FlagEmbedding is required for local BGE rerank") from exc
-        reranker_cls = getattr(module, "FlagReranker", None)
-        if reranker_cls is None:
-            raise RuntimeError("FlagEmbedding FlagReranker is unavailable")
+        auto_reranker_cls = getattr(module, "FlagAutoReranker", None)
+        if auto_reranker_cls is None:
+            raise RuntimeError("FlagEmbedding FlagAutoReranker is unavailable")
+        model_class = _infer_flagembedding_reranker_model_class(self._rerank_model_ref)
         try:
             with self._backend_output_context():
                 backend = cast(
                     object,
-                    reranker_cls(
+                    auto_reranker_cls.from_finetuned(
                         self._rerank_model_ref,
+                        model_class=model_class,
                         use_fp16=self._use_fp16,
+                        trust_remote_code=True,
                         devices=self._resolved_device,
                         batch_size=self._rerank_batch_size,
                         max_length=self._rerank_max_length,
@@ -695,6 +1101,7 @@ suppress_fast_tokenizer_padding_warning = suppress_backend_fast_tokenizer_paddin
 __all__ = [
     "FallbackEmbeddingRepo",
     "LocalBgeProviderRepo",
+    "LocalHfChatProviderRepo",
     "OllamaProviderRepo",
     "OpenAIProviderRepo",
     "expand_optional_path",

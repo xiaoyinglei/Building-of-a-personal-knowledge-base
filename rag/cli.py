@@ -10,6 +10,7 @@ import typer
 from pydantic import BaseModel
 
 from rag import AssemblyRequest, CapabilityRequirements, RAGRuntime, StorageConfig
+from rag.agent import AgentTaskRequest
 from rag.answer_benchmarks import AnswerBenchmarkEvaluator, build_chat_judge
 from rag.benchmark_diagnostics import (
     BenchmarkDiagnosticsPostProcessor,
@@ -140,6 +141,37 @@ def query(
         _echo_json(result)
         return
     typer.echo(result.answer.answer_text)
+
+
+@app.command("analyze-task")
+def analyze_task(
+    storage_root: Annotated[Path, STORAGE_ROOT_OPTION] = DEFAULT_STORAGE_ROOT,
+    profile_id: Annotated[str | None, PROFILE_OPTION] = None,
+    query: Annotated[str | None, QUERY_OPTION] = None,
+    json_output: Annotated[bool, JSON_OPTION] = False,
+    allow_web: Annotated[bool, typer.Option("--allow-web/--no-allow-web")] = False,
+    expected_output: Annotated[str, typer.Option("--expected-output")] = "structured_analysis_report",
+    response_style: Annotated[str, typer.Option("--response-style")] = "formal",
+    max_subtasks: Annotated[int, typer.Option("--max-subtasks")] = 5,
+    retry_budget: Annotated[int, typer.Option("--retry-budget")] = 2,
+) -> None:
+    if query is None or not query.strip():
+        raise typer.BadParameter("--query is required")
+    with _runtime(storage_root, profile_id=profile_id, require_chat=False) as runtime:
+        result = runtime.analyze_task(
+            AgentTaskRequest(
+                user_query=query,
+                allow_web=allow_web,
+                expected_output=expected_output,
+                response_style=response_style,
+                max_subtasks=max_subtasks,
+                retry_budget=retry_budget,
+            )
+        )
+    if json_output:
+        _echo_json(result)
+        return
+    typer.echo(result.final_report.executive_summary if result.final_report is not None else "")
 
 
 @app.command()
@@ -274,6 +306,14 @@ def benchmark_ingest(
     storage_root: Annotated[Path | None, STORAGE_ROOT_OPTION] = None,
     documents_path: Annotated[Path | None, typer.Option("--documents-path")] = None,
     batch_size: Annotated[int, typer.Option("--batch-size")] = 64,
+    chat_provider: Annotated[str | None, typer.Option("--chat-provider")] = None,
+    chat_model: Annotated[str | None, typer.Option("--chat-model")] = None,
+    chat_model_path: Annotated[str | None, typer.Option("--chat-model-path")] = None,
+    chat_backend: Annotated[str | None, typer.Option("--chat-backend")] = None,
+    vector_backend: Annotated[str, typer.Option("--vector-backend")] = "sqlite",
+    vector_dsn: Annotated[str | None, typer.Option("--vector-dsn")] = None,
+    vector_namespace: Annotated[str | None, typer.Option("--vector-namespace")] = None,
+    vector_collection_prefix: Annotated[str | None, typer.Option("--vector-collection-prefix")] = None,
     continue_on_error: Annotated[bool, typer.Option("--continue-on-error")] = False,
     skip_graph_extraction: Annotated[bool, typer.Option("--skip-graph-extraction/--with-graph-extraction")] = True,
 ) -> None:
@@ -283,9 +323,17 @@ def benchmark_ingest(
     runtime = build_runtime_for_benchmark(
         storage_root=storage_root or paths.index_variant_dir(variant),
         profile_id=profile_id,
-        require_chat=False,
+        require_chat=not skip_graph_extraction,
         require_rerank=False,
         skip_graph_extraction=skip_graph_extraction,
+        chat_provider_kind=chat_provider,
+        chat_model=chat_model,
+        chat_model_path=chat_model_path,
+        chat_backend=chat_backend,
+        vector_backend=vector_backend,
+        vector_dsn=vector_dsn,
+        vector_namespace=vector_namespace,
+        vector_collection_prefix=vector_collection_prefix,
     )
     try:
         result = ingest_prepared_documents(
@@ -312,10 +360,18 @@ def benchmark_evaluate(
     mode: Annotated[QueryMode, MODE_OPTION] = QueryMode.MIX,
     top_k: Annotated[int, typer.Option("--top-k")] = 10,
     chunk_top_k: Annotated[int | None, typer.Option("--chunk-top-k")] = None,
+    vector_backend: Annotated[str, typer.Option("--vector-backend")] = "sqlite",
+    vector_dsn: Annotated[str | None, typer.Option("--vector-dsn")] = None,
+    vector_namespace: Annotated[str | None, typer.Option("--vector-namespace")] = None,
+    vector_collection_prefix: Annotated[str | None, typer.Option("--vector-collection-prefix")] = None,
     rerank_enabled: Annotated[bool, typer.Option("--rerank/--no-rerank")] = True,
     enable_query_understanding_llm: Annotated[
         bool, typer.Option("--enable-query-understanding-llm/--disable-query-understanding-llm")
     ] = False,
+    chat_provider: Annotated[str | None, typer.Option("--chat-provider")] = None,
+    chat_model: Annotated[str | None, typer.Option("--chat-model")] = None,
+    chat_model_path: Annotated[str | None, typer.Option("--chat-model-path")] = None,
+    chat_backend: Annotated[str | None, typer.Option("--chat-backend")] = None,
     split: Annotated[str | None, typer.Option("--split")] = None,
 ) -> None:
     if variant not in {"full", "mini"}:
@@ -329,6 +385,14 @@ def benchmark_evaluate(
         profile_id=profile_id,
         require_chat=enable_query_understanding_llm,
         require_rerank=rerank_enabled,
+        chat_provider_kind=chat_provider,
+        chat_model=chat_model,
+        chat_model_path=chat_model_path,
+        chat_backend=chat_backend,
+        vector_backend=vector_backend,
+        vector_dsn=vector_dsn,
+        vector_namespace=vector_namespace,
+        vector_collection_prefix=vector_collection_prefix,
     )
     try:
         runtime.retrieval_service.query_understanding_service._enable_llm = enable_query_understanding_llm
@@ -378,6 +442,10 @@ def benchmark_answer_evaluate(
     embedding_provider: Annotated[str | None, typer.Option("--embedding-provider")] = None,
     embedding_model: Annotated[str | None, typer.Option("--embedding-model")] = None,
     embedding_model_path: Annotated[str | None, typer.Option("--embedding-model-path")] = None,
+    chat_provider: Annotated[str | None, typer.Option("--chat-provider")] = None,
+    chat_model: Annotated[str | None, typer.Option("--chat-model")] = None,
+    chat_model_path: Annotated[str | None, typer.Option("--chat-model-path")] = None,
+    chat_backend: Annotated[str | None, typer.Option("--chat-backend")] = None,
 ) -> None:
     if variant not in {"full", "mini"}:
         raise typer.BadParameter("variant must be one of: full, mini")
@@ -393,6 +461,10 @@ def benchmark_answer_evaluate(
         embedding_provider_kind=embedding_provider,
         embedding_model=embedding_model,
         embedding_model_path=embedding_model_path,
+        chat_provider_kind=chat_provider,
+        chat_model=chat_model,
+        chat_model_path=chat_model_path,
+        chat_backend=chat_backend,
     )
     try:
         local_judge = build_chat_judge(profile_id=local_judge_profile, allow_missing=False)

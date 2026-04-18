@@ -15,6 +15,7 @@ from rag.assembly.models import (
 from rag.providers.adapters import (
     FallbackEmbeddingRepo,
     LocalBgeProviderRepo,
+    LocalHfChatProviderRepo,
     OllamaProviderRepo,
     OpenAIProviderRepo,
 )
@@ -163,6 +164,22 @@ def compatibility_config_from_environment() -> tuple[AssemblyConfig, dict[str, s
         "local_bge_rerank_batch_size",
         env_int("PKP_LOCAL_BGE__RERANK_BATCH_SIZE", "RAG_LOCAL_BGE_RERANK_BATCH_SIZE"),
     )
+    local_hf_chat_model = remember(
+        "local_hf_chat_model",
+        first_env("RAG_LOCAL_HF_CHAT_MODEL", "PKP_LOCAL_HF__CHAT_MODEL"),
+    )
+    local_hf_chat_model_path = remember(
+        "local_hf_chat_model_path",
+        first_env("RAG_LOCAL_HF_CHAT_MODEL_PATH", "PKP_LOCAL_HF__CHAT_MODEL_PATH"),
+    )
+    local_hf_chat_backend = remember(
+        "local_hf_chat_backend",
+        first_env("RAG_LOCAL_HF_CHAT_BACKEND", "PKP_LOCAL_HF__CHAT_BACKEND"),
+    )
+    local_hf_chat_device = remember(
+        "local_hf_chat_device",
+        first_env("RAG_LOCAL_HF_CHAT_DEVICE", "PKP_LOCAL_HF__CHAT_DEVICE"),
+    )
     local_bge_allowed = (str(local_bge_enabled).lower() if local_bge_enabled is not None else "") not in {
         "0",
         "false",
@@ -194,6 +211,19 @@ def compatibility_config_from_environment() -> tuple[AssemblyConfig, dict[str, s
                 rerank_batch_size=(
                     None if local_bge_rerank_batch_size is None else int(local_bge_rerank_batch_size)
                 ),
+            )
+        )
+    if local_hf_chat_model or local_hf_chat_model_path:
+        profiles.append(
+            ProviderConfig(
+                profile_id="local-hf-chat",
+                provider_kind="local-hf",
+                location="local",
+                label=f"Local HF Chat / {local_hf_chat_model or local_hf_chat_model_path or 'custom'}",
+                chat_model=None if local_hf_chat_model is None else str(local_hf_chat_model),
+                chat_model_path=None if local_hf_chat_model_path is None else str(local_hf_chat_model_path),
+                chat_backend=None if local_hf_chat_backend is None else str(local_hf_chat_backend),
+                device=None if local_hf_chat_device is None else str(local_hf_chat_device),
             )
         )
 
@@ -230,20 +260,24 @@ def assembly_profiles(
     compat_openai = compat.get("openai-compatible")
     compat_ollama = compat.get("ollama")
     compat_local_bge = compat.get("local-bge")
+    compat_local_hf = compat.get("local-hf-chat")
     return (
         AssemblyProfileSpec(
             profile_id="local_full",
             label="Local Full",
-            description="Prefer local retrieval and local chat. Uses local BGE for retrieval and Ollama for chat.",
+            description=(
+                "Prefer local retrieval and local chat. Uses local retrieval with either a configured local HF chat "
+                "provider or Ollama for generation."
+            ),
             location="local",
             overrides=AssemblyOverrides(
                 embedding=local_retrieval_provider(compat_local_bge, compat_ollama),
                 rerank=rerank_provider(compat_local_bge),
                 chat=_provider_or_default(
-                    compat_ollama,
-                    fallback_kind="ollama",
+                    compat_local_hf or compat_ollama,
+                    fallback_kind="local-hf" if compat_local_hf is not None else "ollama",
                     fallback_location="local",
-                    fallback_base_url="http://localhost:11434",
+                    fallback_base_url=None if compat_local_hf is not None else "http://localhost:11434",
                 ),
             ),
         ),
@@ -321,6 +355,21 @@ def merge_provider_config(
         return low
     if low is None:
         return high
+    embedding_model_path = (
+        None
+        if high.embedding_model is not None and high.embedding_model_path is None
+        else first_non_blank(high.embedding_model_path, low.embedding_model_path)
+    )
+    chat_model_path = (
+        None
+        if high.chat_model is not None and high.chat_model_path is None
+        else first_non_blank(high.chat_model_path, low.chat_model_path)
+    )
+    rerank_model_path = (
+        None
+        if high.rerank_model is not None and high.rerank_model_path is None
+        else first_non_blank(high.rerank_model_path, low.rerank_model_path)
+    )
     return ProviderConfig(
         provider_kind=high.provider_kind or low.provider_kind,
         location=first_non_blank(high.location, low.location) or low.location,
@@ -329,10 +378,12 @@ def merge_provider_config(
         api_key=first_non_blank(high.api_key, low.api_key),
         base_url=first_non_blank(high.base_url, low.base_url),
         chat_model=first_non_blank(high.chat_model, low.chat_model),
+        chat_model_path=chat_model_path,
+        chat_backend=first_non_blank(high.chat_backend, low.chat_backend),
         embedding_model=first_non_blank(high.embedding_model, low.embedding_model),
         rerank_model=first_non_blank(high.rerank_model, low.rerank_model),
-        embedding_model_path=first_non_blank(high.embedding_model_path, low.embedding_model_path),
-        rerank_model_path=first_non_blank(high.rerank_model_path, low.rerank_model_path),
+        embedding_model_path=embedding_model_path,
+        rerank_model_path=rerank_model_path,
         embedding_batch_size=(
             first_positive_int(high.embedding_batch_size, low.embedding_batch_size)
             if high.embedding_batch_size or low.embedding_batch_size
@@ -459,6 +510,13 @@ def build_provider(provider_config: ProviderConfig) -> object:
             base_url=provider_config.base_url or "http://localhost:11434",
             chat_model=provider_config.chat_model or "",
             embedding_model=provider_config.embedding_model,
+        )
+    if kind == "local-hf":
+        return LocalHfChatProviderRepo(
+            chat_model=provider_config.chat_model,
+            chat_model_path=provider_config.chat_model_path,
+            backend=provider_config.chat_backend,
+            device=provider_config.device,
         )
     if kind == "local-bge":
         return LocalBgeProviderRepo(

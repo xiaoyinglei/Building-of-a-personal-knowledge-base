@@ -394,6 +394,118 @@ def test_build_runtime_for_benchmark_accepts_ollama_embedding_override(tmp_path)
         runtime.close()
 
 
+def test_build_runtime_for_benchmark_accepts_chat_and_rerank_overrides(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRuntime:
+        def __init__(self) -> None:
+            self.capability_bundle = type("_Bundle", (), {"embedding_bindings": []})()
+
+        def close(self) -> None:
+            return None
+
+    def _fake_from_request(*, storage, request, assembly_service):
+        captured["storage"] = storage
+        captured["request"] = request
+        captured["assembly_service"] = assembly_service
+        return _FakeRuntime()
+
+    monkeypatch.setattr(benchmarks.RAGRuntime, "from_request", staticmethod(_fake_from_request))
+
+    runtime = build_runtime_for_benchmark(
+        storage_root=tmp_path / "benchmarks" / "medical_retrieval" / "index",
+        profile_id="local_full",
+        require_chat=True,
+        require_rerank=True,
+        embedding_provider_kind="ollama",
+        embedding_model="qwen3-embedding:8b",
+        chat_model="Qwen3-14B-4bit",
+        rerank_model="Qwen/Qwen3-Reranker-4B",
+    )
+    try:
+        request = captured["request"]
+        overrides = request.overrides
+        assert overrides is not None
+        assert overrides.embedding is not None
+        assert overrides.embedding.provider_kind == "ollama"
+        assert overrides.embedding.embedding_model == "qwen3-embedding:8b"
+        assert overrides.chat is not None
+        assert overrides.chat.provider_kind == "ollama"
+        assert overrides.chat.chat_model == "Qwen3-14B-4bit"
+        assert overrides.rerank is not None
+        assert overrides.rerank.provider_kind == "local-bge"
+        assert overrides.rerank.rerank_model == "Qwen/Qwen3-Reranker-4B"
+    finally:
+        runtime.close()
+
+
+def test_build_runtime_for_benchmark_accepts_local_hf_chat_overrides(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRuntime:
+        def __init__(self) -> None:
+            self.capability_bundle = type("_Bundle", (), {"embedding_bindings": []})()
+
+        def close(self) -> None:
+            return None
+
+    def _fake_from_request(*, storage, request, assembly_service):
+        captured["storage"] = storage
+        captured["request"] = request
+        captured["assembly_service"] = assembly_service
+        return _FakeRuntime()
+
+    monkeypatch.setattr(benchmarks.RAGRuntime, "from_request", staticmethod(_fake_from_request))
+
+    runtime = build_runtime_for_benchmark(
+        storage_root=tmp_path / "benchmarks" / "medical_retrieval" / "index",
+        profile_id="local_full",
+        require_chat=True,
+        require_rerank=False,
+        chat_provider_kind="local-hf",
+        chat_model_path="/models/Qwen3-14B-4bit",
+        chat_backend="mlx",
+    )
+    try:
+        request = captured["request"]
+        overrides = request.overrides
+        assert overrides is not None
+        assert overrides.chat is not None
+        assert overrides.chat.provider_kind == "local-hf"
+        assert overrides.chat.chat_model_path == "/models/Qwen3-14B-4bit"
+        assert overrides.chat.chat_backend == "mlx"
+    finally:
+        runtime.close()
+
+
+def test_build_runtime_for_benchmark_rerank_override_clears_stale_rerank_path(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAG_RERANK_MODEL_PATH", "/tmp/old-bge-reranker")
+
+    runtime = build_runtime_for_benchmark(
+        storage_root=tmp_path / "benchmarks" / "medical_retrieval" / "index",
+        profile_id="local_full",
+        require_chat=False,
+        require_rerank=True,
+        rerank_model="Qwen/Qwen3-Reranker-4B",
+    )
+    try:
+        binding = runtime.capability_bundle.rerank_bindings[0]
+        assert binding.model_name == "Qwen/Qwen3-Reranker-4B"
+        provider = binding.backend
+        assert provider._rerank_model_ref == "Qwen/Qwen3-Reranker-4B"
+    finally:
+        runtime.close()
+
+
 def test_download_fiqa_redownloads_when_cached_zip_is_corrupt(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()

@@ -13,7 +13,7 @@ from rag.benchmark_diagnostics import (
 from rag.benchmarks import FIQA_DATASET, MEDICAL_RETRIEVAL_DATASET, default_benchmark_paths, ensure_benchmark_layout
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Diagnose an existing benchmark retrieval run.")
     parser.add_argument(
         "--dataset",
@@ -42,7 +42,11 @@ def main() -> int:
     parser.add_argument("--embedding-provider", default=None, choices=["local-bge", "ollama"])
     parser.add_argument("--embedding-model", default=None)
     parser.add_argument("--embedding-model-path", default=None)
-    args = parser.parse_args()
+    parser.add_argument("--chat-provider", default=None, choices=["ollama", "openai-compatible", "local-hf"])
+    parser.add_argument("--chat-model", default=None)
+    parser.add_argument("--chat-model-path", default=None)
+    parser.add_argument("--chat-backend", default=None, choices=["auto", "mlx", "transformers"])
+    args = parser.parse_args(argv)
 
     paths = ensure_benchmark_layout(default_benchmark_paths(args.dataset))
     run_dir = paths.eval_variant_dir("retrieval", args.variant) / "runs" / args.run_id
@@ -83,6 +87,10 @@ def main() -> int:
         embedding_provider_kind=args.embedding_provider,
         embedding_model=args.embedding_model,
         embedding_model_path=args.embedding_model_path,
+        chat_provider_kind=args.chat_provider,
+        chat_model=args.chat_model,
+        chat_model_path=args.chat_model_path,
+        chat_backend=args.chat_backend,
     )
     runtime = build_runtime_for_diagnostics(context)
     try:

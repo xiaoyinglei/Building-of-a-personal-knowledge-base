@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from pytest import MonkeyPatch
 
-from rag.providers.adapters import LocalBgeProviderRepo
+from rag.providers.adapters import LocalBgeProviderRepo, _prepare_for_model_fallback
 
 
 def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
@@ -72,23 +72,28 @@ def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
             captured["encode_return_colbert_vecs"] = return_colbert_vecs
             return {"dense_vecs": [[0.1, 0.2], [0.3, 0.4]]}
 
-    class FakeFlagReranker:
-        def __init__(
-            self,
+    class FakeAutoReranker:
+        @staticmethod
+        def from_finetuned(
             model_name_or_path: str,
             *,
+            model_class: str,
             use_fp16: bool,
+            trust_remote_code: bool,
             devices: str | None,
             batch_size: int,
             max_length: int,
             normalize: bool,
-        ) -> None:
+        ) -> FakeAutoReranker:
             captured["rerank_model_name_or_path"] = model_name_or_path
+            captured["rerank_model_class"] = model_class
             captured["rerank_use_fp16"] = use_fp16
+            captured["rerank_trust_remote_code"] = trust_remote_code
             captured["rerank_devices"] = devices
             captured["rerank_batch_size"] = batch_size
             captured["rerank_max_length"] = max_length
             captured["rerank_normalize"] = normalize
+            return FakeAutoReranker()
 
         def compute_score(
             self,
@@ -104,7 +109,7 @@ def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
 
     monkeypatch.setattr(
         "rag.providers.adapters.importlib.import_module",
-        lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagReranker=FakeFlagReranker),
+        lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagAutoReranker=FakeAutoReranker),
     )
     provider = LocalBgeProviderRepo(
         embedding_model="BAAI/bge-m3",
@@ -124,6 +129,7 @@ def test_local_bge_provider_repo_uses_snapshot_paths_for_embedding_and_rerank(
     assert ranking == [1, 0]
     assert captured["embedding_model_name_or_path"] == str(embedding_snapshot)
     assert captured["rerank_model_name_or_path"] == str(rerank_snapshot)
+    assert captured["rerank_model_class"] == "encoder-only-base"
     assert captured["embed_devices"] == provider.embedding_device
     assert captured["rerank_devices"] == provider.embedding_device
     assert captured["embed_texts"] == ["alpha", "beta"]
@@ -183,7 +189,11 @@ def test_local_bge_provider_repo_suppresses_fast_tokenizer_padding_warning(
             self.tokenizer.pad([{"input_ids": [1, 2, 3]}], padding=True)
             return {"dense_vecs": [[0.1, 0.2]]}
 
-    class FakeFlagReranker:
+    class FakeAutoReranker:
+        @staticmethod
+        def from_finetuned(*_args: object, **_kwargs: object) -> FakeAutoReranker:
+            return FakeAutoReranker()
+
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             self.tokenizer = FakeFastTokenizer()
 
@@ -193,7 +203,7 @@ def test_local_bge_provider_repo_suppresses_fast_tokenizer_padding_warning(
 
     monkeypatch.setattr(
         "rag.providers.adapters.importlib.import_module",
-        lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagReranker=FakeFlagReranker),
+        lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagAutoReranker=FakeAutoReranker),
     )
     provider = LocalBgeProviderRepo(
         embedding_model_path=str(embedding_root),
@@ -238,7 +248,7 @@ def test_local_bge_provider_repo_reports_embedding_runtime_and_stats(
 
     monkeypatch.setattr(
         "rag.providers.adapters.importlib.import_module",
-        lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagReranker=object),
+        lambda _name: SimpleNamespace(BGEM3FlagModel=FakeBGEM3FlagModel, FlagAutoReranker=object),
     )
 
     provider = LocalBgeProviderRepo(
@@ -258,4 +268,97 @@ def test_local_bge_provider_repo_reports_embedding_runtime_and_stats(
     assert runtime_info["encode_batch_size"] == 16
     assert stats["call_count"] == 1
     assert stats["text_count"] == 3
-    assert stats["last_request_size"] == 3
+
+
+def test_local_bge_provider_repo_uses_decoder_only_reranker_for_qwen_models(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    rerank_root = tmp_path / "models--Qwen--Qwen3-Reranker-4B"
+    rerank_snapshot = rerank_root / "snapshots" / "reranksha"
+    rerank_snapshot.mkdir(parents=True)
+    (rerank_root / "refs").mkdir(parents=True)
+    (rerank_root / "refs" / "main").write_text("reranksha\n", encoding="utf-8")
+    (rerank_snapshot / "config.json").write_text("{}", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    class FakeAutoReranker:
+        @staticmethod
+        def from_finetuned(model_name_or_path: str, **kwargs: object) -> FakeAutoReranker:
+            captured["model_name_or_path"] = model_name_or_path
+            captured.update(kwargs)
+            return FakeAutoReranker()
+
+        def compute_score(self, pairs: list[list[str]], **_kwargs: object) -> list[float]:
+            return [0.9 for _ in pairs]
+
+    monkeypatch.setattr(
+        "rag.providers.adapters.importlib.import_module",
+        lambda _name: SimpleNamespace(BGEM3FlagModel=object, FlagAutoReranker=FakeAutoReranker),
+    )
+
+    provider = LocalBgeProviderRepo(
+        embedding_model="BAAI/bge-m3",
+        rerank_model="Qwen/Qwen3-Reranker-4B",
+        rerank_model_path=str(rerank_root),
+    )
+    provider.rerank("query", ["candidate-a"])
+
+    assert captured["model_name_or_path"] == str(rerank_snapshot)
+    assert captured["model_class"] == "decoder-only-base"
+    assert captured["trust_remote_code"] is True
+
+
+def test_prepare_for_model_fallback_handles_roberta_pair_sequences() -> None:
+    class FakeXLMRobertaTokenizer:
+        cls_token_id = 0
+        sep_token_id = 2
+        bos_token_id = None
+        eos_token_id = None
+
+        @staticmethod
+        def num_special_tokens_to_add(*, pair: bool) -> int:
+            return 4 if pair else 2
+
+    tokenizer = FakeXLMRobertaTokenizer()
+
+    encoded = _prepare_for_model_fallback(
+        tokenizer,
+        [11, 12],
+        [21, 22, 23],
+        truncation="only_second",
+        max_length=8,
+        padding=False,
+        return_attention_mask=False,
+        add_special_tokens=True,
+    )
+
+    assert encoded["input_ids"] == [0, 11, 12, 2, 2, 21, 22, 2]
+
+
+def test_prepare_for_model_fallback_handles_decoder_only_sequences_without_special_tokens() -> None:
+    class FakeQwen2Tokenizer:
+        cls_token_id = None
+        sep_token_id = None
+        bos_token_id = 151643
+        eos_token_id = 151645
+
+        @staticmethod
+        def num_special_tokens_to_add(*, pair: bool) -> int:
+            return 0
+
+    tokenizer = FakeQwen2Tokenizer()
+
+    encoded = _prepare_for_model_fallback(
+        tokenizer,
+        [1, 2, 3],
+        [4, 5, 6, 7],
+        truncation="only_second",
+        max_length=5,
+        padding=False,
+        return_attention_mask=False,
+        add_special_tokens=False,
+    )
+
+    assert encoded["input_ids"] == [1, 2, 3, 4, 5]

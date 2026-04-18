@@ -1066,31 +1066,44 @@ class IngestPipeline:
         chunks: list[Chunk],
     ) -> EntityRelationExtractionResult:
         extractor = self.extractor
-        if extractor is None:
+        if extractor is None or not chunks:
             return EntityRelationExtractionResult()
-        entities = []
-        relations = []
-        for chunk in chunks:
-            cache_key = f"{chunk.content_hash or chunk.chunk_id}::entity_relation::v2"
-            cached = self.cache.get(cache_key, namespace="extract")
-            if cached is not None and isinstance(cached.payload, dict):
-                try:
-                    result = EntityRelationExtractionResult.model_validate(cached.payload)
-                except Exception:
-                    result = extractor.extract(document=document, chunks=[chunk])
-            else:
-                result = extractor.extract(document=document, chunks=[chunk])
-                self.cache.save(
-                    CacheEntry(
-                        namespace="extract",
-                        cache_key=cache_key,
-                        payload=result.model_dump(mode="json"),
-                        expires_at=datetime.now(UTC) + timedelta(days=7),
-                    )
-                )
-            entities.extend(result.entities)
-            relations.extend(result.relations)
-        return EntityRelationExtractionResult(entities=entities, relations=relations)
+        cache_key = self._document_graph_extraction_cache_key(document=document, chunks=chunks)
+        cached = self.cache.get(cache_key, namespace="extract")
+        if cached is not None and isinstance(cached.payload, dict):
+            try:
+                return EntityRelationExtractionResult.model_validate(cached.payload)
+            except Exception:
+                pass
+
+        result = extractor.extract(document=document, chunks=chunks)
+        self.cache.save(
+            CacheEntry(
+                namespace="extract",
+                cache_key=cache_key,
+                payload=result.model_dump(mode="json"),
+                expires_at=datetime.now(UTC) + timedelta(days=7),
+            )
+        )
+        return result
+
+    @staticmethod
+    def _document_graph_extraction_cache_key(
+        *,
+        document: Document,
+        chunks: Sequence[Chunk],
+    ) -> str:
+        digest = sha256()
+        digest.update((document.title or "").encode("utf-8"))
+        digest.update(b"\n")
+        for chunk in sorted(chunks, key=lambda item: (item.order_index, item.chunk_id)):
+            digest.update((chunk.content_hash or chunk.text or "").encode("utf-8"))
+            digest.update(b"|")
+            digest.update(chunk.chunk_id.encode("utf-8"))
+            digest.update(b"|")
+            digest.update(chunk.segment_id.encode("utf-8"))
+            digest.update(b"\n")
+        return f"{digest.hexdigest()}::entity_relation_document::v3"
 
     def _index_multimodal_vectors(self, *, source: Source, document: Document, chunks: list[Chunk]) -> None:
         special_chunks = [

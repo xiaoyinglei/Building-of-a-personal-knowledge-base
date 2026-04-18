@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import re
 from collections import Counter
 from collections.abc import Sequence
@@ -10,7 +9,11 @@ from typing import Any, Protocol, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from rag.assembly import RerankCapabilityBinding
-from rag.providers.adapters import suppress_backend_fast_tokenizer_padding_warning
+from rag.providers.adapters import (
+    _infer_flagembedding_reranker_model_class,
+    _load_flagembedding_module,
+    suppress_backend_fast_tokenizer_padding_warning,
+)
 from rag.retrieval.analysis import QueryUnderstandingService
 from rag.schema.query import QueryUnderstanding
 from rag.utils.text import keyword_overlap, looks_command_like, search_terms, split_sentences, text_unit_count
@@ -490,15 +493,25 @@ class ProviderBackedCrossEncoder:
         if not self._config.model_path:
             return None
         try:
-            module = importlib.import_module("FlagEmbedding")
+            module = _load_flagembedding_module()
         except ModuleNotFoundError:
             return None
-        reranker_cls = getattr(module, "FlagReranker", None)
-        if reranker_cls is None:
+        auto_reranker_cls = getattr(module, "FlagAutoReranker", None)
+        if auto_reranker_cls is None:
             return None
         try:
             model_ref = _resolve_local_model_reference(self._config.model_name, self._config.model_path)
-            backend = cast(object, reranker_cls(model_ref, use_fp16=False))
+            backend = cast(
+                object,
+                auto_reranker_cls.from_finetuned(
+                    model_ref,
+                    model_class=_infer_flagembedding_reranker_model_class(model_ref),
+                    use_fp16=False,
+                    trust_remote_code=True,
+                    batch_size=self._config.batch_size,
+                    max_length=self._config.max_length,
+                ),
+            )
             return suppress_backend_fast_tokenizer_padding_warning(backend)
         except Exception:
             return None

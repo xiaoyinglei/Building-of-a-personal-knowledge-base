@@ -16,7 +16,47 @@ from rag.benchmarks import (
 from rag.schema.runtime import ExecutionLocationPreference
 
 
-def main() -> int:
+def _resolve_default_answer_index(
+    *,
+    dataset: str,
+    variant: str,
+    storage_root: str | None,
+    vector_backend: str | None,
+    vector_collection_prefix: str | None,
+    embedding_provider: str | None,
+    embedding_model: str | None,
+    paths,
+) -> tuple[Path, str | None, str | None]:
+    if storage_root is not None:
+        resolved_root = Path(storage_root)
+        resolved_backend = vector_backend
+        resolved_prefix = vector_collection_prefix
+        if resolved_backend is None and "milvus" in resolved_root.name:
+            resolved_backend = "milvus"
+        if resolved_prefix is None:
+            if resolved_root.name == "mini-milvus-bge-v2":
+                resolved_prefix = "medical_retrieval_mini_bge_v2"
+            elif resolved_root.name == "mini-milvus-qwen8b-v1":
+                resolved_prefix = "medical_retrieval_mini_qwen8b_v1"
+        return resolved_root, resolved_backend, resolved_prefix
+
+    if dataset == MEDICAL_RETRIEVAL_DATASET and variant == "mini":
+        if embedding_provider == "ollama" and embedding_model == "qwen3-embedding:8b":
+            return (
+                Path("data/benchmarks/medical_retrieval/index/mini-milvus-qwen8b-v1"),
+                vector_backend or "milvus",
+                vector_collection_prefix or "medical_retrieval_mini_qwen8b_v1",
+            )
+        return (
+            Path("data/benchmarks/medical_retrieval/index/mini-milvus-bge-v2"),
+            vector_backend or "milvus",
+            vector_collection_prefix or "medical_retrieval_mini_bge_v2",
+        )
+
+    return paths.index_variant_dir(variant), vector_backend, vector_collection_prefix
+
+
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -48,7 +88,17 @@ def main() -> int:
     parser.add_argument("--embedding-provider", default=None, choices=["local-bge", "ollama"])
     parser.add_argument("--embedding-model", default=None)
     parser.add_argument("--embedding-model-path", default=None)
-    args = parser.parse_args()
+    parser.add_argument("--chat-provider", default=None, choices=["ollama", "openai-compatible", "local-hf"])
+    parser.add_argument("--chat-model", default=None)
+    parser.add_argument("--chat-model-path", default=None)
+    parser.add_argument("--chat-backend", default=None, choices=["auto", "mlx", "transformers"])
+    parser.add_argument("--rerank-model", default=None)
+    parser.add_argument("--rerank-model-path", default=None)
+    parser.add_argument("--vector-backend", default=None, choices=["sqlite", "milvus", "pgvector"])
+    parser.add_argument("--vector-dsn", default=None)
+    parser.add_argument("--vector-namespace", default=None)
+    parser.add_argument("--vector-collection-prefix", default=None)
+    args = parser.parse_args(argv)
 
     paths = ensure_benchmark_layout(default_benchmark_paths(args.dataset), tasks=("retrieval", "ingest"))
     prepared_dir = paths.prepared_variant_dir(args.variant)
@@ -60,7 +110,16 @@ def main() -> int:
         if args.output_root is None
         else Path(args.output_root)
     )
-    storage_root = Path(args.storage_root) if args.storage_root else paths.index_variant_dir(args.variant)
+    storage_root, resolved_vector_backend, resolved_collection_prefix = _resolve_default_answer_index(
+        dataset=args.dataset,
+        variant=args.variant,
+        storage_root=args.storage_root,
+        vector_backend=args.vector_backend,
+        vector_collection_prefix=args.vector_collection_prefix,
+        embedding_provider=args.embedding_provider,
+        embedding_model=args.embedding_model,
+        paths=paths,
+    )
     storage_root.mkdir(parents=True, exist_ok=True)
 
     runtime = build_runtime_for_benchmark(
@@ -71,6 +130,16 @@ def main() -> int:
         embedding_provider_kind=args.embedding_provider,
         embedding_model=args.embedding_model,
         embedding_model_path=args.embedding_model_path,
+        rerank_model=args.rerank_model,
+        rerank_model_path=args.rerank_model_path,
+        chat_provider_kind=args.chat_provider,
+        chat_model=args.chat_model,
+        chat_model_path=args.chat_model_path,
+        chat_backend=args.chat_backend,
+        vector_backend=resolved_vector_backend,
+        vector_dsn=args.vector_dsn,
+        vector_namespace=args.vector_namespace,
+        vector_collection_prefix=resolved_collection_prefix,
     )
     try:
         local_judge = build_chat_judge(profile_id=args.local_judge_profile, allow_missing=False)
@@ -113,6 +182,14 @@ def main() -> int:
                 "qrels_path": str(qrels_path),
                 "storage_root": str(storage_root),
                 "output_root": str(output_root),
+                "vector_backend": resolved_vector_backend,
+                "vector_namespace": args.vector_namespace,
+                "vector_collection_prefix": resolved_collection_prefix,
+                "chat_provider": args.chat_provider,
+                "chat_model_override": args.chat_model,
+                "chat_model_path_override": args.chat_model_path,
+                "chat_backend_override": args.chat_backend,
+                "rerank_model_override": args.rerank_model,
                 "local_judge_profile": args.local_judge_profile,
                 "review_judge_profile": None if args.disable_review else args.review_judge_profile,
             }

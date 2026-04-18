@@ -107,10 +107,8 @@ data/
 │   │   ├── prepared/
 │   │   │   ├── full/                          # 统一格式 JSONL（完整集）
 │   │   │   └── mini/                          # 统一格式 JSONL（小子集）
-│   │   ├── index/                             # ingest 后的正式检索库
-│   │   └── eval/
-│   │       ├── retrieval/                     # retrieval baseline 输出
-│   │       └── ingest/                        # ingest profiling 输出
+│   │   ├── index/                             # 预留检索库目录（当前未保留正式索引快照）
+│   │   └── eval/                              # 预留评测目录（当前未保留正式结果快照）
 │   │
 │   └── medical_retrieval/
 │       ├── raw/                               # C-MTEB MedicalRetrieval 原始数据
@@ -118,30 +116,18 @@ data/
 │       │   ├── full/                          # full 文档/问题/qrels JSONL
 │       │   └── mini/                          # mini 文档/问题/qrels JSONL
 │       ├── index/
-│       │   ├── full/                          # full 索引
-│       │   ├── mini/                          # 速度优先线索引：BAAI/bge-m3
-│       │   └── mini-qwen3-4b-ab/              # 质量优先线索引：qwen3-embedding:4b
+│       │   ├── mini/                          # 历史参考线索引：BAAI/bge-m3 + sqlite
+│       │   ├── mini-milvus-bge-v2/            # 低时延线索引壳：BAAI/bge-m3 + Milvus
+│       │   └── mini-milvus-qwen8b-v1/         # 质量优先线索引壳：qwen3-embedding:8b + Milvus
 │       ├── eval/
 │       │   ├── retrieval/
-│       │   │   ├── full/                      # full retrieval 输出
-│       │   │   └── mini/                      # mini retrieval 输出与 run 历史
-│       │   └── ingest/
-│       │       ├── full/                      # full ingest profiling 输出
-│       │       └── mini/                      # mini ingest profiling 输出
-│       └── subsets/                           # 手工或脚本切出来的实验子集
+│       │   │   └── mini/                      # 仅保留 3 条 retrieval 基线的历史与逐 query 输出
+│       │   └── ingest/                        # ingest profiling 输出（按需生成，不长期保留）
+│       └── subsets/                           # 预留实验子集目录（当前已清空）
 │
 └── eval/
-    ├── diagnostics/
-    │   └── medical_retrieval/
-    │       └── <run_id>/                      # retrieval 离线诊断：failure / branch / profile / recommendations
-    └── answers/
-        └── medical_retrieval/
-            └── mini/
-                ├── baseline.csv               # answer benchmark 总表
-                ├── per_query_answers.jsonl    # 所有 run 累计的逐 query answer 结果
-                ├── run_history.jsonl          # 所有 answer run 摘要历史
-                └── runs/
-                    └── <run_id>/              # 单次 answer eval 快照
+    └── baselines/
+        └── medical_retrieval.json             # 单数据集总表：当前保留的 retrieval 基线、主线标记、核心对比
 ```
 
 ## 主线路：代码如何流转
@@ -319,7 +305,6 @@ data/
 
 入口：
 - [scripts/evaluate_answer_benchmark.py](/Users/leixiaoying/LLM/RAG学习/scripts/evaluate_answer_benchmark.py)
-- CLI 等价入口：`uv run rag benchmark-answer-evaluate ...`
 
 代码流转：
 
@@ -346,19 +331,53 @@ data/
 - 检索命中了但答案为什么还没答出来
 - 哪些 query 更适合改 prompt / answer guard
 
-## 当前两条正式 baseline
+默认索引选择：
+- 对 `medical_retrieval mini`
+  - 不传 `--storage-root` 且不传 embedding override 时，脚本默认走低时延线：
+    - `data/benchmarks/medical_retrieval/index/mini-milvus-bge-v2`
+    - `vector_backend=milvus`
+    - `vector_collection_prefix=medical_retrieval_mini_bge_v2`
+  - 如果显式传：
+    - `--embedding-provider ollama`
+    - `--embedding-model qwen3-embedding:8b`
+    脚本默认切到质量优先线：
+    - `data/benchmarks/medical_retrieval/index/mini-milvus-qwen8b-v1`
+    - `vector_backend=milvus`
+    - `vector_collection_prefix=medical_retrieval_mini_qwen8b_v1`
+
+注意：
+- answer benchmark 会复用**现有索引**
+- 但不会复用旧的 retrieval run 结果
+- 它会对每个 query 重新跑一次完整 `runtime.query(...)`
+  - retrieval
+  - rerank
+  - context build
+  - grounded answer generation
+- 所以 answer benchmark 的时延通常明显高于 retrieval benchmark
+
+## 当前保留的 retrieval 基线
+
+先看这个文件：
+
+- [medical_retrieval.json](/Users/leixiaoying/LLM/RAG学习/data/eval/baselines/medical_retrieval.json)
+
+它是当前 `medical_retrieval` 数据集唯一的收口总表。以后看结果，先看它，不用先翻：
+- `baseline.csv`
+- `run_history.jsonl`
+- `per_query.jsonl`
 
 ### 质量优先线
 
-- embedding：`qwen3-embedding:4b`
+- embedding：`qwen3-embedding:8b`
 - mode：`naive`
 - chunk：`480/64`
 - chunk_top_k：`20`
 - rerank：`on`
 - rerank_pool_k：`10`
-- 索引目录：`data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab`
+- 向量后端：`Milvus`
+- 索引目录：`data/benchmarks/medical_retrieval/index/mini-milvus-qwen8b-v1`
 
-### 速度优先线
+### 低时延线
 
 - embedding：`BAAI/bge-m3`
 - mode：`naive`
@@ -366,13 +385,15 @@ data/
 - chunk_top_k：`20`
 - rerank：`on`
 - rerank_pool_k：`10`
+- 向量后端：`Milvus`
+- 索引目录：`data/benchmarks/medical_retrieval/index/mini-milvus-bge-v2`
+
+### 历史参考线
+
+- embedding：`BAAI/bge-m3`
+- 向量后端：`sqlite`
 - 索引目录：`data/benchmarks/medical_retrieval/index/mini`
-
-### 历史对照线
-
-- `multilingual-e5-large-instruct`
-  - 已验证输给 `bge-m3`
-  - 只保留 benchmark 历史记录，不再作为主线候选
+- 用途：保留旧主线对照，不再作为当前低时延主线
 
 ## 指标说明
 
@@ -433,6 +454,18 @@ data/
   - citation 映射到 benchmark doc 后，是否覆盖 gold 文档
 - `answer_correct_rate`
   - judge 子集上的答案正确率
+- `avg_generation_latency_ms`
+  - 生成阶段平均耗时，只统计 chat / answer generation
+- `p95_generation_latency_ms`
+  - 生成阶段 95 分位耗时
+- `avg_non_generation_latency_ms`
+  - 非生成阶段平均耗时，近似等于 retrieval + rerank + context build
+- `p95_non_generation_latency_ms`
+  - 非生成阶段 95 分位耗时
+- `avg_context_evidence_count`
+  - 生成时实际送入 prompt 的 evidence 条数
+- `avg_context_token_count`
+  - 生成时实际送入 prompt 的上下文 token 数
 
 ## 常用命令
 
@@ -454,14 +487,22 @@ uv run python scripts/prepare_public_benchmark.py --dataset medical_retrieval
 
 ### 2. 正式 ingest
 
-速度优先线：
+如果用 Milvus，先设置：
+
+```bash
+export RAG_MILVUS_URI=http://127.0.0.1:19530
+```
+
+低时延线：
 
 ```bash
 uv run python scripts/ingest_public_benchmark.py \
   --dataset medical_retrieval \
   --variant mini \
   --profile local_full \
-  --storage-root data/benchmarks/medical_retrieval/index/mini \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-milvus-bge-v2 \
+  --vector-backend milvus \
+  --vector-collection-prefix medical_retrieval_mini_bge_v2 \
   --batch-size 32 \
   --embedding-batch-size 8 \
   --embedding-device mps \
@@ -477,11 +518,13 @@ uv run python scripts/ingest_public_benchmark.py \
   --dataset medical_retrieval \
   --variant mini \
   --profile local_full \
-  --storage-root data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-milvus-qwen8b-v1 \
+  --vector-backend milvus \
+  --vector-collection-prefix medical_retrieval_mini_qwen8b_v1 \
   --batch-size 32 \
   --embedding-batch-size 8 \
   --embedding-provider ollama \
-  --embedding-model qwen3-embedding:4b \
+  --embedding-model qwen3-embedding:8b \
   --chunk-token-size 480 \
   --chunk-overlap-tokens 64 \
   --skip-graph-extraction
@@ -489,13 +532,16 @@ uv run python scripts/ingest_public_benchmark.py \
 
 ### 3. Retrieval baseline
 
-速度优先线：
+低时延线：
 
 ```bash
 uv run python scripts/evaluate_retrieval_benchmark.py \
   --dataset medical_retrieval \
   --variant mini \
   --profile local_full \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-milvus-bge-v2 \
+  --vector-backend milvus \
+  --vector-collection-prefix medical_retrieval_mini_bge_v2 \
   --mode naive \
   --top-k 10 \
   --chunk-top-k 20 \
@@ -510,26 +556,31 @@ uv run python scripts/evaluate_retrieval_benchmark.py \
   --dataset medical_retrieval \
   --variant mini \
   --profile local_full \
-  --storage-root data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-milvus-qwen8b-v1 \
+  --vector-backend milvus \
+  --vector-collection-prefix medical_retrieval_mini_qwen8b_v1 \
   --mode naive \
   --top-k 10 \
   --chunk-top-k 20 \
   --retrieval-pool-k 20 \
   --rerank-pool-k 10 \
   --embedding-provider ollama \
-  --embedding-model qwen3-embedding:4b
+  --embedding-model qwen3-embedding:8b
 ```
 
 ### 4. Retrieval 离线诊断
 
-速度优先线：
+低时延线：
 
 ```bash
 uv run python scripts/diagnose_benchmark_run.py \
   --dataset medical_retrieval \
   --variant mini \
-  --run-id <bge_run_id> \
+  --run-id medical_retrieval-20260412T155018448051Z \
   --profile local_full \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-milvus-bge-v2 \
+  --vector-backend milvus \
+  --vector-collection-prefix medical_retrieval_mini_bge_v2 \
   --mode naive \
   --top-k 10 \
   --chunk-top-k 20 \
@@ -543,27 +594,32 @@ uv run python scripts/diagnose_benchmark_run.py \
 uv run python scripts/diagnose_benchmark_run.py \
   --dataset medical_retrieval \
   --variant mini \
-  --run-id <qwen_run_id> \
+  --run-id medical_retrieval-20260413T022639961261Z \
   --profile local_full \
-  --storage-root data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-milvus-qwen8b-v1 \
+  --vector-backend milvus \
+  --vector-collection-prefix medical_retrieval_mini_qwen8b_v1 \
   --mode naive \
   --top-k 10 \
   --chunk-top-k 20 \
   --rerank \
   --rerank-pool-k 10 \
   --embedding-provider ollama \
-  --embedding-model qwen3-embedding:4b
+  --embedding-model qwen3-embedding:8b
 ```
 
 ### 5. Answer benchmark
 
-速度优先线：
+低时延线：
 
 ```bash
 uv run python scripts/evaluate_answer_benchmark.py \
   --dataset medical_retrieval \
   --variant mini \
   --profile local_full \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-milvus-bge-v2 \
+  --vector-backend milvus \
+  --vector-collection-prefix medical_retrieval_mini_bge_v2 \
   --mode naive \
   --top-k 10 \
   --chunk-top-k 20 \
@@ -579,14 +635,48 @@ uv run python scripts/evaluate_answer_benchmark.py \
   --dataset medical_retrieval \
   --variant mini \
   --profile local_full \
-  --storage-root data/benchmarks/medical_retrieval/index/mini-qwen3-4b-ab \
+  --storage-root data/benchmarks/medical_retrieval/index/mini-milvus-qwen8b-v1 \
+  --vector-backend milvus \
+  --vector-collection-prefix medical_retrieval_mini_qwen8b_v1 \
   --mode naive \
   --top-k 10 \
   --chunk-top-k 20 \
   --retrieval-pool-k 20 \
   --rerank-pool-k 10 \
   --embedding-provider ollama \
-  --embedding-model qwen3-embedding:4b \
+  --embedding-model qwen3-embedding:8b \
+  --judge-subset-size 250
+```
+
+如果你只是想直接走当前默认 Milvus 线，也可以省略 `--storage-root / --vector-backend / --vector-collection-prefix`：
+
+- 默认低时延线：
+```bash
+uv run python scripts/evaluate_answer_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --retrieval-pool-k 20 \
+  --rerank-pool-k 10 \
+  --judge-subset-size 250
+```
+
+- 默认质量优先线：
+```bash
+uv run python scripts/evaluate_answer_benchmark.py \
+  --dataset medical_retrieval \
+  --variant mini \
+  --profile local_full \
+  --mode naive \
+  --top-k 10 \
+  --chunk-top-k 20 \
+  --retrieval-pool-k 20 \
+  --rerank-pool-k 10 \
+  --embedding-provider ollama \
+  --embedding-model qwen3-embedding:8b \
   --judge-subset-size 250
 ```
 
@@ -658,6 +748,28 @@ uv run python scripts/profile_benchmark_ingest.py \
 - `parent_backfill` 无收益
 - `256` 小 chunk 系列没有优于 `480/64`
 
+当前保留的 3 条 retrieval 基线：
+- `BAAI/bge-m3 + sqlite`
+  - `Recall@10 = 0.776667`
+  - `MRR@10 = 0.690972`
+  - `NDCG@10 = 0.712199`
+  - `avg_latency_ms = 2472.225`
+- `BAAI/bge-m3 + milvus`
+  - `Recall@10 = 0.67`
+  - `MRR@10 = 0.588259`
+  - `NDCG@10 = 0.608173`
+  - `avg_latency_ms = 563.793`
+- `qwen3-embedding:8b + milvus`
+  - `Recall@10 = 0.82`
+  - `MRR@10 = 0.705854`
+  - `NDCG@10 = 0.733644`
+  - `avg_latency_ms = 695.559`
+
+当前主线选择：
+- 新质量优先线：`qwen3-embedding:8b + milvus`
+- 新低时延线：`BAAI/bge-m3 + milvus`
+- `BAAI/bge-m3 + sqlite` 只作为历史参考
+
 ### Diagnostics
 
 已知事实：
@@ -677,6 +789,12 @@ uv run python scripts/profile_benchmark_ingest.py \
   - citation benchmark 映射之前被内部 `document-*` 污染，现在已修正为优先用 `benchmark_doc_id`
   - 本地长上下文生成非常慢，不适合直接当客户在线链路
 - 新增的 `answer_context_top_k` 用来只压 generation context，不影响 retrieval 结果，便于做 `4 / 6 / 8` A/B
+- answer benchmark 现在会额外记录：
+  - `avg_generation_latency_ms`
+  - `avg_non_generation_latency_ms`
+  - `avg_context_evidence_count`
+  - `avg_context_token_count`
+  这样可以直接判断慢点主要在生成，还是在 retrieval/context build
 
 ## 下一步更值得投的方向
 
@@ -698,7 +816,7 @@ uv run python scripts/profile_benchmark_ingest.py \
 - `hybrid / mix` 重写
 - `local / global` 调参
 - `fusion` 重写
-- `multilingual-e5-large-instruct` 再实验
+- 再开新的 embedding 大范围扫参
 
 ## Workbench
 

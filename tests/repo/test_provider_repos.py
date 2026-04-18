@@ -6,7 +6,12 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from rag.providers.adapters import OllamaProviderRepo, OpenAIProviderRepo
+from rag.providers.adapters import (
+    LocalHfChatProviderRepo,
+    OllamaProviderRepo,
+    OpenAIProviderRepo,
+    _normalize_chat_text,
+)
 
 
 class FakeOpenAIClient:
@@ -182,3 +187,46 @@ def test_ollama_provider_repo_uses_official_http_endpoints_and_rejects_rerank() 
     assert isinstance(stats["last_duration_ms"], float)
     with pytest.raises(RuntimeError, match="does not provide rerank"):
         repo.rerank("query", ["a", "b"])
+
+
+def test_local_hf_chat_provider_prefers_mlx_for_mlx_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = LocalHfChatProviderRepo(chat_model="mlx-community/Qwen3-14B-4bit")
+
+    monkeypatch.setattr(
+        LocalHfChatProviderRepo,
+        "_load_mlx_backend",
+        lambda self: SimpleNamespace(chat=lambda prompt: f"mlx:{prompt}"),
+    )
+    monkeypatch.setattr(
+        LocalHfChatProviderRepo,
+        "_load_transformers_backend",
+        lambda self: (_ for _ in ()).throw(AssertionError("transformers backend should not load first")),
+    )
+
+    assert provider.chat("hello") == "mlx:hello"
+    assert provider.backend_name == "mlx"
+
+
+def test_local_hf_chat_provider_falls_back_to_transformers_when_mlx_init_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = LocalHfChatProviderRepo(chat_model="mlx-community/Qwen3-14B-4bit", backend="auto")
+
+    monkeypatch.setattr(
+        LocalHfChatProviderRepo,
+        "_load_mlx_backend",
+        lambda self: (_ for _ in ()).throw(RuntimeError("mlx unavailable")),
+    )
+    monkeypatch.setattr(
+        LocalHfChatProviderRepo,
+        "_load_transformers_backend",
+        lambda self: SimpleNamespace(chat=lambda prompt: f"transformers:{prompt}"),
+    )
+
+    assert provider.chat("hello") == "transformers:hello"
+    assert provider.backend_name == "transformers"
+
+
+def test_normalize_chat_text_strips_qwen_think_blocks() -> None:
+    assert _normalize_chat_text("<think>\ninternal\n</think>\n\nfinal answer") == "final answer"
+    assert _normalize_chat_text("plain answer") == "plain answer"

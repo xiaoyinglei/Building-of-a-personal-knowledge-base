@@ -18,7 +18,7 @@ from rag.benchmarks import (
 from rag.schema.runtime import ExecutionLocationPreference
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -43,11 +43,17 @@ def main() -> int:
     parser.add_argument("--embedding-provider", default=None, choices=["local-bge", "ollama"])
     parser.add_argument("--embedding-model", default=None)
     parser.add_argument("--embedding-model-path", default=None)
+    parser.add_argument("--chat-provider", default=None, choices=["ollama", "openai-compatible", "local-hf"])
+    parser.add_argument("--chat-model", default=None)
+    parser.add_argument("--chat-model-path", default=None)
+    parser.add_argument("--chat-backend", default=None, choices=["auto", "mlx", "transformers"])
+    parser.add_argument("--rerank-model", default=None)
+    parser.add_argument("--rerank-model-path", default=None)
     parser.add_argument("--vector-backend", default="sqlite", choices=["sqlite", "milvus", "pgvector"])
     parser.add_argument("--vector-dsn", default=None)
     parser.add_argument("--vector-namespace", default=None)
     parser.add_argument("--vector-collection-prefix", default=None)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     paths = ensure_benchmark_layout(default_benchmark_paths(args.dataset))
     spec = benchmark_dataset_spec(args.dataset)
@@ -81,6 +87,12 @@ def main() -> int:
         embedding_provider_kind=args.embedding_provider,
         embedding_model=args.embedding_model,
         embedding_model_path=args.embedding_model_path,
+        chat_provider_kind=args.chat_provider,
+        chat_model=args.chat_model,
+        chat_model_path=args.chat_model_path,
+        chat_backend=args.chat_backend,
+        rerank_model=args.rerank_model,
+        rerank_model_path=args.rerank_model_path,
         vector_backend=args.vector_backend,
         vector_dsn=args.vector_dsn,
         vector_namespace=args.vector_namespace,
@@ -119,6 +131,11 @@ def main() -> int:
         payload["query_limit"] = args.query_limit
         payload["embedding_provider"] = args.embedding_provider
         payload["embedding_model_override"] = args.embedding_model
+        payload["chat_provider"] = args.chat_provider
+        payload["chat_model_override"] = args.chat_model
+        payload["chat_model_path_override"] = args.chat_model_path
+        payload["chat_backend_override"] = args.chat_backend
+        payload["rerank_model_override"] = args.rerank_model
         payload["vector_backend"] = args.vector_backend
         payload["vector_namespace"] = args.vector_namespace
         payload["vector_collection_prefix"] = args.vector_collection_prefix

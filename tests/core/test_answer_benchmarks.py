@@ -44,6 +44,10 @@ def _record(
         retrieval_hit_at_10=retrieval_hit,
         citation_hit_at_10=citation_hit,
         latency_ms=100.0,
+        generation_latency_ms=60.0,
+        non_generation_latency_ms=40.0,
+        context_evidence_count=4,
+        context_token_count=320,
         generation_provider="ollama",
         generation_model="qwen3:14b",
     )
@@ -383,6 +387,8 @@ def test_build_answer_record_prefers_benchmark_doc_id_for_citations() -> None:
     result = SimpleNamespace(
         answer=answer,
         retrieval=SimpleNamespace(reranked_benchmark_doc_ids=["bench-1"]),
+        context=SimpleNamespace(evidence=[object(), object()], token_count=256),
+        generation_attempts=[SimpleNamespace(latency_ms=91.5)],
         generation_provider="ollama",
         generation_model="qwen3:14b",
     )
@@ -400,3 +406,7 @@ def test_build_answer_record_prefers_benchmark_doc_id_for_citations() -> None:
 
     assert record.cited_doc_ids == ["bench-1"]
     assert record.citation_hit_at_10 is True
+    assert record.generation_latency_ms == 91.5
+    assert record.non_generation_latency_ms == 0.0
+    assert record.context_evidence_count == 2
+    assert record.context_token_count == 256

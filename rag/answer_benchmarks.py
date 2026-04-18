@@ -80,6 +80,10 @@ class AnswerPerQueryRecord:
     retrieval_hit_at_10: bool
     citation_hit_at_10: bool
     latency_ms: float
+    generation_latency_ms: float | None
+    non_generation_latency_ms: float | None
+    context_evidence_count: int
+    context_token_count: int
     generation_provider: str | None
     generation_model: str | None
 
@@ -100,6 +104,14 @@ class AnswerPerQueryRecord:
             "retrieval_hit_at_10": self.retrieval_hit_at_10,
             "citation_hit_at_10": self.citation_hit_at_10,
             "latency_ms": round(self.latency_ms, 3),
+            "generation_latency_ms": (
+                None if self.generation_latency_ms is None else round(self.generation_latency_ms, 3)
+            ),
+            "non_generation_latency_ms": (
+                None if self.non_generation_latency_ms is None else round(self.non_generation_latency_ms, 3)
+            ),
+            "context_evidence_count": self.context_evidence_count,
+            "context_token_count": self.context_token_count,
             "generation_provider": self.generation_provider,
             "generation_model": self.generation_model,
         }
@@ -176,6 +188,12 @@ class AnswerRunSummary:
     citation_gold_hit_rate: float
     avg_latency_ms: float
     p95_latency_ms: float
+    avg_generation_latency_ms: float | None = None
+    p95_generation_latency_ms: float | None = None
+    avg_non_generation_latency_ms: float | None = None
+    p95_non_generation_latency_ms: float | None = None
+    avg_context_evidence_count: float | None = None
+    avg_context_token_count: float | None = None
     answer_correct_rate: float | None = None
 
     @property
@@ -203,6 +221,24 @@ class AnswerRunSummary:
             "citation_gold_hit_rate": round(self.citation_gold_hit_rate, 6),
             "avg_latency_ms": round(self.avg_latency_ms, 3),
             "p95_latency_ms": round(self.p95_latency_ms, 3),
+            "avg_generation_latency_ms": (
+                None if self.avg_generation_latency_ms is None else round(self.avg_generation_latency_ms, 3)
+            ),
+            "p95_generation_latency_ms": (
+                None if self.p95_generation_latency_ms is None else round(self.p95_generation_latency_ms, 3)
+            ),
+            "avg_non_generation_latency_ms": (
+                None if self.avg_non_generation_latency_ms is None else round(self.avg_non_generation_latency_ms, 3)
+            ),
+            "p95_non_generation_latency_ms": (
+                None if self.p95_non_generation_latency_ms is None else round(self.p95_non_generation_latency_ms, 3)
+            ),
+            "avg_context_evidence_count": (
+                None if self.avg_context_evidence_count is None else round(self.avg_context_evidence_count, 3)
+            ),
+            "avg_context_token_count": (
+                None if self.avg_context_token_count is None else round(self.avg_context_token_count, 3)
+            ),
             "queries_per_second": round(self.queries_per_second, 3),
             "answer_correct_rate": None if self.answer_correct_rate is None else round(self.answer_correct_rate, 6),
         }
@@ -283,6 +319,10 @@ class AnswerBenchmarkEvaluator:
 
         per_query_records: list[AnswerPerQueryRecord] = []
         latencies: list[float] = []
+        generation_latencies: list[float] = []
+        non_generation_latencies: list[float] = []
+        context_evidence_counts: list[float] = []
+        context_token_counts: list[float] = []
         per_query_path = run_dir / "per_query_answers.jsonl"
         cumulative_per_query_path = output_root / "per_query_answers.jsonl"
 
@@ -321,6 +361,12 @@ class AnswerBenchmarkEvaluator:
                     latency_ms=latency_ms,
                     top_k=self.top_k,
                 )
+                if record.generation_latency_ms is not None:
+                    generation_latencies.append(record.generation_latency_ms)
+                if record.non_generation_latency_ms is not None:
+                    non_generation_latencies.append(record.non_generation_latency_ms)
+                context_evidence_counts.append(float(record.context_evidence_count))
+                context_token_counts.append(float(record.context_token_count))
                 handle.write(json.dumps(record.as_json(), ensure_ascii=False) + "\n")
                 append_jsonl(cumulative_per_query_path, record.as_json())
                 per_query_records.append(record)
@@ -440,6 +486,12 @@ class AnswerBenchmarkEvaluator:
             citation_gold_hit_rate=float(evidence_summary["citation_gold_hit_rate"]),
             avg_latency_ms=_mean(latencies),
             p95_latency_ms=_p95(latencies),
+            avg_generation_latency_ms=_mean(generation_latencies) if generation_latencies else None,
+            p95_generation_latency_ms=_p95(generation_latencies) if generation_latencies else None,
+            avg_non_generation_latency_ms=_mean(non_generation_latencies) if non_generation_latencies else None,
+            p95_non_generation_latency_ms=_p95(non_generation_latencies) if non_generation_latencies else None,
+            avg_context_evidence_count=_mean(context_evidence_counts) if context_evidence_counts else None,
+            avg_context_token_count=_mean(context_token_counts) if context_token_counts else None,
             answer_correct_rate=judge_summary.get("final_correct_ratio") if judge_records else None,
         )
         append_answer_baseline_row(output_root / "baseline.csv", summary)
@@ -497,6 +549,7 @@ def build_answer_record(
     ]
     citation_hit_at_10 = any(doc_id in set(gold_doc_ids) for doc_id in cited_doc_ids)
     retrieval_hit_at_10 = any(doc_id in set(gold_doc_ids) for doc_id in retrieved_doc_ids)
+    generation_latency_ms = _generation_latency_ms(result)
     label = classify_evidence_consistency(
         retrieval_hit_at_10=retrieval_hit_at_10,
         citation_count=len(answer.citations),
@@ -520,9 +573,28 @@ def build_answer_record(
         retrieval_hit_at_10=retrieval_hit_at_10,
         citation_hit_at_10=citation_hit_at_10,
         latency_ms=latency_ms,
+        generation_latency_ms=generation_latency_ms,
+        non_generation_latency_ms=(
+            None if generation_latency_ms is None else max(latency_ms - generation_latency_ms, 0.0)
+        ),
+        context_evidence_count=len(result.context.evidence),
+        context_token_count=result.context.token_count,
         generation_provider=result.generation_provider,
         generation_model=result.generation_model,
     )
+
+
+def _generation_latency_ms(result: Any) -> float | None:
+    attempts = getattr(result, "generation_attempts", ()) or ()
+    latencies = [
+        float(latency)
+        for attempt in attempts
+        for latency in [getattr(attempt, "latency_ms", None)]
+        if latency is not None
+    ]
+    if not latencies:
+        return None
+    return sum(latencies)
 
 
 def summarize_evidence_consistency(records: Sequence[AnswerPerQueryRecord]) -> dict[str, object]:
@@ -755,6 +827,12 @@ def append_answer_baseline_row(path: Path, summary: AnswerRunSummary) -> None:
         "answer_correct_rate",
         "avg_latency_ms",
         "p95_latency_ms",
+        "avg_generation_latency_ms",
+        "p95_generation_latency_ms",
+        "avg_non_generation_latency_ms",
+        "p95_non_generation_latency_ms",
+        "avg_context_evidence_count",
+        "avg_context_token_count",
         "queries_per_second",
     ]
     row = summary.as_json()

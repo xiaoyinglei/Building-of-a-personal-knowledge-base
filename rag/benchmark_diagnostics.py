@@ -172,6 +172,10 @@ class DiagnosticRunContext:
     embedding_provider_kind: str | None = None
     embedding_model: str | None = None
     embedding_model_path: str | None = None
+    chat_provider_kind: str | None = None
+    chat_model: str | None = None
+    chat_model_path: str | None = None
+    chat_backend: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1539,6 +1543,10 @@ def build_diagnostic_context(
     embedding_provider_kind: str | None = None,
     embedding_model: str | None = None,
     embedding_model_path: str | None = None,
+    chat_provider_kind: str | None = None,
+    chat_model: str | None = None,
+    chat_model_path: str | None = None,
+    chat_backend: str | None = None,
 ) -> DiagnosticRunContext:
     spec = benchmark_dataset_spec(dataset)
     return DiagnosticRunContext(
@@ -1562,6 +1570,10 @@ def build_diagnostic_context(
         embedding_provider_kind=embedding_provider_kind,
         embedding_model=embedding_model,
         embedding_model_path=embedding_model_path,
+        chat_provider_kind=chat_provider_kind,
+        chat_model=chat_model,
+        chat_model_path=chat_model_path,
+        chat_backend=chat_backend,
     )
 
 
@@ -1574,6 +1586,10 @@ def build_runtime_for_diagnostics(context: DiagnosticRunContext) -> RAGRuntime:
         embedding_provider_kind=context.embedding_provider_kind,
         embedding_model=context.embedding_model,
         embedding_model_path=context.embedding_model_path,
+        chat_provider_kind=context.chat_provider_kind,
+        chat_model=context.chat_model,
+        chat_model_path=context.chat_model_path,
+        chat_backend=context.chat_backend,
     )
     runtime.retrieval_service.query_understanding_service._enable_llm = context.enable_query_understanding_llm
     return runtime

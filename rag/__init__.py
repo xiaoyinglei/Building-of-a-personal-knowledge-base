@@ -5,6 +5,8 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
+    "AgentTaskRequest",
+    "AnalysisAgentService",
     "AssemblyConfig",
     "AssemblyDiagnostics",
     "AssemblyOverrides",
@@ -18,6 +20,8 @@ __all__ = [
 ]
 
 _EXPORTS = {
+    "AgentTaskRequest": ("rag.agent", "AgentTaskRequest"),
+    "AnalysisAgentService": ("rag.agent", "AnalysisAgentService"),
     "AssemblyConfig": ("rag.assembly", "AssemblyConfig"),
     "AssemblyDiagnostics": ("rag.assembly", "AssemblyDiagnostics"),
     "AssemblyOverrides": ("rag.assembly", "AssemblyOverrides"),

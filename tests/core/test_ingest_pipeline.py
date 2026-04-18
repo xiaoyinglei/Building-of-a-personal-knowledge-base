@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from rag.ingest.chunkers.multimodal_chunk_router import special_type_for_element
 from rag.ingest.chunkers.structured_chunker import ChunkSeed, merge_adjacent_seeds
 from rag.ingest.chunkers.token_chunker import chunk_by_tokens
+from rag.ingest.extract import EntityRelationExtractionResult, ExtractedEntity
 from rag.ingest.pipeline import IngestRequest
-from rag.schema import DocumentType, SourceType
-from rag.schema.core import ParsedDocument, ParsedElement, ParsedSection
+from rag.schema import AccessPolicy, Chunk, DocumentType, SourceType
+from rag.schema.core import Document, ParsedDocument, ParsedElement, ParsedSection
 from rag.schema.runtime import CacheEntry, DocumentPipelineStage, DocumentProcessingStatus, DocumentStatusRecord
 from rag.storage import StorageConfig
 from tests.support import make_runtime
@@ -78,6 +81,83 @@ def test_storage_groups_include_document_chunk_status_graph_cache() -> None:
         assert storage.cache.get("doc-1::entities", namespace="extract") == saved_cache
     finally:
         storage.close()
+
+
+def test_graph_extraction_aggregates_document_chunks_into_single_llm_call() -> None:
+    class _RecordingExtractor:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def extract(self, *, document: Document, chunks: list[Chunk]) -> EntityRelationExtractionResult:
+            del document
+            self.calls.append([chunk.chunk_id for chunk in chunks])
+            return EntityRelationExtractionResult(
+                entities=[
+                    ExtractedEntity(
+                        key="alpha_entity",
+                        label="Alpha Entity",
+                        entity_type="concept",
+                        description="Aggregated entity",
+                        source_chunk_ids=[chunk.chunk_id for chunk in chunks],
+                    )
+                ],
+                relations=[],
+            )
+
+    core = make_runtime()
+    try:
+        extractor = _RecordingExtractor()
+        core.ingest_pipeline.extractor = extractor
+        document = Document(
+            doc_id="doc-1",
+            source_id="src-1",
+            doc_type=DocumentType.ARTICLE,
+            title="Aggregated Graph",
+            authors=[],
+            created_at=datetime.now(UTC),
+            language="zh",
+            effective_access_policy=AccessPolicy.default(),
+        )
+        chunks = [
+            Chunk(
+                chunk_id="chunk-1",
+                segment_id="seg-1",
+                doc_id=document.doc_id,
+                text="Alpha Entity appears in the first chunk.",
+                token_count=8,
+                citation_anchor="#chunk-1",
+                citation_span=(0, 40),
+                effective_access_policy=AccessPolicy.default(),
+                extraction_quality=0.9,
+                embedding_ref=None,
+                order_index=0,
+                content_hash="hash-1",
+            ),
+            Chunk(
+                chunk_id="chunk-2",
+                segment_id="seg-2",
+                doc_id=document.doc_id,
+                text="Alpha Entity is referenced again in the second chunk.",
+                token_count=10,
+                citation_anchor="#chunk-2",
+                citation_span=(41, 95),
+                effective_access_policy=AccessPolicy.default(),
+                extraction_quality=0.9,
+                embedding_ref=None,
+                order_index=1,
+                content_hash="hash-2",
+            ),
+        ]
+
+        first = core.ingest_pipeline._extract_entities_and_relations(document=document, chunks=chunks)
+        second = core.ingest_pipeline._extract_entities_and_relations(document=document, chunks=chunks)
+
+        assert len(extractor.calls) == 1
+        assert extractor.calls[0] == ["chunk-1", "chunk-2"]
+        assert first.entities[0].source_chunk_ids == ["chunk-1", "chunk-2"]
+        assert second.entities[0].source_chunk_ids == ["chunk-1", "chunk-2"]
+    finally:
+        core.stores.close()
 
 
 def test_ragcore_insert_persists_document_chunks_entities_relations_and_status() -> None:

@@ -107,6 +107,7 @@ class ProviderAttempt(BaseModel):
     model: str | None = None
     status: str
     error: str | None = None
+    latency_ms: float | None = None
 
 
 class RetrievalDiagnostics(BaseModel):

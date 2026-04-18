@@ -1648,6 +1648,13 @@ def build_runtime_for_benchmark(
     embedding_provider_kind: str | None = None,
     embedding_model: str | None = None,
     embedding_model_path: str | None = None,
+    rerank_provider_kind: str | None = None,
+    rerank_model: str | None = None,
+    rerank_model_path: str | None = None,
+    chat_provider_kind: str | None = None,
+    chat_model: str | None = None,
+    chat_model_path: str | None = None,
+    chat_backend: str | None = None,
     vector_backend: str | None = None,
     vector_dsn: str | None = None,
     vector_namespace: str | None = None,
@@ -1675,6 +1682,27 @@ def build_runtime_for_benchmark(
         if embedding_provider_kind is not None
         else None
     )
+    rerank_override = (
+        ProviderConfig(
+            provider_kind=rerank_provider_kind or "local-bge",
+            location="local",
+            rerank_model=rerank_model,
+            rerank_model_path=rerank_model_path,
+        )
+        if rerank_model is not None or rerank_model_path is not None
+        else None
+    )
+    chat_override = (
+        ProviderConfig(
+            provider_kind=chat_provider_kind or ("local-hf" if chat_model_path is not None else "ollama"),
+            location="local",
+            chat_model=chat_model,
+            chat_model_path=chat_model_path,
+            chat_backend=chat_backend,
+        )
+        if chat_model is not None or chat_model_path is not None or chat_provider_kind is not None
+        else None
+    )
     request = assembly_service.request_for_profile(
         profile_id,
         requirements=CapabilityRequirements(
@@ -1685,9 +1713,14 @@ def build_runtime_for_benchmark(
         overrides=(
             AssemblyOverrides(
                 embedding=embedding_override,
+                rerank=rerank_override,
+                chat=chat_override,
                 tokenizer=tokenizer_override,
             )
-            if embedding_override is not None or tokenizer_override is not None
+            if embedding_override is not None
+            or rerank_override is not None
+            or chat_override is not None
+            or tokenizer_override is not None
             else None
         ),
     )

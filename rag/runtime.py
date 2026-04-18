@@ -15,6 +15,12 @@ from rag.assembly import (
     TokenAccountingService,
     TokenizerContract,
 )
+from rag.agent import AnalysisAgentService, AgentTaskRequest
+from rag.agent.critic import EvidenceCritic
+from rag.agent.executor import AgentExecutor
+from rag.agent.planner import AgentPlanner
+from rag.agent.synthesizer import AgentSynthesizer
+from rag.agent.understanding import TaskUnderstandingService
 from rag.ingest.chunking import ChunkingService, DocumentProcessingService, TOCService
 from rag.ingest.parser import (
     DoclingParserRepo,
@@ -55,7 +61,7 @@ from rag.retrieval.models import BuiltContext, QueryMode, QueryOptions, RAGQuery
 from rag.retrieval.orchestrator import RetrievalService
 from rag.schema.core import GraphEdge, GraphNode
 from rag.schema.query import EvidenceItem
-from rag.schema.runtime import CacheEntry, ProviderAttempt, VisualDescriptionRepo
+from rag.schema.runtime import AccessPolicy, CacheEntry, ProviderAttempt, VisualDescriptionRepo
 from rag.storage import StorageBundle, StorageConfig
 from rag.utils.telemetry import TelemetryService
 
@@ -362,6 +368,7 @@ class RAGRuntime:
     delete_pipeline: DeletePipeline = field(init=False, repr=False)
     rebuild_pipeline: RebuildPipeline = field(init=False, repr=False)
     retrieval_service: RetrievalService = field(init=False, repr=False)
+    agent_service: AnalysisAgentService = field(init=False, repr=False)
     query_pipeline: _QueryPipeline = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -497,6 +504,27 @@ class RAGRuntime:
         self._register_or_validate_runtime_contract()
         return self.query_pipeline.run(query_text, options=self._normalize_query_options(options))
 
+    def analyze_task(
+        self,
+        task: str | AgentTaskRequest,
+        /,
+        **kwargs: Any,
+    ) -> object:
+        self._register_or_validate_runtime_contract()
+        if isinstance(task, AgentTaskRequest):
+            if kwargs:
+                unexpected = ", ".join(sorted(kwargs))
+                raise TypeError(f"analyze_task request was provided both positionally and by keyword: {unexpected}")
+            request = task
+        else:
+            if not isinstance(task, str) or not task.strip():
+                raise TypeError("analyze_task requires a non-empty task string or AgentTaskRequest")
+            request = AgentTaskRequest(user_query=task, **kwargs)
+        return self.agent_service.run_task(
+            request,
+            access_policy=AccessPolicy.default(),
+        )
+
     def delete(self, *args: Any, **kwargs: Any) -> DeletePipelineResult:
         request = self._coerce_delete_request(*args, **kwargs)
         return self.delete_pipeline.run(request)
@@ -595,6 +623,7 @@ class RAGRuntime:
         )
         self.retrieval_service = self._build_retrieval_service()
         answer_generation_service = AnswerGenerationService()
+        self.agent_service = self._build_agent_service(answer_generation_service=answer_generation_service)
         self.query_pipeline = _QueryPipeline(
             retrieval=self.retrieval_service,
             context_merger=ContextEvidenceMerger(),
@@ -655,6 +684,27 @@ class RAGRuntime:
             graph_expansion_service=GraphExpansionService(),
             artifact_service=ArtifactService(),
             telemetry_service=self.telemetry_service,
+        )
+
+    def _build_agent_service(self, *, answer_generation_service: AnswerGenerationService) -> AnalysisAgentService:
+        bundle = self.capability_bundle
+        task_understanding_service = TaskUnderstandingService(
+            chat_bindings=bundle.chat_bindings,
+            query_understanding_service=self.retrieval_service.query_understanding_service,
+        )
+        return AnalysisAgentService(
+            task_understanding_service=task_understanding_service,
+            planner=AgentPlanner(enable_llm=False),
+            executor=AgentExecutor(
+                retrieval_service=self.retrieval_service,
+                critic=EvidenceCritic(),
+            ),
+            synthesizer=AgentSynthesizer(
+                answer_generator=AnswerGenerator(
+                    answer_generation_service=answer_generation_service,
+                    chat_bindings=self.capability_bundle.chat_bindings,
+                ),
+            ),
         )
 
     def _register_or_validate_runtime_contract(self) -> None:

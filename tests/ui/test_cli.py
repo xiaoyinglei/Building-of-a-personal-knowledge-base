@@ -140,3 +140,43 @@ def test_cli_profiles_lists_recommended_runtime_profiles() -> None:
     payload = json.loads(result.stdout)
     profile_ids = {item["profile_id"] for item in payload}
     assert {"local_full", "local_retrieval_cloud_chat", "cloud_full", "test_minimal"} <= profile_ids
+
+
+def test_cli_analyze_task_returns_structured_report(tmp_path: Path) -> None:
+    storage_root = tmp_path / ".rag"
+
+    ingest = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--storage-root",
+            str(storage_root),
+            "--profile",
+            "test_minimal",
+            "--source-type",
+            "plain_text",
+            "--location",
+            "memory://agent-note",
+            "--content",
+            "Alpha Engine handles ingestion and retrieval orchestration with explicit diagnostics.",
+        ],
+    )
+    analyze = runner.invoke(
+        app,
+        [
+            "analyze-task",
+            "--storage-root",
+            str(storage_root),
+            "--profile",
+            "test_minimal",
+            "--query",
+            "Summarize Alpha Engine responsibilities.",
+            "--json",
+        ],
+    )
+
+    assert ingest.exit_code == 0
+    assert analyze.exit_code == 0
+    payload = json.loads(analyze.stdout)
+    assert payload["final_report"]["executive_summary"]
+    assert payload["traces"]

@@ -20,6 +20,8 @@ class ProviderConfig:
     api_key: str | None = None
     base_url: str | None = None
     chat_model: str | None = None
+    chat_model_path: str | None = None
+    chat_backend: str | None = None
     embedding_model: str | None = None
     rerank_model: str | None = None
     embedding_model_path: str | None = None

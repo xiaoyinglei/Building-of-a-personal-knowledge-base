@@ -4,8 +4,9 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 _TARGETS = (
-    "rag/query/retrieve.py",
-    "rag/query/graph.py",
+    "rag/retrieval/analysis.py",
+    "rag/retrieval/orchestrator.py",
+    "rag/agent/service.py",
     "rag/runtime.py",
     "rag/cli.py",
 )
@@ -17,11 +18,15 @@ _REMOVED_WRAPPER_IMPORTS = (
 )
 _ALLOWED_TOP_LEVEL = {
     "__init__.py",
+    "agent",
+    "answer_benchmarks.py",
+    "assembly",
+    "benchmark_diagnostics.py",
+    "benchmarks.py",
     "cli.py",
-    "document",
     "ingest",
-    "llm",
-    "query",
+    "providers",
+    "retrieval",
     "runtime.py",
     "schema",
     "storage",
@@ -43,7 +48,7 @@ def test_core_modules_do_not_depend_on_removed_wrappers() -> None:
 
 def test_top_level_package_matches_target_architecture() -> None:
     package_root = _ROOT / "rag"
-    present = {path.name for path in package_root.iterdir() if path.name != "__pycache__"}
+    present = {path.name for path in package_root.iterdir() if path.name not in {"__pycache__", ".DS_Store"}}
     assert present == _ALLOWED_TOP_LEVEL
 
 
