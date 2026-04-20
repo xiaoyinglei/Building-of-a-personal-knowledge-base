@@ -468,8 +468,6 @@ class MetadataRepo(Protocol):
 
     def get_document(self, doc_id: int) -> Document | None: ...
 
-    def is_document_active(self, doc_id: int) -> bool: ...
-
     def list_documents(
         self,
         source_id: int | None = None,
@@ -477,6 +475,12 @@ class MetadataRepo(Protocol):
         active_only: bool = False,
         version_group_id: int | None = None,
     ) -> list[Document]: ...
+
+    def close(self) -> None: ...
+
+
+class DocumentActivationRepo(Protocol):
+    def is_document_active(self, doc_id: int) -> bool: ...
 
     def get_active_document_by_location_and_hash(self, location: str, content_hash: str) -> Document | None: ...
 
@@ -486,6 +490,8 @@ class MetadataRepo(Protocol):
 
     def set_document_active(self, doc_id: int, *, active: bool) -> None: ...
 
+
+class SegmentRepo(Protocol):
     def save_segment(self, segment: Segment) -> None: ...
 
     def get_segment(self, segment_id: str) -> Segment | None: ...
@@ -494,6 +500,8 @@ class MetadataRepo(Protocol):
 
     def delete_segments_for_document(self, doc_id: str) -> int: ...
 
+
+class ChunkRepo(Protocol):
     def save_chunk(self, chunk: Chunk) -> None: ...
 
     def get_chunk(self, chunk_id: str) -> Chunk | None: ...
@@ -504,12 +512,16 @@ class MetadataRepo(Protocol):
 
     def delete_chunks_for_document(self, doc_id: str) -> int: ...
 
+
+class ArtifactRepo(Protocol):
     def save_artifact(self, artifact: KnowledgeArtifact) -> None: ...
 
     def get_artifact(self, artifact_id: str) -> KnowledgeArtifact | None: ...
 
     def list_artifacts(self) -> list[KnowledgeArtifact]: ...
 
+
+class DocumentStatusRepo(Protocol):
     def save_document_status(self, status: DocumentStatusRecord) -> DocumentStatusRecord: ...
 
     def get_document_status(self, doc_id: str) -> DocumentStatusRecord | None: ...
@@ -523,6 +535,8 @@ class MetadataRepo(Protocol):
 
     def delete_document_status(self, doc_id: str) -> None: ...
 
+
+class GroundingMetadataRepo(Protocol):
     def get_section(self, section_id: int) -> SectionRecord | None: ...
 
     def list_sections(self, *, doc_id: int | None = None, source_id: int | None = None) -> list[SectionRecord]: ...
@@ -539,6 +553,12 @@ class MetadataRepo(Protocol):
 
     def get_layout_meta_cache(self, doc_id: int) -> LayoutMetaCacheRecord | None: ...
 
+
+class LayoutMetadataWriterRepo(Protocol):
+    def save_layout_meta_cache(self, record: LayoutMetaCacheRecord) -> LayoutMetaCacheRecord: ...
+
+
+class ProcessingStateRepo(Protocol):
     def save_processing_state(self, record: ProcessingStateRecord) -> ProcessingStateRecord: ...
 
     def get_processing_state(self, doc_id: int) -> ProcessingStateRecord | None: ...
@@ -553,7 +573,29 @@ class MetadataRepo(Protocol):
 
     def delete_processing_state(self, doc_id: int) -> None: ...
 
-    def close(self) -> None: ...
+
+class DataContractMetadataRepo(MetadataRepo, GroundingMetadataRepo, ProcessingStateRepo, Protocol):
+    def find_document_by_hash(self, file_hash: str) -> Document | None: ...
+
+    def increment_document_reference_count(self, doc_id: int, *, amount: int = 1) -> Document: ...
+
+    def save_section(self, section: SectionRecord) -> SectionRecord: ...
+
+    def save_asset(self, asset: AssetRecord) -> AssetRecord: ...
+
+    def deactivate_document(self, doc_id: int) -> Document: ...
+
+    def set_document_index_state(
+        self,
+        doc_id: int,
+        *,
+        is_indexed: bool | None = None,
+        index_ready: bool | None = None,
+        indexed_at: datetime | None = None,
+        last_index_error: str | None = None,
+    ) -> Document: ...
+
+    def set_document_storage_tier(self, doc_id: int, *, storage_tier: Any) -> Document: ...
 
 
 class CacheRepo(Protocol):
@@ -611,18 +653,26 @@ class GraphRepo(Protocol):
 
 
 class FullTextSearchRepo(Protocol):
+    def index_chunk(
+        self,
+        *,
+        chunk_id: str,
+        doc_id: str,
+        source_id: str,
+        title: str,
+        toc_path: list[str],
+        text: str,
+    ) -> None: ...
+
     def search(
         self,
         query: str,
         *,
         limit: int = 10,
         doc_ids: Sequence[str] | None = None,
-        access_policy: AccessPolicy | None = None,
     ) -> list[ChunkSearchResult]: ...
 
-    def list_indexed_chunk_ids(self) -> set[str]: ...
-
-    def delete_for_documents(self, doc_ids: Sequence[str]) -> int: ...
+    def delete_by_chunk_ids(self, chunk_ids: Sequence[str]) -> int: ...
 
     def close(self) -> None: ...
 
@@ -641,13 +691,18 @@ class ObjectStore(Protocol):
 
 __all__ = [
     "AccessPolicy",
+    "ArtifactRepo",
     "CacheEntry",
     "CacheRepo",
     "CapabilityHealth",
     "ChunkSearchResult",
+    "ChunkRepo",
+    "DataContractMetadataRepo",
     "DocumentPipelineStage",
     "DocumentProcessingStatus",
+    "DocumentActivationRepo",
     "DocumentStatusRecord",
+    "DocumentStatusRepo",
     "EvaluationMetricInput",
     "EvaluationMetricSummary",
     "ExecutionLocation",
@@ -656,8 +711,10 @@ __all__ = [
     "FullTextSearchRepo",
     "GraphNodeRecord",
     "GraphRepo",
+    "GroundingMetadataRepo",
     "HealthReport",
     "IndexHealth",
+    "LayoutMetadataWriterRepo",
     "MetadataRepo",
     "ModelDiagnostics",
     "ModelProviderRepo",
@@ -665,12 +722,14 @@ __all__ = [
     "OcrVisionRepo",
     "ProviderAttempt",
     "ProviderHealth",
+    "ProcessingStateRepo",
     "QueryDiagnostics",
     "Residency",
     "RetrievalDiagnostics",
     "RetrievalRecord",
     "RuntimeMode",
     "SearchResult",
+    "SegmentRepo",
     "StoredVectorEntry",
     "TelemetryEvent",
     "VectorRepo",

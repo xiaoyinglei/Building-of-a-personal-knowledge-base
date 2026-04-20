@@ -69,8 +69,6 @@ from rag.schema.query import EvidenceItem
 from rag.schema.runtime import AccessPolicy, CacheEntry, ProviderAttempt, VisualDescriptionRepo
 from rag.storage import StorageBundle, StorageConfig
 from rag.storage.index_sync_worker import IndexSyncWorker
-from rag.storage.repositories.postgres_metadata_repo import PostgresMetadataRepo
-from rag.storage.search_backends.milvus_vector_repo import MilvusVectorRepo
 from rag.storage.storage_lifecycle_service import StorageLifecycleService
 from rag.storage.storage_lifecycle_worker import StorageLifecycleWorker
 from rag.storage.v1_data_contract_service import V1DataContractService
@@ -78,6 +76,49 @@ from rag.utils.telemetry import TelemetryService
 
 _RUNTIME_CONTRACT_NAMESPACE = "rag_runtime"
 _RUNTIME_CONTRACT_KEY = "core_contract_v1"
+
+
+def _supports_data_contract_metadata_repo(repo: object) -> bool:
+    required = (
+        "find_document_by_hash",
+        "increment_document_reference_count",
+        "save_source",
+        "save_document",
+        "save_section",
+        "save_asset",
+        "get_document",
+        "list_documents",
+        "get_section",
+        "list_sections",
+        "get_asset",
+        "list_assets",
+        "get_layout_meta_cache",
+        "save_processing_state",
+        "get_processing_state",
+        "list_processing_states",
+        "delete_processing_state",
+        "deactivate_document",
+        "set_document_index_state",
+        "set_document_storage_tier",
+    )
+    return all(callable(getattr(repo, name, None)) for name in required)
+
+
+def _supports_summary_index_repo(repo: object) -> bool:
+    required = ("search", "delete", "upsert_record", "upsert_records")
+    return all(callable(getattr(repo, name, None)) for name in required)
+
+
+def _supports_storage_lifecycle_repo(repo: object) -> bool:
+    required = (
+        "get_document",
+        "list_documents",
+        "get_processing_state",
+        "save_processing_state",
+        "list_processing_states",
+        "set_document_storage_tier",
+    )
+    return all(callable(getattr(repo, name, None)) for name in required)
 
 
 class _InstrumentedReranker:
@@ -892,9 +933,9 @@ class RAGRuntime:
         )
 
     def _build_data_contract_service(self) -> V1DataContractService | None:
-        if not isinstance(self.stores.metadata_repo, PostgresMetadataRepo):
+        if not _supports_data_contract_metadata_repo(self.stores.metadata_repo):
             return None
-        if not isinstance(self.stores.vector_repo, MilvusVectorRepo):
+        if not _supports_summary_index_repo(self.stores.vector_repo):
             return None
         embedder = self.capability_bundle.embedding_bindings[0] if self.capability_bundle.embedding_bindings else None
         return V1DataContractService(
@@ -918,7 +959,7 @@ class RAGRuntime:
     ) -> StorageLifecycleWorker | None:
         if data_contract_service is None:
             return None
-        if not isinstance(self.stores.metadata_repo, PostgresMetadataRepo):
+        if not _supports_storage_lifecycle_repo(self.stores.metadata_repo):
             return None
         return StorageLifecycleWorker(
             service=StorageLifecycleService(

@@ -253,7 +253,7 @@ class StorageConfig:
     ) -> CacheRepo:
         backend = component.backend.lower()
         if backend in {"metadata", "sqlite", "in_memory"}:
-            return cast(CacheRepo, metadata_repo)
+            return self._require_cache_repo(metadata_repo)
         if backend == "redis":
             return cast(
                 CacheRepo,
@@ -263,6 +263,21 @@ class StorageConfig:
                 ),
             )
         self._unsupported_component(component, "Unsupported cache backend.")
+
+    @staticmethod
+    def _require_cache_repo(repo: object) -> CacheRepo:
+        required = (
+            "save_cache_entry",
+            "get_cache_entry",
+            "list_cache_entries",
+            "delete_cache_entry",
+            "purge_expired_cache_entries",
+        )
+        missing = [name for name in required if not callable(getattr(repo, name, None))]
+        if missing:
+            joined = ", ".join(missing)
+            raise RuntimeError(f"selected metadata-backed cache requires cache capability: {joined}")
+        return cast(CacheRepo, repo)
 
     def _build_fts_repo(self, component: StorageComponentConfig, root: Path) -> FullTextSearchRepo:
         backend = component.backend.lower()

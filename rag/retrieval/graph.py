@@ -11,14 +11,13 @@ from typing import Protocol
 from rag.assembly import EmbeddingCapabilityBinding
 from rag.retrieval.analysis import section_family_aliases, special_target_aliases
 from rag.retrieval.evidence import CandidateLike, EvidenceBundle
-from rag.schema.core import ChunkRole, Document
+from rag.schema.core import Chunk, ChunkRole, Document, Segment, Source
 from rag.schema.query import GroundingTarget, QueryUnderstanding
 from rag.schema.runtime import (
     AccessPolicy,
     ExecutionLocationPreference,
     FullTextSearchRepo,
     GraphRepo,
-    MetadataRepo,
     VectorSearchResult,
 )
 from rag.storage.search_backends.web_search_repo import DeterministicWebSearchRepo
@@ -94,6 +93,28 @@ class HybridVectorSearchRepoProtocol(VectorSearchRepoProtocol, Protocol):
         fusion_strategy: str = "rrf",
         alpha: float | None = None,
     ) -> Sequence[VectorSearchResult]: ...
+
+
+class RetrievalMetadataRepoProtocol(Protocol):
+    def get_source(self, source_id: int) -> Source | None: ...
+
+    def get_document(self, doc_id: int) -> Document | None: ...
+
+    def list_documents(
+        self,
+        source_id: int | None = None,
+        *,
+        active_only: bool = False,
+        version_group_id: int | None = None,
+    ) -> list[Document]: ...
+
+    def get_segment(self, segment_id: str) -> Segment | None: ...
+
+    def list_segments(self, doc_id: str) -> list[Segment]: ...
+
+    def get_chunk(self, chunk_id: str) -> Chunk | None: ...
+
+    def list_chunks(self, doc_id: str) -> list[Chunk]: ...
 
 
 class MultiProviderBackedVectorRetriever:
@@ -516,7 +537,7 @@ class SearchBackedRetrievalFactory:
     def __init__(
         self,
         *,
-        metadata_repo: MetadataRepo,
+        metadata_repo: RetrievalMetadataRepoProtocol,
         fts_repo: FullTextSearchRepo,
         graph_repo: GraphRepo,
     ) -> None:

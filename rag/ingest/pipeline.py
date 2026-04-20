@@ -99,6 +99,21 @@ def _benchmark_metadata(mapping: dict[str, str] | None) -> dict[str, str]:
     return metadata
 
 
+def _coerce_cache_repo(metadata_repo: object) -> CacheRepo:
+    required = (
+        "save_cache_entry",
+        "get_cache_entry",
+        "list_cache_entries",
+        "delete_cache_entry",
+        "purge_expired_cache_entries",
+    )
+    missing = [name for name in required if not callable(getattr(metadata_repo, name, None))]
+    if missing:
+        joined = ", ".join(missing)
+        raise RuntimeError(f"metadata repo cannot be used as cache backend: missing {joined}")
+    return cast(CacheRepo, metadata_repo)
+
+
 @dataclass(frozen=True, slots=True)
 class IngestRequest:
     location: str
@@ -2474,7 +2489,7 @@ class IngestService:
         capability_bundle: CapabilityBundle,
     ) -> None:
         self.metadata_repo = metadata_repo
-        self.cache_repo = cache_repo or cast(CacheRepo, metadata_repo)
+        self.cache_repo = cache_repo or _coerce_cache_repo(metadata_repo)
         self.fts_repo = fts_repo
         self.vector_repo = vector_repo
         self.graph_repo = graph_repo

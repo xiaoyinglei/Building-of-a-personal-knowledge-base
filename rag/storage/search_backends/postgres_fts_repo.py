@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, cast
 
 from rag.schema.runtime import ChunkSearchResult
@@ -47,7 +48,7 @@ class PostgresFTSRepo:
         )
         self._conn.commit()
 
-    def search(self, query: str, *, limit: int = 10, doc_ids: list[str] | None = None) -> list[ChunkSearchResult]:
+    def search(self, query: str, *, limit: int = 10, doc_ids: Sequence[str] | None = None) -> list[ChunkSearchResult]:
         normalized = query.strip()
         if not normalized:
             return []
@@ -92,7 +93,7 @@ class PostgresFTSRepo:
             for row in cast(list[dict[str, Any]], rows)
         ]
 
-    def delete_by_chunk_ids(self, chunk_ids: list[str] | tuple[str, ...]) -> int:
+    def delete_by_chunk_ids(self, chunk_ids: Sequence[str]) -> int:
         normalized_ids = tuple(dict.fromkeys(chunk_ids))
         if not normalized_ids:
             return 0

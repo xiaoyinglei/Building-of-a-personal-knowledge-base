@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -182,7 +183,7 @@ class SQLiteFTSRepo:
         query: str,
         *,
         limit: int = 10,
-        doc_ids: list[str] | None = None,
+        doc_ids: Sequence[str] | None = None,
     ) -> list[ChunkSearchResult]:
         normalized_query = self._normalize_query(query)
         if not normalized_query:
@@ -223,7 +224,7 @@ class SQLiteFTSRepo:
             for row in rows
         ]
 
-    def delete_by_chunk_ids(self, chunk_ids: list[str] | tuple[str, ...]) -> int:
+    def delete_by_chunk_ids(self, chunk_ids: Sequence[str]) -> int:
         normalized_ids = tuple(dict.fromkeys(chunk_ids))
         if not normalized_ids:
             return 0

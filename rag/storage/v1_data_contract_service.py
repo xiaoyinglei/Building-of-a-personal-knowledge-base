@@ -4,8 +4,9 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from rag.schema.core import (
     AssetRecord,
@@ -19,10 +20,9 @@ from rag.schema.core import (
     Source,
     SourceType,
 )
+from rag.schema.runtime import DataContractMetadataRepo, VectorSearchResult
 from rag.storage.index_sync_service import IndexSyncService
 from rag.storage.index_sync_service import StaleProcessingStateError
-from rag.storage.repositories.postgres_metadata_repo import PostgresMetadataRepo
-from rag.storage.search_backends.milvus_vector_repo import MilvusVectorRepo
 
 
 _PHONE_PATTERN = re.compile(r"\b1[3-9]\d{9}\b")
@@ -36,11 +36,41 @@ class DocumentRegistrationResult:
     is_duplicate: bool
 
 
+class SummaryIndexRepo(Protocol):
+    def search(
+        self,
+        query: Iterable[float],
+        *,
+        limit: int = 10,
+        doc_ids: list[str] | None = None,
+        expr: str | None = None,
+        embedding_space: str = "default",
+        item_kind: str = "section_summary",
+    ) -> list[VectorSearchResult]: ...
+
+    def delete(self, *, expr: str, embedding_space: str | None = None, item_kind: str | None = None) -> int: ...
+
+    def upsert_record(
+        self,
+        record: DocSummaryRecord | SectionSummaryRecord | AssetSummaryRecord,
+        vector: Iterable[float],
+        *,
+        embedding_space: str = "default",
+    ) -> None: ...
+
+    def upsert_records(
+        self,
+        items: Sequence[tuple[DocSummaryRecord | SectionSummaryRecord | AssetSummaryRecord, Iterable[float]]],
+        *,
+        embedding_space: str = "default",
+    ) -> None: ...
+
+
 class V1DataContractService:
     def __init__(
         self,
-        metadata_repo: PostgresMetadataRepo,
-        milvus_repo: MilvusVectorRepo,
+        metadata_repo: DataContractMetadataRepo,
+        milvus_repo: SummaryIndexRepo,
         *,
         embedder: object | None = None,
         embedding_space: str = "default",
