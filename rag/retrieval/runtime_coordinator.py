@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
+from typing import TypeVar
+
+from rag.retrieval.analysis import RoutingDecision
+from rag.retrieval.evidence import CandidateLike, EvidenceBundle, SelfCheckResult
+from rag.retrieval.models import RetrievalResult
+from rag.schema.query import PreservationSuggestion, QueryUnderstanding
+from rag.schema.runtime import ProviderAttempt, RetrievalDiagnostics
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class CoreRetrievalPayload:
+    decision: RoutingDecision
+    evidence: EvidenceBundle
+    self_check: SelfCheckResult
+    clean_items: list[CandidateLike]
+    reranked_benchmark_doc_ids: list[str]
+    graph_expanded: bool = False
+    mode_executor: str | None = None
+    branch_hits: dict[str, int] = field(default_factory=dict)
+    branch_limits: dict[str, int] = field(default_factory=dict)
+    planning_complexity_gate: str | None = None
+    semantic_route: str | None = None
+    target_collections: list[str] = field(default_factory=list)
+    predicate_strategy: str | None = None
+    predicate_expression: str | None = None
+    version_gate_applied: bool = False
+    operator_plan: list[str] = field(default_factory=list)
+    rewritten_query: str | None = None
+    sparse_query: str | None = None
+    embedding_provider: str | None = None
+    rerank_provider: str | None = None
+    attempts: list[ProviderAttempt] = field(default_factory=list)
+    fusion_strategy: str | None = None
+    fusion_alpha: float | None = None
+    fusion_input_count: int = 0
+    fused_count: int = 0
+    query_understanding: QueryUnderstanding | None = None
+    query_understanding_debug: dict[str, object] = field(default_factory=dict)
+    pre_rerank_count: int = 0
+    post_cleanup_count: int = 0
+    top1_confidence: float | None = None
+    exit_decision: str | None = None
+    fallback_triggered: list[str] = field(default_factory=list)
+    parent_backfilled_count: int = 0
+    collapsed_candidate_count: int = 0
+    preservation_suggestion: PreservationSuggestion = field(
+        default_factory=lambda: PreservationSuggestion(suggested=False)
+    )
+
+
+def inflate_legacy_retrieval_result(payload: CoreRetrievalPayload) -> RetrievalResult:
+    diagnostics = build_retrieval_diagnostics(payload)
+    return RetrievalResult(
+        decision=payload.decision,
+        evidence=payload.evidence,
+        self_check=payload.self_check,
+        reranked_chunk_ids=[candidate.chunk_id for candidate in payload.clean_items],
+        reranked_benchmark_doc_ids=list(payload.reranked_benchmark_doc_ids or []),
+        graph_expanded=bool(payload.graph_expanded),
+        diagnostics=diagnostics,
+        preservation_suggestion=payload.preservation_suggestion,
+    )
+
+
+def build_retrieval_diagnostics(payload: CoreRetrievalPayload) -> RetrievalDiagnostics:
+    diagnostics = RetrievalDiagnostics(
+        mode_executor=payload.mode_executor,
+        branch_hits=dict(payload.branch_hits or {}),
+        branch_limits=dict(payload.branch_limits or {}),
+        planning_complexity_gate=payload.planning_complexity_gate,
+        semantic_route=payload.semantic_route,
+        target_collections=list(payload.target_collections or []),
+        predicate_strategy=payload.predicate_strategy,
+        predicate_expression=payload.predicate_expression,
+        version_gate_applied=bool(payload.version_gate_applied),
+        operator_plan=list(payload.operator_plan or []),
+        rewritten_query=payload.rewritten_query,
+        sparse_query=payload.sparse_query,
+        reranked_chunk_ids=[candidate.chunk_id for candidate in payload.clean_items],
+        reranked_benchmark_doc_ids=list(payload.reranked_benchmark_doc_ids or []),
+        embedding_provider=payload.embedding_provider,
+        rerank_provider=payload.rerank_provider,
+        attempts=list(payload.attempts or []),
+        fusion_strategy=payload.fusion_strategy,
+        fusion_alpha=payload.fusion_alpha,
+        fusion_input_count=payload.fusion_input_count,
+        fused_count=payload.fused_count,
+        graph_expanded=bool(payload.graph_expanded),
+        query_understanding=payload.query_understanding,
+        query_understanding_debug=dict(payload.query_understanding_debug or {}),
+        pre_rerank_count=payload.pre_rerank_count,
+        post_cleanup_count=payload.post_cleanup_count,
+        top1_confidence=payload.top1_confidence,
+        exit_decision=payload.exit_decision,
+        fallback_triggered=list(payload.fallback_triggered or []),
+        parent_backfilled_count=payload.parent_backfilled_count,
+        collapsed_candidate_count=payload.collapsed_candidate_count,
+    )
+    return diagnostics
+
+
+class RuntimeCoordinator:
+    def run_sync(self, awaitable: Awaitable[T]) -> T:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(awaitable)
+        raise RuntimeError("synchronous runtime bridge cannot run inside an active event loop; call the async path")
+
+
+__all__ = ["CoreRetrievalPayload", "RuntimeCoordinator", "build_retrieval_diagnostics", "inflate_legacy_retrieval_result"]

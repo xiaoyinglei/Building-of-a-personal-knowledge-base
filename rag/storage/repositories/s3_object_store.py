@@ -43,6 +43,17 @@ class S3ObjectStore:
         body = cast(Any, response["Body"])
         return cast(bytes, body.read())
 
+    def read_byte_range(self, key: str, start: int, end: int) -> bytes:
+        if end <= start:
+            return b""
+        response = self._client_instance().get_object(
+            Bucket=self._bucket,
+            Key=self._object_key(key),
+            Range=f"bytes={max(start, 0)}-{max(end - 1, 0)}",
+        )
+        body = cast(Any, response["Body"])
+        return cast(bytes, body.read())
+
     def exists(self, key: str) -> bool:
         try:
             self._client_instance().head_object(Bucket=self._bucket, Key=self._object_key(key))

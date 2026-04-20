@@ -109,11 +109,13 @@ def test_graph_extraction_aggregates_document_chunks_into_single_llm_call() -> N
         extractor = _RecordingExtractor()
         core.ingest_pipeline.extractor = extractor
         document = Document(
-            doc_id="doc-1",
-            source_id="src-1",
+            doc_id=1,
+            source_id=1,
             doc_type=DocumentType.ARTICLE,
             title="Aggregated Graph",
             authors=[],
+            file_hash="graph-doc-hash",
+            version_group_id=1,
             created_at=datetime.now(UTC),
             language="zh",
             effective_access_policy=AccessPolicy.default(),
@@ -122,7 +124,7 @@ def test_graph_extraction_aggregates_document_chunks_into_single_llm_call() -> N
             Chunk(
                 chunk_id="chunk-1",
                 segment_id="seg-1",
-                doc_id=document.doc_id,
+                doc_id=str(document.doc_id),
                 text="Alpha Entity appears in the first chunk.",
                 token_count=8,
                 citation_anchor="#chunk-1",
@@ -136,7 +138,7 @@ def test_graph_extraction_aggregates_document_chunks_into_single_llm_call() -> N
             Chunk(
                 chunk_id="chunk-2",
                 segment_id="seg-2",
-                doc_id=document.doc_id,
+                doc_id=str(document.doc_id),
                 text="Alpha Entity is referenced again in the second chunk.",
                 token_count=10,
                 citation_anchor="#chunk-2",

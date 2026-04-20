@@ -19,10 +19,19 @@ from rag.retrieval.evidence import (
     SelfCheckResult,
 )
 from rag.retrieval.graph import GraphExpansionService
+from rag.retrieval.l3_l4_engine import L3L4RetrievalEngine
 from rag.retrieval.models import QueryMode, QueryOptions, RetrievalResult, normalize_query_mode
+from rag.retrieval.planning_graph import PlanningGraph, PlanningState
+from rag.retrieval.retrieval_adapter import RetrievalAdapter
+from rag.retrieval.rerank_service import IndustrialRerankService
+from rag.retrieval.runtime_coordinator import (
+    CoreRetrievalPayload,
+    RuntimeCoordinator,
+    inflate_legacy_retrieval_result,
+)
 from rag.schema.core import ChunkRole
 from rag.schema.query import QueryUnderstanding
-from rag.schema.runtime import AccessPolicy, ExecutionLocationPreference, ProviderAttempt, RetrievalDiagnostics
+from rag.schema.runtime import AccessPolicy, ExecutionLocationPreference, ProviderAttempt
 from rag.utils.telemetry import TelemetryService
 
 
@@ -148,6 +157,7 @@ class FusedCandidateView(CandidateLike):
 @dataclass(slots=True)
 class ReciprocalRankFusion:
     rank_constant: int = 60
+    alpha: float = 0.65
 
     def fuse(
         self,
@@ -155,12 +165,16 @@ class ReciprocalRankFusion:
         query: str,
         mode: QueryMode,
         branches: Sequence[tuple[str, Sequence[CandidateLike]]],
+        alpha: float | None = None,
     ) -> list[CandidateLike]:
         del query, mode
+        blend = self._normalized_alpha(alpha)
+        branch_weights = self._branch_weights(branches, alpha=blend)
         fused: dict[str, FusedCandidate] = {}
         for branch_name, branch in branches:
+            branch_weight = branch_weights.get(branch_name, 1.0)
             for index, candidate in enumerate(branch, start=1):
-                score = 1.0 / (self.rank_constant + index)
+                score = branch_weight * (1.0 / (self.rank_constant + index))
                 existing = fused.get(candidate.chunk_id)
                 branch_scores = {branch_name: max(float(candidate.score), 0.0)}
                 if existing is None:
@@ -187,6 +201,32 @@ class ReciprocalRankFusion:
             key=lambda item: (-item.fused_score, -item.supporting_branches, item.rank, item.candidate.chunk_id),
         )
         return [self._to_view(item, index) for index, item in enumerate(ordered, start=1)]
+
+    def _normalized_alpha(self, alpha: float | None) -> float:
+        if alpha is None:
+            alpha = self.alpha
+        return max(0.0, min(float(alpha), 1.0))
+
+    @classmethod
+    def _branch_weights(
+        cls,
+        branches: Sequence[tuple[str, Sequence[CandidateLike]]],
+        *,
+        alpha: float,
+    ) -> dict[str, float]:
+        branch_names = [branch_name for branch_name, branch in branches if branch]
+        semantic = [branch_name for branch_name in branch_names if branch_name in {"vector", "local", "global", "special"}]
+        lexical = [branch_name for branch_name in branch_names if branch_name in {"full_text", "section", "metadata"}]
+        if semantic and lexical:
+            weights: dict[str, float] = {}
+            semantic_weight = max(alpha, 0.05) / len(semantic)
+            lexical_weight = max(1.0 - alpha, 0.05) / len(lexical)
+            for branch_name in semantic:
+                weights[branch_name] = semantic_weight
+            for branch_name in lexical:
+                weights[branch_name] = lexical_weight
+            return weights
+        return {branch_name: 1.0 for branch_name in branch_names}
 
     @staticmethod
     def _to_view(item: FusedCandidate, unified_rank: int) -> FusedCandidateView:
@@ -219,22 +259,16 @@ class ReciprocalRankFusion:
             unified_rank=unified_rank,
         )
 
-
 @dataclass(frozen=True, slots=True)
-class BranchExecutionSpec:
-    branch: str
-    limit: int
-
-
-@dataclass(frozen=True, slots=True)
-class ModeExecutionSpec:
-    mode: QueryMode
-    executor_name: str
-    internal_branches: tuple[BranchExecutionSpec, ...]
-    allow_web: bool = True
-    allow_graph_expansion: bool = True
-    web_limit: int = 0
-    graph_limit: int = 0
+class RankPipelineResult:
+    candidates: list[CandidateLike]
+    candidate_count: int
+    parent_backfilled_count: int
+    collapsed_candidate_count: int
+    pre_rerank_count: int
+    post_cleanup_count: int
+    top1_confidence: float | None
+    exit_decision: str | None
 
 class RetrievalService:
     def __init__(
@@ -257,6 +291,11 @@ class RetrievalService:
         artifact_service: ArtifactService | None = None,
         telemetry_service: TelemetryService | None = None,
         evidence_thresholds: EvidenceThresholds | None = None,
+        metadata_scope_resolver: object | None = None,
+        planning_graph: PlanningGraph | None = None,
+        retrieval_adapter: RetrievalAdapter | None = None,
+        rerank_service: IndustrialRerankService | None = None,
+        fusion_alpha: float = 0.65,
     ) -> None:
         self._full_text_retriever: RetrieverFn = full_text_retriever or (lambda _query, _scope, _understanding: [])
         self._vector_retriever: RetrieverFn = vector_retriever or (lambda _query, _scope, _understanding: [])
@@ -274,9 +313,10 @@ class RetrievalService:
         self._graph_expansion_service = graph_expansion_service or GraphExpansionService()
         self._artifact_service = artifact_service or ArtifactService()
         self._telemetry_service = telemetry_service
-        self._fusion = ReciprocalRankFusion()
+        self._fusion = ReciprocalRankFusion(alpha=fusion_alpha)
         self._unified_reranker = UnifiedReranker(reranker=self._reranker)
         self.last_result: RetrievalResult | None = None
+        self.last_payload: CoreRetrievalPayload | None = None
         self._branch_registry = BranchRetrieverRegistry(
             full_text_retriever=self._full_text_retriever,
             vector_retriever=self._vector_retriever,
@@ -286,6 +326,29 @@ class RetrievalService:
             special_retriever=self._special_retriever,
             metadata_retriever=self._metadata_retriever,
             web_retriever=self._web_retriever,
+        )
+        self._planning_graph = planning_graph or PlanningGraph(metadata_scope_resolver=metadata_scope_resolver)
+        self._retrieval_adapter = retrieval_adapter or RetrievalAdapter(
+            branch_registry=self._branch_registry,
+            evidence_service=self._evidence_service,
+            telemetry_service=self._telemetry_service,
+        )
+        self._rerank_service = rerank_service or IndustrialRerankService()
+        self._runtime_coordinator = RuntimeCoordinator()
+        self._l3_l4_engine = L3L4RetrievalEngine(
+            branch_registry=self._branch_registry,
+            routing_service=self._routing_service,
+            query_understanding_service=self._query_understanding_service,
+            evidence_service=self._evidence_service,
+            graph_expansion_service=self._graph_expansion_service,
+            artifact_service=self._artifact_service,
+            telemetry_service=self._telemetry_service,
+            planning_graph=self._planning_graph,
+            retrieval_adapter=self._retrieval_adapter,
+            rerank_service=self._rerank_service,
+            fusion=self._fusion,
+            reranker=self._unified_reranker,
+            graph_expander=self._graph_expander,
         )
         self.branch_registry = self._branch_registry
         self.routing_service = self._routing_service
@@ -297,6 +360,11 @@ class RetrievalService:
         self.reranker = self._unified_reranker
         self.graph_expander = self._graph_expander
         self.telemetry_service = self._telemetry_service
+        self.planning_graph = self._planning_graph
+        self.retrieval_adapter = self._retrieval_adapter
+        self.rerank_service = self._rerank_service
+        self.runtime_coordinator = self._runtime_coordinator
+        self.l3_l4_engine = self._l3_l4_engine
 
     @staticmethod
     def _benchmark_doc_ids(candidates: Sequence[CandidateLike]) -> list[str]:
@@ -313,6 +381,50 @@ class RetrievalService:
             ranked_doc_ids.append(normalized)
         return ranked_doc_ids
 
+    def retrieve_payload(
+        self,
+        query: str,
+        *,
+        access_policy: AccessPolicy,
+        source_scope: Sequence[str] = (),
+        execution_location_preference: ExecutionLocationPreference | None = None,
+        query_mode: QueryMode | str | None = None,
+        query_options: QueryOptions | None = None,
+    ) -> CoreRetrievalPayload:
+        payload = self.runtime_coordinator.run_sync(
+            self.l3_l4_engine.arun(
+                query,
+                access_policy=access_policy,
+                source_scope=source_scope,
+                execution_location_preference=execution_location_preference,
+                query_mode=query_mode,
+                query_options=query_options,
+            )
+        )
+        self.last_payload = payload
+        return payload
+
+    async def aretrieve_payload(
+        self,
+        query: str,
+        *,
+        access_policy: AccessPolicy,
+        source_scope: Sequence[str] = (),
+        execution_location_preference: ExecutionLocationPreference | None = None,
+        query_mode: QueryMode | str | None = None,
+        query_options: QueryOptions | None = None,
+    ) -> CoreRetrievalPayload:
+        payload = await self.l3_l4_engine.arun(
+            query,
+            access_policy=access_policy,
+            source_scope=source_scope,
+            execution_location_preference=execution_location_preference,
+            query_mode=query_mode,
+            query_options=query_options,
+        )
+        self.last_payload = payload
+        return payload
+
     def run(
         self,
         query: str,
@@ -323,6 +435,48 @@ class RetrievalService:
         query_mode: QueryMode | str | None = None,
         query_options: QueryOptions | None = None,
     ) -> RetrievalResult:
+        return inflate_legacy_retrieval_result(
+            self.retrieve_payload(
+                query,
+                access_policy=access_policy,
+                source_scope=source_scope,
+                execution_location_preference=execution_location_preference,
+                query_mode=query_mode,
+                query_options=query_options,
+            )
+        )
+
+    async def arun(
+        self,
+        query: str,
+        *,
+        access_policy: AccessPolicy,
+        source_scope: Sequence[str] = (),
+        execution_location_preference: ExecutionLocationPreference | None = None,
+        query_mode: QueryMode | str | None = None,
+        query_options: QueryOptions | None = None,
+    ) -> RetrievalResult:
+        return inflate_legacy_retrieval_result(
+            await self.aretrieve_payload(
+                query,
+                access_policy=access_policy,
+                source_scope=source_scope,
+                execution_location_preference=execution_location_preference,
+                query_mode=query_mode,
+                query_options=query_options,
+            )
+        )
+
+    def plan_query(
+        self,
+        *,
+        query: str,
+        access_policy: AccessPolicy,
+        source_scope: Sequence[str] = (),
+        execution_location_preference: ExecutionLocationPreference | None = None,
+        query_mode: QueryMode | str | None = None,
+        query_options: QueryOptions | None = None,
+    ) -> tuple[QueryUnderstanding, AccessPolicy, RoutingDecision, PlanningState]:
         scope = list(source_scope)
         resolved_mode = normalize_query_mode(query_options.mode if query_options is not None else query_mode)
         query_understanding = self.query_understanding_service.analyze(
@@ -339,477 +493,90 @@ class RetrievalService:
             source_scope=scope,
             access_policy=effective_access_policy,
         )
-        if resolved_mode is QueryMode.BYPASS:
-            return self._run_bypass_mode(
-                query=query,
-                decision=decision,
+        plan = self.runtime_coordinator.run_sync(
+            self.planning_graph.aplan(
+                query,
+                source_scope=scope,
+                access_policy=effective_access_policy,
                 query_understanding=query_understanding,
-            )
-        return self._execute_mode(
-            query=query,
-            source_scope=scope,
-            access_policy=effective_access_policy,
-            decision=decision,
-            query_understanding=query_understanding,
-            query_options=query_options,
-            spec=self._mode_spec(
                 resolved_mode=resolved_mode,
-                query_understanding=query_understanding,
                 query_options=query_options,
-            ),
+            )
         )
+        return query_understanding, effective_access_policy, decision, plan
 
-    def _mode_spec(
-        self,
-        resolved_mode: QueryMode,
-        query_understanding: QueryUnderstanding,
-        query_options: QueryOptions | None,
-    ) -> ModeExecutionSpec:
-        retrieval_limit = (
-            max(query_options.retrieval_pool_k or query_options.chunk_top_k or query_options.top_k, 1)
-            if query_options is not None
-            else 8
-        )
-        final_limit = max(query_options.chunk_top_k or query_options.top_k, 1) if query_options is not None else 8
-        aux_branches = tuple(
-            BranchExecutionSpec(branch, max(1, retrieval_limit))
-            for branch, enabled in (
-                ("section", query_understanding.needs_structure),
-                ("special", query_understanding.needs_special),
-                ("metadata", query_understanding.needs_metadata),
-            )
-            if enabled
-        )
-        web_limit = max(1, retrieval_limit // 2)
-        graph_limit = max(2, final_limit)
-        if resolved_mode is QueryMode.NAIVE:
-            return ModeExecutionSpec(
-                mode=QueryMode.NAIVE,
-                executor_name="naive",
-                internal_branches=(BranchExecutionSpec("vector", retrieval_limit * 2),),
-                allow_web=False,
-                allow_graph_expansion=False,
-            )
-        if resolved_mode is QueryMode.LOCAL:
-            return ModeExecutionSpec(
-                mode=QueryMode.LOCAL,
-                executor_name="local",
-                internal_branches=(BranchExecutionSpec("local", retrieval_limit * 2), *aux_branches),
-                web_limit=web_limit,
-                graph_limit=graph_limit,
-            )
-        if resolved_mode is QueryMode.GLOBAL:
-            return ModeExecutionSpec(
-                mode=QueryMode.GLOBAL,
-                executor_name="global",
-                internal_branches=(BranchExecutionSpec("global", retrieval_limit * 2), *aux_branches),
-                web_limit=web_limit,
-                graph_limit=graph_limit,
-            )
-        if resolved_mode is QueryMode.HYBRID:
-            return ModeExecutionSpec(
-                mode=QueryMode.HYBRID,
-                executor_name="hybrid",
-                internal_branches=(
-                    BranchExecutionSpec("local", retrieval_limit),
-                    BranchExecutionSpec("global", retrieval_limit),
-                    *aux_branches,
-                ),
-                web_limit=web_limit,
-                graph_limit=graph_limit,
-            )
-        kg_limit = max(2, retrieval_limit - 1)
-        return ModeExecutionSpec(
-            mode=QueryMode.MIX,
-            executor_name="mix",
-            internal_branches=(
-                BranchExecutionSpec("local", kg_limit),
-                BranchExecutionSpec("global", kg_limit),
-                BranchExecutionSpec("vector", retrieval_limit),
-                BranchExecutionSpec("full_text", retrieval_limit),
-                *aux_branches,
-            ),
-            web_limit=web_limit,
-            graph_limit=graph_limit,
-        )
-
-    def _execute_mode(
+    def collect_internal_branches(
         self,
         *,
-        query: str,
-        source_scope: list[str],
+        plan: PlanningState,
+        source_scope: Sequence[str],
         access_policy: AccessPolicy,
-        decision: RoutingDecision,
+        runtime_mode: ExecutionLocationPreference | str | object,
         query_understanding: QueryUnderstanding,
-        query_options: QueryOptions | None,
-        spec: ModeExecutionSpec,
-    ) -> RetrievalResult:
-        internal_branches, branch_hits, branch_limits = self._collect_internal_branches(
-            spec=spec,
-            query=query,
-            source_scope=source_scope,
-            access_policy=access_policy,
-            decision=decision,
-            query_understanding=query_understanding,
-        )
-        reranked_candidates, candidate_count, parent_backfilled_count, collapsed_candidate_count = self._rank_branches(
-            query=query,
-            mode=spec.mode,
-            branches=internal_branches,
-            query_options=query_options,
-            rerank_required=decision.rerank_required,
-        )
-        evidence = self.evidence_service.assemble_bundle(reranked_candidates)
-        self_check = self.evidence_service.evaluate_self_check(
-            bundle=evidence,
-            task_type=decision.task_type,
-            complexity_level=decision.complexity_level,
-        )
-
-        web_candidates: list[CandidateLike] = []
-        if (
-            spec.allow_web
-            and spec.web_limit > 0
-            and decision.web_search_allowed
-            and access_policy.external_retrieval.value == "allow"
-            and self_check.retrieve_more
-        ):
-            web_candidates = self._collect_web_candidates(
-                query=query,
-                source_scope=source_scope,
+    ) -> object:
+        return self.runtime_coordinator.run_sync(
+            self.retrieval_adapter.acollect_internal(
+                plan=plan,
+                source_scope=list(source_scope),
                 access_policy=access_policy,
-                decision=decision,
-                limit=spec.web_limit,
+                runtime_mode=runtime_mode,
                 query_understanding=query_understanding,
             )
-            branch_hits["web"] = len(web_candidates)
-            branch_limits["web"] = spec.web_limit
-            if web_candidates:
-                reranked_candidates, candidate_count, parent_backfilled_count, collapsed_candidate_count = (
-                    self._rank_branches(
-                        query=query,
-                        mode=spec.mode,
-                        branches=[*internal_branches, ("web", web_candidates)],
-                        query_options=query_options,
-                        rerank_required=decision.rerank_required,
-                    )
-                )
-                evidence = self.evidence_service.assemble_bundle(reranked_candidates)
-
-        graph_expanded = False
-        if spec.allow_graph_expansion and decision.graph_expansion_allowed:
-            internal_candidates = [
-                candidate for candidate in reranked_candidates if candidate.source_kind == "internal"
-            ]
-            graph_candidates = self.graph_expansion_service.expand(
-                query=query,
-                source_scope=source_scope,
-                evidence=evidence,
-                graph_candidates=self.graph_expander(query, source_scope, internal_candidates),
-                access_policy=access_policy,
-            )
-            if spec.graph_limit > 0:
-                graph_candidates = graph_candidates[: spec.graph_limit]
-            if graph_candidates:
-                graph_expanded = True
-                if self.telemetry_service is not None:
-                    self.telemetry_service.record_graph_expansion(
-                        seed_count=len(internal_candidates),
-                        added_count=len(graph_candidates),
-                    )
-                graph_items = self.evidence_service.assemble_bundle(graph_candidates).graph
-                evidence = EvidenceBundle(
-                    internal=evidence.internal,
-                    external=evidence.external,
-                    graph=[*evidence.graph, *graph_items],
-                )
-
-        self_check = self.evidence_service.evaluate_self_check(
-            bundle=evidence,
-            task_type=decision.task_type,
-            complexity_level=decision.complexity_level,
-        )
-        preservation_suggestion = self.artifact_service.suggest_preservation(
-            query=query,
-            runtime_mode=decision.runtime_mode,
-            evidence=evidence.all,
-            differences_or_conflicts=[],
-        )
-        reranked_benchmark_doc_ids = self._benchmark_doc_ids(reranked_candidates)
-        if self.telemetry_service is not None and preservation_suggestion.suggested:
-            self.telemetry_service.record_preservation_suggestion(
-                artifact_type=preservation_suggestion.artifact_type or "unknown",
-                runtime_mode=decision.runtime_mode.value,
-                evidence_count=len(evidence.all),
-                conflict_count=0,
-            )
-
-        return RetrievalResult(
-            decision=decision,
-            evidence=evidence,
-            self_check=self_check,
-            reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
-            reranked_benchmark_doc_ids=reranked_benchmark_doc_ids,
-            graph_expanded=graph_expanded,
-            diagnostics=RetrievalDiagnostics(
-                mode_executor=spec.executor_name,
-                branch_hits=branch_hits,
-                branch_limits=branch_limits,
-                reranked_chunk_ids=[candidate.chunk_id for candidate in reranked_candidates],
-                reranked_benchmark_doc_ids=reranked_benchmark_doc_ids,
-                embedding_provider=self._embedding_provider(),
-                rerank_provider=getattr(self.reranker.reranker, "last_provider", None),
-                attempts=self._provider_attempts(),
-                fusion_input_count=candidate_count + len(web_candidates),
-                fused_count=len(reranked_candidates),
-                graph_expanded=graph_expanded,
-                query_understanding=query_understanding,
-                query_understanding_debug=self.query_understanding_service.diagnostics_payload(),
-                parent_backfilled_count=parent_backfilled_count,
-                collapsed_candidate_count=collapsed_candidate_count,
-            ),
-            preservation_suggestion=preservation_suggestion,
         )
 
-    @staticmethod
-    def _run_bypass_mode(
-        *,
-        query: str,
-        decision: RoutingDecision,
-        query_understanding: QueryUnderstanding,
-    ) -> RetrievalResult:
-        del query
-        return RetrievalResult(
-            decision=decision.model_copy(
-                update={
-                    "runtime_mode": decision.runtime_mode,
-                    "web_search_allowed": False,
-                    "graph_expansion_allowed": False,
-                }
-            ),
-            evidence=EvidenceBundle(),
-            self_check=SelfCheckResult(
-                retrieve_more=False,
-                evidence_sufficient=False,
-                claim_supported=False,
-            ),
-            reranked_chunk_ids=[],
-            reranked_benchmark_doc_ids=[],
-            graph_expanded=False,
-            diagnostics=RetrievalDiagnostics(
-                mode_executor="bypass",
-                branch_hits={},
-                branch_limits={},
-                reranked_chunk_ids=[],
-                reranked_benchmark_doc_ids=[],
-                fusion_input_count=0,
-                fused_count=0,
-                graph_expanded=False,
-                query_understanding=query_understanding,
-                query_understanding_debug={},
-                parent_backfilled_count=0,
-                collapsed_candidate_count=0,
-            ),
-        )
-
-    def _collect_internal_branches(
+    def collect_branch_candidates(
         self,
         *,
-        spec: ModeExecutionSpec,
-        query: str,
-        source_scope: list[str],
-        access_policy: AccessPolicy,
-        decision: RoutingDecision,
+        branch: str,
+        plan: PlanningState,
         query_understanding: QueryUnderstanding,
-    ) -> tuple[list[tuple[str, list[CandidateLike]]], dict[str, int], dict[str, int]]:
-        internal_branches: list[tuple[str, list[CandidateLike]]] = []
-        branch_hits: dict[str, int] = {}
-        branch_limits = {branch_spec.branch: branch_spec.limit for branch_spec in spec.internal_branches}
-        for branch_spec in spec.internal_branches:
-            candidates = list(
-                self._call_branch(
-                    branch_spec.branch,
-                    query=query,
-                    source_scope=source_scope,
-                    query_understanding=query_understanding,
-                )
-            )
-            filtered = self.evidence_service.filter_candidates(
-                candidates,
-                source_scope=source_scope,
-                access_policy=access_policy,
-                runtime_mode=decision.runtime_mode,
-                query_understanding=query_understanding,
-            )
-            limited = filtered[: branch_spec.limit]
-            branch_hits[branch_spec.branch] = len(limited)
-            if self.telemetry_service is not None:
-                self.telemetry_service.record_branch_usage(
-                    branch=branch_spec.branch,
-                    hit_count=len(limited),
-                    runtime_mode=decision.runtime_mode.value,
-                )
-            if limited:
-                internal_branches.append((branch_spec.branch, limited))
-        return internal_branches, branch_hits, branch_limits
-
-    def _collect_web_candidates(
-        self,
-        *,
-        query: str,
-        source_scope: list[str],
+        source_scope: Sequence[str],
         access_policy: AccessPolicy,
-        decision: RoutingDecision,
+        runtime_mode: object,
         limit: int,
-        query_understanding: QueryUnderstanding,
     ) -> list[CandidateLike]:
-        filtered = self.evidence_service.filter_candidates(
-            self.branch_registry.collect_web(
-                query=query,
-                source_scope=source_scope,
+        lexical_branches = {"full_text", "section", "metadata"}
+        branch_query = plan.sparse_query if branch in lexical_branches else plan.rewritten_query
+        retriever = self.branch_registry.get(branch)
+        candidates = list(
+            self.retrieval_adapter._call_branch(
+                retriever=retriever,
+                query=branch_query,
+                source_scope=list(source_scope),
                 query_understanding=query_understanding,
-            ),
+                plan=plan,
+            )
+        )
+        filtered = self.evidence_service.filter_candidates(
+            candidates,
             source_scope=source_scope,
             access_policy=access_policy,
-            runtime_mode=decision.runtime_mode,
+            runtime_mode=runtime_mode,
             query_understanding=query_understanding,
         )
-        limited = filtered[:limit]
-        if self.telemetry_service is not None:
-            self.telemetry_service.record_branch_usage(
-                branch="web",
-                hit_count=len(limited),
-                runtime_mode=decision.runtime_mode.value,
-            )
-        return limited
+        return filtered[:limit]
 
-    def _rank_branches(
+    def rank_plan_branches(
         self,
         *,
         query: str,
-        mode: QueryMode,
+        plan: PlanningState,
         branches: list[tuple[str, list[CandidateLike]]],
         query_options: QueryOptions | None,
         rerank_required: bool,
-    ) -> tuple[list[CandidateLike], int, int, int]:
-        candidate_count = sum(len(branch) for _, branch in branches)
-        fused_candidates = self.fusion.fuse(query=query, mode=mode, branches=branches)
-        if self.telemetry_service is not None:
-            self.telemetry_service.record_rrf_fusion(
-                branch_count=len(branches),
-                candidate_count=candidate_count,
-                fused_count=len(fused_candidates),
-                duplicate_count=max(0, candidate_count - len(fused_candidates)),
-            )
-
-        reranked_candidates = (
-            self._rerank_candidates(
+    ) -> RankPipelineResult:
+        return self.runtime_coordinator.run_sync(
+            self.l3_l4_engine._rank_branches(
                 query=query,
-                fused_candidates=fused_candidates,
-                rerank_pool_k=(query_options.rerank_pool_k if query_options is not None else None),
+                plan=plan,
+                branches=branches,
+                query_options=query_options,
+                rerank_required=rerank_required,
             )
-            if rerank_required and (query_options is None or query_options.enable_rerank)
-            else list(fused_candidates)
         )
-        parent_backfilled_count = 0
-        collapsed_candidate_count = 0
-        collapsed_candidates: list[CandidateLike] = []
-        seen_keys: set[tuple[str, str, str]] = set()
-        enable_parent_backfill = query_options.enable_parent_backfill if query_options is not None else True
-        for candidate in reranked_candidates:
-            parent_text = getattr(candidate, "parent_text", None)
-            parent_chunk_id = getattr(candidate, "parent_chunk_id", None)
-            if enable_parent_backfill and parent_chunk_id and parent_text:
-                candidate = FusedCandidateView(
-                    chunk_id=candidate.chunk_id,
-                    doc_id=candidate.doc_id,
-                    text=parent_text,
-                    citation_anchor=candidate.citation_anchor,
-                    score=float(candidate.score),
-                    rank=int(candidate.rank),
-                    source_kind=candidate.source_kind,
-                    source_id=candidate.source_id,
-                    section_path=tuple(candidate.section_path),
-                    effective_access_policy=getattr(candidate, "effective_access_policy", None),
-                    chunk_role=getattr(candidate, "chunk_role", None),
-                    special_chunk_type=getattr(candidate, "special_chunk_type", None),
-                    parent_chunk_id=parent_chunk_id,
-                    parent_text=parent_text,
-                    metadata=getattr(candidate, "metadata", None),
-                    retrieval_channels=list(getattr(candidate, "retrieval_channels", []) or []),
-                    dense_score=getattr(candidate, "dense_score", None),
-                    sparse_score=getattr(candidate, "sparse_score", None),
-                    special_score=getattr(candidate, "special_score", None),
-                    structure_score=getattr(candidate, "structure_score", None),
-                    metadata_score=getattr(candidate, "metadata_score", None),
-                    fusion_score=getattr(candidate, "fusion_score", None),
-                    rrf_score=getattr(candidate, "rrf_score", None),
-                    unified_rank=getattr(candidate, "unified_rank", None),
-                )
-                parent_backfilled_count += 1
-            if candidate.source_kind != "internal":
-                collapsed_candidates.append(candidate)
-                continue
-            special_chunk_type = getattr(candidate, "special_chunk_type", None)
-            parent_chunk_id = getattr(candidate, "parent_chunk_id", None)
-            dedupe_key = (
-                ("chunk", candidate.doc_id, candidate.chunk_id)
-                if special_chunk_type or not parent_chunk_id
-                else ("parent", candidate.doc_id, parent_chunk_id)
-            )
-            if dedupe_key in seen_keys:
-                collapsed_candidate_count += 1
-                continue
-            seen_keys.add(dedupe_key)
-            collapsed_candidates.append(candidate)
-        if query_options is None:
-            reranked_candidates = collapsed_candidates
-        else:
-            limit = query_options.chunk_top_k or query_options.top_k
-            reranked_candidates = [] if limit <= 0 else collapsed_candidates[:limit]
-        if self.telemetry_service is not None:
-            fused_ids = [candidate.chunk_id for candidate in fused_candidates]
-            reranked_ids = [candidate.chunk_id for candidate in reranked_candidates]
-            self.telemetry_service.record_rerank_effectiveness(
-                input_count=len(fused_candidates),
-                output_count=len(reranked_candidates),
-                reordered=fused_ids != reranked_ids,
-                top1_changed=(fused_ids[:1] != reranked_ids[:1]),
-            )
-        return reranked_candidates, candidate_count, parent_backfilled_count, collapsed_candidate_count
-
-    def _rerank_candidates(
-        self,
-        *,
-        query: str,
-        fused_candidates: list[CandidateLike],
-        rerank_pool_k: int | None,
-    ) -> list[CandidateLike]:
-        if not fused_candidates:
-            return []
-        if rerank_pool_k is None:
-            return self.reranker.rerank(query, list(fused_candidates))
-        normalized_limit = max(1, rerank_pool_k)
-        head = list(fused_candidates[:normalized_limit])
-        tail = list(fused_candidates[normalized_limit:])
-        reranked_head = self.reranker.rerank(query, head)
-        return [*reranked_head, *tail]
-
-    def _call_branch(
-        self,
-        branch_name: str,
-        *,
-        query: str,
-        source_scope: list[str],
-        query_understanding: QueryUnderstanding,
-    ) -> Sequence[CandidateLike]:
-        retriever = self.branch_registry.get(branch_name)
-        return retriever(query, source_scope, query_understanding)
 
     def _embedding_provider(self) -> str | None:
         for retriever in (
-            self.branch_registry.local_retriever,
-            self.branch_registry.global_retriever,
             self.branch_registry.vector_retriever,
             self.branch_registry.special_retriever,
         ):
@@ -821,8 +588,6 @@ class RetrievalService:
     def _provider_attempts(self) -> list[ProviderAttempt]:
         attempts: list[ProviderAttempt] = []
         for retriever in (
-            self.branch_registry.local_retriever,
-            self.branch_registry.global_retriever,
             self.branch_registry.vector_retriever,
             self.branch_registry.special_retriever,
         ):
@@ -854,6 +619,32 @@ class RetrievalService:
             execution_location_preference=execution_location_preference,
         )
         result = self.run(
+            query,
+            access_policy=access_policy,
+            source_scope=scope,
+            execution_location_preference=execution_location_preference,
+            query_mode=query_mode,
+            query_options=query_options,
+        )
+        self.last_result = result
+        return result
+
+    async def aretrieve(
+        self,
+        query: str,
+        *,
+        access_policy: AccessPolicy,
+        source_scope: Sequence[str] = (),
+        execution_location_preference: ExecutionLocationPreference | None = None,
+        query_mode: QueryMode | str | None = None,
+        query_options: QueryOptions | None = None,
+    ) -> RetrievalResult:
+        scope = list(source_scope)
+        self._prepare_retriever_policies(
+            access_policy=access_policy,
+            execution_location_preference=execution_location_preference,
+        )
+        result = await self.arun(
             query,
             access_policy=access_policy,
             source_scope=scope,

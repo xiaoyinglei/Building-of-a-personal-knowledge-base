@@ -10,7 +10,19 @@ from typing import TYPE_CHECKING, Any, Protocol
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from rag.schema.core import Chunk, Document, GraphEdge, GraphNode, OcrResult, Segment, Source
+    from rag.schema.core import (
+        AssetRecord,
+        Chunk,
+        Document,
+        GraphEdge,
+        GraphNode,
+        LayoutMetaCacheRecord,
+        OcrResult,
+        ProcessingStateRecord,
+        SectionRecord,
+        Segment,
+        Source,
+    )
     from rag.schema.query import KnowledgeArtifact, QueryUnderstanding
 
 
@@ -116,16 +128,32 @@ class RetrievalDiagnostics(BaseModel):
     mode_executor: str | None = None
     branch_hits: dict[str, int] = Field(default_factory=dict)
     branch_limits: dict[str, int] = Field(default_factory=dict)
+    planning_complexity_gate: str | None = None
+    semantic_route: str | None = None
+    target_collections: list[str] = Field(default_factory=list)
+    predicate_strategy: str | None = None
+    predicate_expression: str | None = None
+    version_gate_applied: bool = False
+    operator_plan: list[str] = Field(default_factory=list)
+    rewritten_query: str | None = None
+    sparse_query: str | None = None
     reranked_chunk_ids: list[str] = Field(default_factory=list)
     reranked_benchmark_doc_ids: list[str] = Field(default_factory=list)
     embedding_provider: str | None = None
     rerank_provider: str | None = None
     attempts: list[ProviderAttempt] = Field(default_factory=list)
+    fusion_strategy: str | None = None
+    fusion_alpha: float | None = None
     fusion_input_count: int = 0
     fused_count: int = 0
     graph_expanded: bool = False
     query_understanding: QueryUnderstanding | None = None
     query_understanding_debug: dict[str, object] = Field(default_factory=dict)
+    pre_rerank_count: int = 0
+    post_cleanup_count: int = 0
+    top1_confidence: float | None = None
+    exit_decision: str | None = None
+    fallback_triggered: list[str] = Field(default_factory=list)
     parent_backfilled_count: int = 0
     collapsed_candidate_count: int = 0
 
@@ -424,9 +452,9 @@ class VectorRepo(Protocol):
 
 
 class MetadataRepo(Protocol):
-    def save_source(self, source: Source) -> None: ...
+    def save_source(self, source: Source) -> Source: ...
 
-    def get_source(self, source_id: str) -> Source | None: ...
+    def get_source(self, source_id: int) -> Source | None: ...
 
     def get_source_by_location_and_hash(self, location: str, content_hash: str) -> Source | None: ...
 
@@ -436,20 +464,19 @@ class MetadataRepo(Protocol):
 
     def list_sources(self, location: str | None = None) -> list[Source]: ...
 
-    def save_document(
+    def save_document(self, document: Document) -> Document: ...
+
+    def get_document(self, doc_id: int) -> Document | None: ...
+
+    def is_document_active(self, doc_id: int) -> bool: ...
+
+    def list_documents(
         self,
-        document: Document,
+        source_id: int | None = None,
         *,
-        location: str,
-        content_hash: str,
-        active: bool = True,
-    ) -> None: ...
-
-    def get_document(self, doc_id: str) -> Document | None: ...
-
-    def is_document_active(self, doc_id: str) -> bool: ...
-
-    def list_documents(self, source_id: str | None = None, *, active_only: bool = False) -> list[Document]: ...
+        active_only: bool = False,
+        version_group_id: int | None = None,
+    ) -> list[Document]: ...
 
     def get_active_document_by_location_and_hash(self, location: str, content_hash: str) -> Document | None: ...
 
@@ -457,7 +484,7 @@ class MetadataRepo(Protocol):
 
     def deactivate_documents_for_location(self, location: str) -> None: ...
 
-    def set_document_active(self, doc_id: str, *, active: bool) -> None: ...
+    def set_document_active(self, doc_id: int, *, active: bool) -> None: ...
 
     def save_segment(self, segment: Segment) -> None: ...
 
@@ -495,6 +522,36 @@ class MetadataRepo(Protocol):
     ) -> list[DocumentStatusRecord]: ...
 
     def delete_document_status(self, doc_id: str) -> None: ...
+
+    def get_section(self, section_id: int) -> SectionRecord | None: ...
+
+    def list_sections(self, *, doc_id: int | None = None, source_id: int | None = None) -> list[SectionRecord]: ...
+
+    def get_asset(self, asset_id: int) -> AssetRecord | None: ...
+
+    def list_assets(
+        self,
+        *,
+        doc_id: int | None = None,
+        source_id: int | None = None,
+        section_id: int | None = None,
+    ) -> list[AssetRecord]: ...
+
+    def get_layout_meta_cache(self, doc_id: int) -> LayoutMetaCacheRecord | None: ...
+
+    def save_processing_state(self, record: ProcessingStateRecord) -> ProcessingStateRecord: ...
+
+    def get_processing_state(self, doc_id: int) -> ProcessingStateRecord | None: ...
+
+    def list_processing_states(
+        self,
+        *,
+        source_id: int | None = None,
+        status: str | None = None,
+        stage: str | None = None,
+    ) -> list[ProcessingStateRecord]: ...
+
+    def delete_processing_state(self, doc_id: int) -> None: ...
 
     def close(self) -> None: ...
 
@@ -571,13 +628,15 @@ class FullTextSearchRepo(Protocol):
 
 
 class ObjectStore(Protocol):
-    def put_bytes(self, path: str, payload: bytes, *, content_type: str | None = None) -> None: ...
+    def put_bytes(self, content: bytes, *, suffix: str = "") -> str: ...
 
-    def get_bytes(self, path: str) -> bytes: ...
+    def read_bytes(self, key: str) -> bytes: ...
 
-    def delete(self, path: str) -> None: ...
+    def read_byte_range(self, key: str, start: int, end: int) -> bytes: ...
 
-    def exists(self, path: str) -> bool: ...
+    def exists(self, key: str) -> bool: ...
+
+    def path_for_key(self, key: str) -> Path: ...
 
 
 __all__ = [

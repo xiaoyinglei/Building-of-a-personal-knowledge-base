@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-
 def _provider_name(provider: object) -> str:
     explicit = getattr(provider, "provider_name", None)
     if isinstance(explicit, str) and explicit:
@@ -69,6 +68,44 @@ class EmbeddingCapabilityBinding:
         if callable(embed_query):
             return list(embed_query(list(texts)))
         return self.embed(texts)
+
+    def embed_query_sparse(self, texts: Sequence[str]) -> list[dict[int, float]]:
+        embed_query_sparse = getattr(self.backend, "embed_query_sparse", None)
+        if callable(embed_query_sparse):
+            return [self._normalize_sparse_vector(item) for item in embed_query_sparse(list(texts))]
+        embed_sparse = getattr(self.backend, "embed_sparse", None)
+        if callable(embed_sparse):
+            return [self._normalize_sparse_vector(item) for item in embed_sparse(list(texts))]
+        raise RuntimeError("Sparse embedding capability is not available")
+
+    def supports_sparse_embedding(self) -> bool:
+        return callable(getattr(self.backend, "embed_query_sparse", None)) or callable(
+            getattr(self.backend, "embed_sparse", None)
+        )
+
+    @staticmethod
+    def _normalize_sparse_vector(value: object) -> dict[int, float]:
+        if isinstance(value, dict):
+            normalized: dict[int, float] = {}
+            for key, item in value.items():
+                try:
+                    normalized[int(key)] = float(item)
+                except (TypeError, ValueError):
+                    continue
+            if normalized:
+                return normalized
+        if isinstance(value, list):
+            normalized = {}
+            for item in value:
+                if not isinstance(item, (tuple, list)) or len(item) != 2:
+                    continue
+                try:
+                    normalized[int(item[0])] = float(item[1])
+                except (TypeError, ValueError):
+                    continue
+            if normalized:
+                return normalized
+        raise RuntimeError(f"Unsupported sparse vector payload: {type(value)!r}")
 
 
 @dataclass(frozen=True, slots=True)

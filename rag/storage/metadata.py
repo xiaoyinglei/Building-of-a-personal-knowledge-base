@@ -12,10 +12,10 @@ from rag.storage.repositories.sqlite_metadata_repo import SQLiteMetadataRepo
 class DocumentStore:
     metadata_repo: MetadataRepo
 
-    def save_source(self, source: Source) -> None:
-        self.metadata_repo.save_source(source)
+    def save_source(self, source: Source) -> Source:
+        return self.metadata_repo.save_source(source)
 
-    def get_source(self, source_id: str) -> Source | None:
+    def get_source(self, source_id: int) -> Source | None:
         return self.metadata_repo.get_source(source_id)
 
     def get_source_by_location_and_hash(self, location: str, content_hash: str) -> Source | None:
@@ -30,49 +30,66 @@ class DocumentStore:
     def get_latest_source_for_location(self, location: str) -> Source | None:
         return self.metadata_repo.get_latest_source_for_location(location)
 
-    def save_document(
-        self,
-        document: Document,
-        *,
-        location: str,
-        content_hash: str,
-        active: bool = True,
-    ) -> None:
-        self.metadata_repo.save_document(
-            document,
-            location=location,
-            content_hash=content_hash,
-            active=active,
-        )
+    def save_document(self, document: Document) -> Document:
+        return self.metadata_repo.save_document(document)
 
-    def get_document(self, doc_id: str) -> Document | None:
+    def get_document(self, doc_id: int) -> Document | None:
         return self.metadata_repo.get_document(doc_id)
 
-    def is_active(self, doc_id: str) -> bool:
+    def is_active(self, doc_id: int) -> bool:
         return self.metadata_repo.is_document_active(doc_id)
 
     def list_documents(
         self,
-        source_id: str | None = None,
+        source_id: int | None = None,
         *,
         active_only: bool = False,
+        version_group_id: int | None = None,
     ) -> list[Document]:
-        return self.metadata_repo.list_documents(source_id, active_only=active_only)
+        return self.metadata_repo.list_documents(
+            source_id,
+            active_only=active_only,
+            version_group_id=version_group_id,
+        )
 
     def get_active_document_by_location_and_hash(
         self,
         location: str,
         content_hash: str,
     ) -> Document | None:
-        return self.metadata_repo.get_active_document_by_location_and_hash(location, content_hash)
+        direct = getattr(self.metadata_repo, "get_active_document_by_location_and_hash", None)
+        if callable(direct):
+            return direct(location, content_hash)
+        source = self.metadata_repo.get_source_by_location_and_hash(location, content_hash)
+        if source is None:
+            return None
+        documents = self.metadata_repo.list_documents(source.source_id, active_only=True)
+        return documents[0] if documents else None
 
     def get_latest_document_for_location(self, location: str) -> Document | None:
-        return self.metadata_repo.get_latest_document_for_location(location)
+        direct = getattr(self.metadata_repo, "get_latest_document_for_location", None)
+        if callable(direct):
+            return direct(location)
+        source = self.metadata_repo.get_latest_source_for_location(location)
+        if source is None:
+            return None
+        documents = self.metadata_repo.list_documents(source.source_id, active_only=False)
+        return documents[0] if documents else None
 
     def deactivate_documents_for_location(self, location: str) -> None:
-        self.metadata_repo.deactivate_documents_for_location(location)
+        direct = getattr(self.metadata_repo, "deactivate_documents_for_location", None)
+        if callable(direct):
+            direct(location)
+            return
+        for source in self.metadata_repo.list_sources(location):
+            for document in self.metadata_repo.list_documents(source.source_id, active_only=False):
+                self.set_active(document.doc_id, active=False)
 
-    def set_active(self, doc_id: str, *, active: bool) -> None:
+    def set_active(self, doc_id: int, *, active: bool) -> None:
+        activate_version = getattr(self.metadata_repo, "activate_document_version", None)
+        if active and callable(activate_version):
+            activate_version(doc_id)
+            return
         self.metadata_repo.set_document_active(doc_id, active=active)
 
     def save_segment(self, segment: Segment) -> None:

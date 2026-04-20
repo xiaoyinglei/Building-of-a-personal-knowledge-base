@@ -1015,46 +1015,40 @@ class BenchmarkDiagnosticsPostProcessor:
             access_policy=self.access_policy,
             execution_location_preference=self.context.execution_location_preference,
         )
-        query_understanding = retrieval_service.query_understanding_service.analyze(
+        query_understanding, effective_access_policy, decision, plan = retrieval_service.plan_query(
             query_text,
             access_policy=self.access_policy,
+            source_scope=[],
             execution_location_preference=self.context.execution_location_preference,
+            query_options=query_options,
         )
-        effective_access_policy = narrow_access_policy_for_query(self.access_policy, query_understanding)
-        decision = retrieval_service.routing_service.route(
-            query_text,
-            query_understanding=query_understanding,
+        active_collection = retrieval_service.collect_internal_branches(
+            plan=plan,
             source_scope=[],
             access_policy=effective_access_policy,
-        )
-        resolved_mode = normalize_query_mode(query_options.mode)
-        spec = retrieval_service._mode_spec(resolved_mode, query_understanding, query_options)
-        active_branches, _, _ = retrieval_service._collect_internal_branches(
-            spec=spec,
-            query=query_text,
-            source_scope=[],
-            access_policy=effective_access_policy,
-            decision=decision,
+            runtime_mode=decision.runtime_mode,
             query_understanding=query_understanding,
         )
+        active_branches = active_collection.branches
         active_branch_map = {name: list(candidates) for name, candidates in active_branches}
         fused_candidates = retrieval_service.fusion.fuse(
             query=query_text,
-            mode=spec.mode,
+            mode=plan.mode,
             branches=active_branches,
         )
-        reranked_candidates, _, _, _ = retrieval_service._rank_branches(
+        rank_result = retrieval_service.rank_plan_branches(
             query=query_text,
-            mode=spec.mode,
+            plan=plan,
             branches=active_branches,
             query_options=query_options,
             rerank_required=decision.rerank_required,
         )
+        reranked_candidates = rank_result.candidates
         retrieval_limit = max(
             query_options.retrieval_pool_k or query_options.chunk_top_k or query_options.top_k,
             query_options.top_k,
         )
-        branch_limit_map = {branch_spec.branch: branch_spec.limit for branch_spec in spec.internal_branches}
+        branch_limit_map = {path.branch: path.limit for path in plan.retrieval_paths}
         branch_snapshots: dict[str, _BranchSnapshot] = {}
         active_branch_names = [name for name, _candidates in active_branches]
         diagnostic_branches = set(_DEFAULT_BRANCHES) | set(active_branch_names)
@@ -1068,22 +1062,15 @@ class BenchmarkDiagnosticsPostProcessor:
             if branch in active_branch_map:
                 limited = active_branch_map[branch]
             else:
-                candidates = list(
-                    retrieval_service._call_branch(
-                        branch,
-                        query=query_text,
-                        source_scope=[],
-                        query_understanding=query_understanding,
-                    )
-                )
-                filtered = retrieval_service.evidence_service.filter_candidates(
-                    candidates,
+                limited = retrieval_service.collect_branch_candidates(
+                    branch=branch,
+                    plan=plan,
+                    query_understanding=query_understanding,
                     source_scope=[],
                     access_policy=effective_access_policy,
                     runtime_mode=decision.runtime_mode,
-                    query_understanding=query_understanding,
+                    limit=branch_limit_map.get(branch, retrieval_limit),
                 )
-                limited = filtered[: branch_limit_map.get(branch, retrieval_limit)]
             branch_snapshots[branch] = _snapshot_branch(limited)
         top_chunk_benchmark_doc_id = (
             None

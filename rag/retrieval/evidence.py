@@ -15,6 +15,7 @@ from rag.schema.query import (
     ArtifactType,
     ComplexityLevel,
     EvidenceItem,
+    GroundingTarget,
     KnowledgeArtifact,
     PreservationSuggestion,
     QueryUnderstanding,
@@ -22,10 +23,6 @@ from rag.schema.query import (
 )
 from rag.schema.runtime import AccessPolicy, RuntimeMode
 from rag.utils.text import search_terms
-
-if TYPE_CHECKING:
-    from rag.retrieval.models import RetrievalResult
-
 
 class CandidateLike(Protocol):
     chunk_id: str
@@ -246,12 +243,14 @@ class EvidenceService:
             retrieval_channels=retrieval_channels,
         )
         return EvidenceItem(
-            chunk_id=candidate.chunk_id,
-            doc_id=candidate.doc_id,
+            chunk_id=str(candidate.chunk_id),
+            doc_id=str(candidate.doc_id),
             benchmark_doc_id=getattr(candidate, "benchmark_doc_id", None),
-            source_id=getattr(candidate, "source_id", None),
-            citation_anchor=candidate.citation_anchor,
-            text=candidate.text,
+            source_id=None
+            if getattr(candidate, "source_id", None) is None
+            else str(getattr(candidate, "source_id")),
+            citation_anchor=str(candidate.citation_anchor),
+            text=str(candidate.text),
             score=float(candidate.score),
             evidence_kind=evidence_kind,
             chunk_role=getattr(candidate, "chunk_role", None),
@@ -265,6 +264,7 @@ class EvidenceService:
             source_type=getattr(candidate, "source_type", None),
             retrieval_channels=retrieval_channels,
             retrieval_family=retrieval_family,
+            grounding_target=getattr(candidate, "grounding_target", None),
         )
 
     def assemble_bundle(self, candidates: Sequence[CandidateLike]) -> EvidenceBundle:
@@ -320,19 +320,24 @@ class EvidenceService:
 
 
 class ContextEvidenceMerger:
-    def merge(self, retrieval: RetrievalResult) -> list[EvidenceItem]:
-        internal_by_id = {item.chunk_id: item for item in retrieval.evidence.internal}
-        ordered_internal = [
-            internal_by_id[chunk_id] for chunk_id in retrieval.reranked_chunk_ids if chunk_id in internal_by_id
-        ]
+    def merge(self, retrieval: object) -> list[EvidenceItem]:
+        evidence = getattr(retrieval, "evidence")
+        reranked_chunk_ids = list(getattr(retrieval, "reranked_chunk_ids", []) or [])
+        if not reranked_chunk_ids:
+            reranked_chunk_ids = [
+                candidate.chunk_id for candidate in list(getattr(retrieval, "clean_items", []) or [])
+            ]
+
+        internal_by_id = {item.chunk_id: item for item in evidence.internal}
+        ordered_internal = [internal_by_id[chunk_id] for chunk_id in reranked_chunk_ids if chunk_id in internal_by_id]
         seen_internal = {item.chunk_id for item in ordered_internal}
-        ordered_internal.extend(item for item in retrieval.evidence.internal if item.chunk_id not in seen_internal)
+        ordered_internal.extend(item for item in evidence.internal if item.chunk_id not in seen_internal)
 
         merged: list[EvidenceItem] = []
         merged_by_chunk_id: dict[str, EvidenceItem] = {}
         ordered_chunk_ids: list[str] = []
 
-        for item in [*ordered_internal, *retrieval.evidence.graph]:
+        for item in [*ordered_internal, *evidence.graph]:
             existing = merged_by_chunk_id.get(item.chunk_id)
             if existing is None:
                 merged_by_chunk_id[item.chunk_id] = item
@@ -343,7 +348,7 @@ class ContextEvidenceMerger:
         merged.extend(merged_by_chunk_id[chunk_id] for chunk_id in ordered_chunk_ids)
 
         seen_external: set[str] = set()
-        for item in retrieval.evidence.external:
+        for item in evidence.external:
             if item.chunk_id in seen_external:
                 continue
             seen_external.add(item.chunk_id)

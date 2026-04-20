@@ -136,7 +136,7 @@ def query(
     if query is None or not query.strip():
         raise typer.BadParameter("--query is required")
     with _runtime(storage_root, profile_id=profile_id, require_chat=False) as runtime:
-        result = runtime.query(query, options=QueryOptions(mode=mode.value))
+        result = runtime.query_public(query, options=QueryOptions(mode=mode.value))
     if json_output:
         _echo_json(result)
         return

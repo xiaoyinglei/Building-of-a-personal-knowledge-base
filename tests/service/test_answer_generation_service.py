@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from rag.providers.generation import AnswerGenerationService
 from rag.schema import ChunkRole, EvidenceItem, RuntimeMode
+from rag.schema.query import GroundingTarget
 
 
 def _evidence_item(
@@ -67,10 +68,11 @@ def test_answer_generation_service_returns_grounded_answer_with_structured_citat
         runtime_mode=RuntimeMode.DEEP,
     )
 
-    assert result.answer_text == "一月我完成了问题核查、异常复核和整改跟进。"
+    assert result.answer_text == "一月我完成了问题核查、异常复核和整改跟进。 [doc-1]"
     assert result.groundedness_flag is True
     assert result.insufficient_evidence_flag is False
     assert len(result.answer_sections) == 1
+    assert result.answer_sections[0].text == "一月我完成了问题核查、异常复核和整改跟进。 [doc-1]"
     assert len(result.citations) == 1
     assert result.citations[0].file_name == "monthly-report.docx"
     assert result.citations[0].section_path == ["专项工作", "月返抽查"]
@@ -161,3 +163,54 @@ def test_answer_generation_service_preserves_table_and_image_special_chunk_citat
     assert result.groundedness_flag is True
     assert {citation.chunk_type for citation in result.citations} == {"table", "image_summary"}
     assert {link.evidence_chunk_id for link in result.evidence_links} == {"table-1", "image-1"}
+
+
+def test_answer_generation_service_uses_doc_aliases_in_prompt_and_rewrites_them_after_generation() -> None:
+    service = AnswerGenerationService()
+
+    def fake_model(prompt: str) -> str:
+        assert "ref=[Doc-1]" in prompt
+        assert "不得编造新的引用标签" in prompt
+        assert "doc-1" not in prompt
+        return """
+        {
+          "answer_text": "Alpha Engine 负责处理摄取请求。[Doc-1]",
+          "answer_sections": [
+            {
+              "title": "直接回答",
+              "text": "Alpha Engine 负责处理摄取请求。[Doc-1]",
+              "evidence_ids": ["E1"]
+            }
+          ],
+          "insufficient_evidence_flag": false
+        }
+        """
+
+    result = service.generate(
+        query="Alpha Engine 做什么？",
+        evidence_pack=[
+            _evidence_item(
+                chunk_id="chunk-1",
+                text="Alpha Engine 负责处理摄取请求并校验分块。",
+                file_name="",
+                section_path=["Architecture", "Alpha"],
+                page_start=2,
+                page_end=2,
+            ).model_copy(
+                update={
+                    "doc_id": "doc-1",
+                    "grounding_target": GroundingTarget(
+                        kind="section",
+                        doc_id="doc-1",
+                        section_id="section-7",
+                    ),
+                }
+            )
+        ],
+        model_generate=fake_model,
+        runtime_mode=RuntimeMode.DEEP,
+    )
+
+    assert result.answer_text.endswith("[doc-1:section-7]")
+    assert "[Doc-1]" not in result.answer_text
+    assert result.answer_sections[0].text.endswith("[doc-1:section-7]")

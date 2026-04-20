@@ -1,6 +1,7 @@
 from rag.retrieval.models import (
     BuiltContext,
     ContextEvidence,
+    PublicQueryResult,
     QueryMode,
     QueryOptions,
     RAGQueryResult,
@@ -10,6 +11,7 @@ from rag.retrieval.models import (
 __all__ = [
     'BuiltContext',
     'ContextEvidence',
+    'PublicQueryResult',
     'QueryMode',
     'QueryOptions',
     'RAGQueryResult',

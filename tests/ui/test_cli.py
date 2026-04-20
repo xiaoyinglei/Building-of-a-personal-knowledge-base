@@ -6,6 +6,9 @@ from typer.testing import CliRunner
 
 import rag.cli as cli
 from rag.cli import app
+from rag.retrieval.models import BuiltContext, PublicQueryResult
+from rag.schema.query import GroundedAnswer
+from rag.schema.runtime import RetrievalDiagnostics
 
 runner = CliRunner()
 
@@ -180,3 +183,61 @@ def test_cli_analyze_task_returns_structured_report(tmp_path: Path) -> None:
     payload = json.loads(analyze.stdout)
     assert payload["final_report"]["executive_summary"]
     assert payload["traces"]
+
+
+def test_cli_query_uses_public_query_contract(monkeypatch: MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class _FakeRuntime:
+        def __enter__(self) -> "_FakeRuntime":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            del exc_type, exc, tb
+
+        def query(self, *_args, **_kwargs):
+            raise AssertionError("cli query should not use runtime.query")
+
+        def query_public(self, query_text: str, *, options=None) -> PublicQueryResult:
+            del options
+            calls.append(query_text)
+            return PublicQueryResult(
+                query=query_text,
+                mode="mix",
+                answer=GroundedAnswer(
+                    answer_text="Alpha answer",
+                    groundedness_flag=True,
+                    insufficient_evidence_flag=False,
+                ),
+                context=BuiltContext(
+                    evidence=[],
+                    token_budget=1200,
+                    token_count=12,
+                    grounded_candidate="alpha",
+                    prompt="prompt",
+                ),
+                routing_decision={},
+                retrieval_diagnostics=RetrievalDiagnostics(),
+            )
+
+    monkeypatch.setattr(cli, "_runtime", lambda *args, **kwargs: _FakeRuntime())
+
+    result = runner.invoke(
+        app,
+        [
+            "query",
+            "--storage-root",
+            ".rag",
+            "--profile",
+            "test_minimal",
+            "--query",
+            "What does Alpha Engine do?",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["answer"]["answer_text"] == "Alpha answer"
+    assert "retrieval" not in payload
+    assert calls == ["What does Alpha Engine do?"]

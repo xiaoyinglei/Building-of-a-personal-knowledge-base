@@ -213,6 +213,21 @@ class EvidenceItem(BaseModel):
     source_type: str | None = None
     retrieval_channels: list[str] = Field(default_factory=list)
     retrieval_family: str | None = None
+    grounding_target: "GroundingTarget | None" = None
+
+
+class GroundingTarget(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    kind: str
+    doc_id: str
+    source_id: str | None = None
+    section_id: str | None = None
+    asset_id: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    section_path: list[str] = Field(default_factory=list)
+    raw_locator: dict[str, str] = Field(default_factory=dict)
 
 
 class PreservationSuggestion(BaseModel):
@@ -301,6 +316,7 @@ def _rebuild_runtime_schema_refs() -> None:
 
 
 _rebuild_runtime_schema_refs()
+EvidenceItem.model_rebuild(_types_namespace={"GroundingTarget": GroundingTarget})
 
 __all__ = [
     "AnswerCitation",
@@ -310,6 +326,7 @@ __all__ = [
     "ArtifactType",
     "ComplexityLevel",
     "EvidenceItem",
+    "GroundingTarget",
     "ExecutionPolicy",
     "GroundedAnswer",
     "KnowledgeArtifact",

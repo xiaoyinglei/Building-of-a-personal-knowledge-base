@@ -53,6 +53,7 @@ class WorkbenchIndexSummary(BaseModel):
     graph_nodes: int = 0
     graph_edges: int = 0
     statuses: dict[str, int] = Field(default_factory=dict)
+    sync_monitor: dict[str, object] = Field(default_factory=dict)
     runtime_contract: dict[str, str | int | bool | None] = Field(default_factory=dict)
 
 

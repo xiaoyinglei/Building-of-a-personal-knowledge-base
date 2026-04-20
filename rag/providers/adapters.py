@@ -918,6 +918,32 @@ class LocalBgeProviderRepo:
     def embed_query(self, texts: Sequence[str]) -> list[list[float]]:
         return self.embed(texts)
 
+    def embed_query_sparse(self, texts: Sequence[str]) -> list[dict[int, float]]:
+        if not texts:
+            return []
+        backend = self._embedding_backend or self._load_embedding_backend()
+        self._embedding_backend = backend
+        encoder = cast(Any, backend)
+        sparse_vectors: list[dict[int, float]] = []
+        for start in range(0, len(texts), self._batch_size):
+            batch_texts = list(texts[start : start + self._batch_size])
+            with self._backend_output_context():
+                payload = encoder.encode(
+                    batch_texts,
+                    batch_size=self._batch_size,
+                    max_length=self._max_length,
+                    return_dense=False,
+                    return_sparse=True,
+                    return_colbert_vecs=False,
+                )
+            sparse_payload = payload.get("lexical_weights") if isinstance(payload, dict) else None
+            if sparse_payload is None and isinstance(payload, dict):
+                sparse_payload = payload.get("sparse_vecs") or payload.get("sparse_weights")
+            if sparse_payload is None:
+                raise RuntimeError("Local BGE embedding backend returned no sparse vectors")
+            sparse_vectors.extend(self._normalize_sparse_payload(item) for item in sparse_payload)
+        return sparse_vectors
+
     def rerank(self, query: str, candidates: Sequence[object]) -> list[int]:
         if not candidates:
             return []
@@ -956,7 +982,7 @@ class LocalBgeProviderRepo:
                         batch_size=self._batch_size,
                         query_max_length=self._max_length,
                         passage_max_length=self._max_length,
-                        return_sparse=False,
+                        return_sparse=True,
                         return_colbert_vecs=False,
                     ),
                 )
@@ -993,6 +1019,30 @@ class LocalBgeProviderRepo:
             return suppress_backend_fast_tokenizer_padding_warning(backend)
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(f"Local BGE rerank load failed: {exc}") from exc
+
+    @staticmethod
+    def _normalize_sparse_payload(payload: object) -> dict[int, float]:
+        if isinstance(payload, dict):
+            normalized: dict[int, float] = {}
+            for key, value in payload.items():
+                try:
+                    normalized[int(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+            if normalized:
+                return normalized
+        if isinstance(payload, list):
+            normalized = {}
+            for item in payload:
+                if not isinstance(item, (tuple, list)) or len(item) != 2:
+                    continue
+                try:
+                    normalized[int(item[0])] = float(item[1])
+                except (TypeError, ValueError):
+                    continue
+            if normalized:
+                return normalized
+        raise RuntimeError(f"Unsupported sparse embedding payload: {type(payload)!r}")
 
     @staticmethod
     def _candidate_text(candidate: object) -> str:

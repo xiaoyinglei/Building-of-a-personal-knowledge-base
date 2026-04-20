@@ -8,6 +8,7 @@ from rag.assembly import ChatCapabilityBinding
 from rag.retrieval.analysis import QueryUnderstandingService
 from rag.retrieval.models import QueryMode, QueryOptions
 from rag.retrieval.orchestrator import RetrievalService
+from rag.retrieval.planning_graph import PlanningGraph
 from rag.schema.core import ChunkRole
 from rag.schema.runtime import AccessPolicy, ExternalRetrievalPolicy, Residency
 
@@ -270,6 +271,20 @@ def _build_service(
         query_understanding_service=_query_understanding_service(),
     )
     return service, calls
+
+
+def test_retrieval_service_does_not_expose_retired_execution_pipeline_methods() -> None:
+    service, _calls = _build_service()
+
+    for attr in (
+        "_async_retrieve_pipeline",
+        "_execute_mode_async",
+        "_merge_branch_collection",
+        "_supplemental_branches",
+        "_run_bypass_mode",
+        "_rank_branches",
+    ):
+        assert not hasattr(service, attr)
 
 
 def test_retrieval_service_rrf_fuses_branches_before_rerank_and_honors_source_scope() -> None:
@@ -972,3 +987,40 @@ def test_retrieval_service_hybrid_and_mix_publish_distinct_mode_executor_budgets
     assert mix.diagnostics.branch_limits["global"] > 0
     assert mix.diagnostics.branch_limits["vector"] > 0
     assert mix.diagnostics.branch_limits["full_text"] > 0
+
+
+def test_retrieval_service_summary_hybrid_empty_response_falls_back_to_full_text() -> None:
+    class _VectorRetriever:
+        absorbs_sparse_branch = True
+
+        def prepare_for_policy(self, **kwargs) -> None:
+            del kwargs
+
+        async def aretrieve_with_plan(self, *, query: str, source_scope: list[str], plan, **kwargs):
+            del query, source_scope, plan, kwargs
+            return []
+
+    def full_text_retriever(query: str, source_scope: list[str], query_understanding: object) -> list[FakeCandidate]:
+        del query, source_scope, query_understanding
+        return [FakeCandidate("chunk-sparse", "doc-a", "fallback text", "#s", 0.91, 1)]
+
+    service = RetrievalService(
+        full_text_retriever=cast(Any, full_text_retriever),
+        vector_retriever=cast(Any, _VectorRetriever()),
+        query_understanding_service=_query_understanding_service(),
+        planning_graph=PlanningGraph(use_summary_hybrid_paths=True),
+    )
+
+    result = service.retrieve(
+        "What is Alpha?",
+        access_policy=AccessPolicy.default(),
+        source_scope=["doc-a"],
+    )
+
+    assert [item.chunk_id for item in result.evidence.internal] == ["chunk-sparse"]
+    assert result.diagnostics.branch_hits["vector"] == 0
+    assert result.diagnostics.branch_hits["full_text"] == 1
+    assert result.diagnostics.version_gate_applied is True
+    assert result.diagnostics.operator_plan[:2] == ["VersionGate", "EntitlementFilter"]
+    assert result.diagnostics.fusion_strategy == "weighted_rrf"
+    assert result.diagnostics.fallback_triggered == ["full_text"]

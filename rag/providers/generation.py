@@ -14,6 +14,7 @@ from rag.schema.runtime import AccessPolicy, ExecutionLocationPreference, Provid
 from rag.utils.text import keyword_overlap, looks_command_like, search_terms, split_sentences
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+_DOC_ALIAS_RE = re.compile(r"\[(Doc-\d+)\]")
 _GENERIC_QUERY_TERMS = {
     "这个",
     "那个",
@@ -82,17 +83,18 @@ class AnswerGenerationService:
         prompt_style: Literal["full", "compact", "minimal"] = "full",
     ) -> str:
         del runtime_mode
+        doc_aliases = self._doc_aliases(evidence_pack)
         if prompt_style == "minimal":
             lines = [
                 f"Q:{query}",
-                "JSON: answer_text, answer_sections, insufficient_evidence_flag; cite E ids.",
+                "JSON: answer_text, answer_sections, insufficient_evidence_flag; cite E ids and [Doc-n] refs.",
             ]
         elif prompt_style == "compact":
             lines = [
                 grounded_candidate,
                 f"问题：{query}",
                 f"格式：{response_type}",
-                "只基于证据回答；证据不足时将 insufficient_evidence_flag 设为 true。",
+                "只基于证据回答；证据不足时将 insufficient_evidence_flag 设为 true；句尾必须带 [Doc-n] 引用。",
             ]
         else:
             lines = [
@@ -120,6 +122,8 @@ class AnswerGenerationService:
                     "输出要求：",
                     "返回一个 JSON 对象，包含 answer_text、answer_sections、insufficient_evidence_flag。",
                     "answer_sections 中的 evidence_ids 必须引用下面的 E 编号。",
+                    "answer_text 和每个 answer_sections[].text 的句尾必须使用给定的 [Doc-n] 标签。",
+                    "不得编造新的引用标签。",
                     "证据：",
                 ]
             )
@@ -131,6 +135,8 @@ class AnswerGenerationService:
                     '- 顶层字段必须包含 "answer_text"、"answer_sections"、"insufficient_evidence_flag"。',
                     '- answer_sections 是数组，每个元素包含 "title"、"text"、"evidence_ids"。',
                     "- evidence_ids 必须引用下面证据编号，例如 E1、E2。",
+                    "- answer_text 和每个 answer_sections[].text 的句尾必须附带给定的 [Doc-n] 引用标签。",
+                    "- 只能使用下面出现过的 [Doc-n] 标签，不得编造新的引用标签。",
                     "- 证据不足时，把 insufficient_evidence_flag 设为 true，并明确说明无法从证据中确认。",
                     "- 严格使用和问题相同的语言。",
                     "- 不要输出 Markdown、代码块、解释文字。",
@@ -139,8 +145,9 @@ class AnswerGenerationService:
             )
         for index, item in enumerate(evidence_pack, start=1):
             evidence_id = self._evidence_id(index)
+            alias_label = self._doc_alias_label(item.doc_id, doc_aliases)
             section = " > ".join(item.section_path) if item.section_path else item.citation_anchor
-            file_name = item.file_name or item.source_id or item.doc_id
+            file_name = item.file_name or alias_label or item.source_id or item.doc_id
             page_hint = (
                 ""
                 if item.page_start is None
@@ -158,10 +165,10 @@ class AnswerGenerationService:
             lines.extend(
                 [
                     (
-                        f"{evidence_id} {item.text}"
+                        f"{evidence_id} {alias_label} {item.text}".strip()
                         if prompt_style == "minimal"
                         else (
-                            f"{evidence_id} | kind={item.evidence_kind} | file={file_name} "
+                            f"{evidence_id} | ref={alias_label or '[Doc-?]'} | kind={item.evidence_kind} | file={file_name} "
                             f"| section={section}{page_hint} | chunk_type={chunk_type}"
                         )
                     ),
@@ -234,6 +241,19 @@ class AnswerGenerationService:
     @staticmethod
     def _evidence_id(index: int) -> str:
         return f"E{index}"
+
+    @staticmethod
+    def _doc_aliases(evidence_pack: Sequence[EvidenceItem]) -> dict[str, str]:
+        aliases: dict[str, str] = {}
+        for item in evidence_pack:
+            if item.doc_id not in aliases:
+                aliases[item.doc_id] = f"Doc-{len(aliases) + 1}"
+        return aliases
+
+    @staticmethod
+    def _doc_alias_label(doc_id: str, doc_aliases: dict[str, str]) -> str:
+        alias = doc_aliases.get(doc_id)
+        return f"[{alias}]" if alias else ""
 
     def _evidence_is_insufficient(
         self,
@@ -327,10 +347,12 @@ class AnswerGenerationService:
         evidence_pack: Sequence[EvidenceItem],
     ) -> GroundedAnswer:
         evidence_map = {self._evidence_id(index): item for index, item in enumerate(evidence_pack, start=1)}
+        alias_reference_map = self._alias_reference_map(evidence_pack)
         citations: list[AnswerCitation] = []
         evidence_links: list[AnswerEvidenceLink] = []
         answer_sections: list[AnswerSection] = []
         citation_by_chunk_id: dict[str, AnswerCitation] = {}
+        answer_supporting_evidence: list[EvidenceItem] = []
         grounded = True
 
         for section_index, raw_section in enumerate(sections, start=1):
@@ -347,6 +369,12 @@ class AnswerGenerationService:
             ]
             if not section_evidence:
                 section_evidence = self._select_supporting_evidence(section_text, evidence_pack)
+            answer_supporting_evidence.extend(section_evidence)
+            section_text = self._normalize_reference_markers(
+                section_text,
+                supporting_evidence=section_evidence or evidence_pack,
+                alias_reference_map=alias_reference_map,
+            )
 
             citation_ids: list[str] = []
             evidence_chunk_ids: list[str] = []
@@ -395,6 +423,11 @@ class AnswerGenerationService:
                 )
             )
 
+        answer_text = self._normalize_reference_markers(
+            answer_text,
+            supporting_evidence=answer_supporting_evidence or evidence_pack,
+            alias_reference_map=alias_reference_map,
+        )
         overall_grounded = grounded and (self._section_grounded(answer_text, evidence_pack) or len(answer_sections) > 1)
         return GroundedAnswer(
             answer_text=answer_text,
@@ -462,6 +495,63 @@ class AnswerGenerationService:
             return [top]
         return [item for item in ranked[:2] if keyword_overlap(query_terms, self._evidence_search_text(item)) > 0]
 
+    @classmethod
+    def _alias_reference_map(cls, evidence_pack: Sequence[EvidenceItem]) -> dict[str, str]:
+        doc_aliases = cls._doc_aliases(evidence_pack)
+        alias_map: dict[str, str] = {}
+        for item in evidence_pack:
+            alias = doc_aliases.get(item.doc_id)
+            if alias is None or alias in alias_map:
+                continue
+            alias_map[alias] = cls._canonical_reference(item)
+        return alias_map
+
+    @staticmethod
+    def _canonical_reference(item: EvidenceItem) -> str:
+        target = item.grounding_target
+        if target is not None:
+            if target.section_id:
+                return f"[{item.doc_id}:{target.section_id}]"
+            if target.asset_id:
+                return f"[{item.doc_id}:{target.asset_id}]"
+        return f"[{item.doc_id}]"
+
+    @classmethod
+    def _normalize_reference_markers(
+        cls,
+        text: str,
+        *,
+        supporting_evidence: Sequence[EvidenceItem],
+        alias_reference_map: dict[str, str],
+    ) -> str:
+        normalized = cls._rewrite_alias_markers(text.strip(), alias_reference_map)
+        if not normalized:
+            return normalized
+        references = cls._support_references(supporting_evidence)
+        if not references:
+            return normalized
+        if any(reference in normalized for reference in references):
+            return normalized
+        return f"{normalized} {''.join(references[:2])}".strip()
+
+    @staticmethod
+    def _rewrite_alias_markers(text: str, alias_reference_map: dict[str, str]) -> str:
+        if not text or not alias_reference_map:
+            return text
+        return _DOC_ALIAS_RE.sub(lambda match: alias_reference_map.get(match.group(1), match.group(0)), text)
+
+    @classmethod
+    def _support_references(cls, evidence_pack: Sequence[EvidenceItem]) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for item in evidence_pack:
+            reference = cls._canonical_reference(item)
+            if reference in seen:
+                continue
+            seen.add(reference)
+            ordered.append(reference)
+        return ordered
+
     @staticmethod
     def _support_score(answer_excerpt: str, evidence_text: str) -> float:
         terms = _focus_terms(answer_excerpt)
@@ -507,6 +597,7 @@ class AnswerGenerationService:
     @staticmethod
     def _normalize_supported_text(text: str) -> str:
         normalized = text.replace("**", " ").replace("__", " ").replace("`", " ")
+        normalized = re.sub(r"\[(Doc-\d+|[^\[\]]+:[^\[\]]+|[^\[\]]+)\]", " ", normalized)
         normalized = re.sub(r"^\s*[-*]\s*", "", normalized, flags=re.MULTILINE)
         normalized = re.sub(r"^\s*\d+\.\s*", "", normalized, flags=re.MULTILINE)
         normalized = re.sub(r"\s+", " ", normalized)

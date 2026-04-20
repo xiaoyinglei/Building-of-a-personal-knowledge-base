@@ -68,7 +68,13 @@ function renderState(state, { keepSelection = true } = {}) {
     `${state.index_summary.vectors} vectors`,
     `${state.index_summary.graph_nodes} nodes`,
     `${state.index_summary.graph_edges} edges`,
-  ].join(" · ");
+    state.index_summary.sync_monitor?.pending
+      ? `sync pending=${state.index_summary.sync_monitor.pending}`
+      : null,
+    state.index_summary.sync_monitor?.failed
+      ? `sync failed=${state.index_summary.sync_monitor.failed}`
+      : null,
+  ].filter(Boolean).join(" · ");
   dom.syncMessages.textContent = state.sync_messages.join(" | ");
   const currentSelection = keepSelection ? appState.selectedPath : null;
   appState.filesVersion = state.files_version;

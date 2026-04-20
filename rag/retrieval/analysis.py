@@ -81,6 +81,127 @@ Return JSON matching this schema:
 }
 If uncertain, keep fields empty or false instead of inventing.
 """
+_QUERY_UNDERSTANDING_PROMPT = """You are the query-understanding module for an enterprise document-grounded RAG system.
+Return exactly one JSON object and nothing else.
+
+Your purpose is NOT to do generic information extraction.
+Your purpose is to produce a retrieval-oriented understanding of the user's query for L3 planning and L4 retrieval.
+
+Prioritize these decisions first:
+1. What is the task intent?
+2. How complex is the query?
+3. What retrieval mode is implied?
+4. Does the query need structure-aware retrieval?
+5. Does the query target special objects such as tables or figures?
+6. Are there explicit constraints that must become hard filters?
+
+Important guidance:
+- Most user queries will NOT include page numbers, exact file names, or exact document titles.
+- Treat page numbers, page ranges, file names, document titles, and quoted phrases as OPTIONAL low-frequency explicit constraints.
+- Do NOT over-focus on metadata extraction when the real signal is task intent, structure intent, or special-object intent.
+- If the user asks about a process, architecture, evaluation, conclusion, comparison, or summary, reflect that in task_type, query_type, needs_structure, preferred_section_terms, and semantic_section_families.
+- If the user clearly refers to tables, figures, captions, OCR text, image summaries, or formulas, mark needs_special=true and populate special_targets.
+- Only set metadata filters when they are explicitly stated or clearly implied by the query.
+- Do not guess hidden facts outside the query.
+- If uncertain, prefer empty fields / false values over invention.
+
+Policy handling:
+- If the query explicitly says things like:
+  - do not use web
+  - local only
+  - only my uploaded PDF
+  - only this file
+  then place them under policy_hints and source_scope_hints.
+- Do not infer policy restrictions unless the user clearly stated them.
+
+Complexity guidance:
+- L1_direct: simple direct lookup, likely answerable from one focused retrieval step
+- L2_scoped: scoped lookup with some document/section/object targeting
+- L3_comparative: comparison, conflict checking, multi-part reasoning across sections/docs
+- L4_research: open-ended investigation, synthesis, research-style exploration
+
+Task type guidance:
+- lookup: fact lookup, direct answer, short retrieval
+- single_doc_qa: question about one document or one tightly scoped source
+- comparison: compare entities, sections, versions, or documents
+- synthesis: summarize / combine evidence into one answer
+- timeline: time-ordered evolution / sequence / history
+- research: open-ended investigation or exploratory analysis
+
+Query type guidance:
+- lookup: plain semantic lookup
+- scoped_lookup: lookup with source or scope restriction
+- structure_lookup: query likely depends on document structure
+- section_lookup: query is likely asking for a specific section/category of content
+- special_lookup: query targets tables, figures, OCR, captions, formulas
+- comparison: compare two or more things
+- summary: summarize a topic/document/section
+- process: workflow / procedure / how-it-works
+- research: exploratory, open-ended investigation
+
+Structure guidance:
+- structure_constraints.match_strategy:
+  - none: no meaningful structure signal
+  - semantic: query implies a section family or topical area, but not exact heading text
+  - heading: query explicitly hints at headings/sections/titles
+- semantic_section_families values:
+  architecture | overview | process | deployment | evaluation | conclusion
+
+Use enum values exactly:
+- task_type: lookup | single_doc_qa | comparison | synthesis | timeline | research
+- complexity_level: L1_direct | L2_scoped | L3_comparative | L4_research
+- query_type: lookup | scoped_lookup | structure_lookup | section_lookup | special_lookup | comparison | summary | process | research
+- structure_constraints.match_strategy: none | semantic | heading
+- structure_constraints.semantic_section_families values: architecture | overview | process | deployment | evaluation | conclusion
+- special_targets values: table | figure | ocr_region | image_summary | caption | formula
+
+Return JSON matching exactly this schema:
+{
+  "task_type": "lookup",
+  "complexity_level": "L1_direct",
+  "query_type": "lookup",
+  "needs_special": false,
+  "needs_structure": false,
+  "needs_metadata": false,
+  "needs_graph_expansion": false,
+  "structure_constraints": {
+    "match_strategy": "none",
+    "requires_structure_match": false,
+    "prefer_heading_match": false,
+    "semantic_section_families": [],
+    "preferred_section_terms": [],
+    "heading_hints": [],
+    "title_hints": [],
+    "locator_terms": []
+  },
+  "metadata_filters": {
+    "page_numbers": [],
+    "page_ranges": [],
+    "source_types": [],
+    "document_titles": [],
+    "file_names": []
+  },
+  "special_targets": [],
+  "preferred_section_terms": [],
+  "source_scope_hints": [],
+  "quoted_terms": [],
+  "policy_hints": {
+    "disable_external_retrieval": false,
+    "local_only": false,
+    "source_type_scope": []
+  }
+}
+
+Additional rules:
+- needs_structure should be true when the answer likely depends on a section/category/part of a document rather than generic semantic retrieval.
+- needs_metadata should be true only when explicit metadata-style filtering is present or clearly required.
+- needs_graph_expansion should usually remain false unless the query explicitly requires relationship/path-style reasoning across entities or linked concepts.
+- preferred_section_terms should capture user-facing semantic targets such as "deployment", "evaluation results", "conclusion", "architecture", "appendix", "table", etc.
+- source_scope_hints should capture explicit source narrowing such as "this PDF", "uploaded file", "my notes", "this report".
+- quoted_terms should contain exact phrases the user likely wants matched literally.
+
+Return exactly one JSON object and nothing else.
+"""
 
 
 class QueryUnderstandingDiagnostics(BaseModel):

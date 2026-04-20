@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from rag.schema.core import ChunkRole
-from rag.schema.query import EvidenceItem, GroundedAnswer, PreservationSuggestion
+from rag.schema.query import EvidenceItem, GroundedAnswer, GroundingTarget, PreservationSuggestion
 from rag.schema.runtime import AccessPolicy, ExecutionLocationPreference, ProviderAttempt, RetrievalDiagnostics
 
 if TYPE_CHECKING:
@@ -35,6 +35,7 @@ def normalize_query_mode(mode: QueryMode | str | None) -> QueryMode:
 @dataclass(frozen=True, slots=True)
 class QueryOptions:
     mode: Literal["bypass", "naive", "local", "global", "hybrid", "mix"] = "mix"
+    user_id: str | None = None
     source_scope: tuple[str, ...] = ()
     access_policy: AccessPolicy = field(default_factory=AccessPolicy.default)
     execution_location_preference: ExecutionLocationPreference = ExecutionLocationPreference.LOCAL_FIRST
@@ -75,6 +76,7 @@ class ContextEvidence(BaseModel):
     source_type: str | None = None
     retrieval_channels: list[str] = Field(default_factory=list)
     retrieval_family: str | None = None
+    grounding_target: GroundingTarget | None = None
     token_count: int
     selected_token_count: int
     truncated: bool = False
@@ -100,6 +102,7 @@ class ContextEvidence(BaseModel):
             source_type=self.source_type,
             retrieval_channels=list(self.retrieval_channels),
             retrieval_family=self.retrieval_family,
+            grounding_target=self.grounding_target,
         )
 
 
@@ -137,6 +140,24 @@ class RAGQueryResult(BaseModel):
     answer: GroundedAnswer
     retrieval: RetrievalResult
     context: BuiltContext
+    generation_provider: str | None = None
+    generation_model: str | None = None
+    generation_attempts: list[ProviderAttempt] = Field(default_factory=list)
+
+
+class PublicQueryResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    query: str
+    mode: str
+    answer: GroundedAnswer
+    context: BuiltContext
+    routing_decision: dict[str, object] = Field(default_factory=dict)
+    retrieval_diagnostics: RetrievalDiagnostics = Field(default_factory=RetrievalDiagnostics)
+    retrieval_self_check: dict[str, object] = Field(default_factory=dict)
+    preservation_suggestion: PreservationSuggestion = Field(
+        default_factory=lambda: PreservationSuggestion(suggested=False)
+    )
     generation_provider: str | None = None
     generation_model: str | None = None
     generation_attempts: list[ProviderAttempt] = Field(default_factory=list)

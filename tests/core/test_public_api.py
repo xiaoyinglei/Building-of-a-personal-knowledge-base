@@ -155,7 +155,7 @@ def test_milvus_vector_repo_batches_upserts_before_flush(monkeypatch: pytest.Mon
     monkeypatch.setitem(sys.modules, "pymilvus", types.SimpleNamespace(connections=_Connections()))
 
     class _FakeCollection:
-        name = "rag_vectors__chunk__default"
+        name = "knowledge_index__section_summary__default"
 
         def __init__(self) -> None:
             self.upsert_calls: list[list[dict[str, object]]] = []
@@ -176,12 +176,12 @@ def test_milvus_vector_repo_batches_upserts_before_flush(monkeypatch: pytest.Mon
     monkeypatch.setattr(repo, "_UPSERT_BUFFER_SIZE", 2)
     repo._collections[fake_collection.name] = fake_collection
     try:
-        repo.upsert("chunk-1", [0.1, 0.2], metadata={"doc_id": "d1"})
+        repo.upsert("7", [0.1, 0.2], metadata={"doc_id": 42, "section_id": 7}, item_kind="section_summary")
         assert fake_collection.upsert_calls == []
 
-        repo.upsert("chunk-2", [0.3, 0.4], metadata={"doc_id": "d2"})
+        repo.upsert("8", [0.3, 0.4], metadata={"doc_id": 42, "section_id": 8}, item_kind="section_summary")
         assert len(fake_collection.upsert_calls) == 1
-        assert [row["item_id"] for row in fake_collection.upsert_calls[0]] == ["chunk-1", "chunk-2"]
+        assert [row["item_id"] for row in fake_collection.upsert_calls[0]] == [7, 8]
 
         repo._flush_dirty_collections()
         assert fake_collection.flush_count == 1

@@ -102,6 +102,49 @@ def test_prepared_document_batch_ingest_uses_formal_insert_many_path() -> None:
         assert chunk.metadata["benchmark_doc_id"].startswith("fiqa-doc-")
 
 
+def test_prepared_document_batch_ingest_marks_documents_query_visible() -> None:
+    runtime = make_runtime()
+    try:
+        result = runtime.insert_many(
+            [
+                prepared_document_to_ingest_request(
+                    {
+                        "doc_id": "fiqa-doc-ready-1",
+                        "title": "FiQA Benchmark Ready Doc 1",
+                        "text": "Alpha engine supports benchmark retrieval evaluation.",
+                        "source_type": "plain_text",
+                        "metadata": {"dataset": "fiqa", "benchmark": True},
+                    },
+                    dataset="fiqa",
+                ),
+                prepared_document_to_ingest_request(
+                    {
+                        "doc_id": "fiqa-doc-ready-2",
+                        "title": "FiQA Benchmark Ready Doc 2",
+                        "text": "Beta service compares risk and return.",
+                        "source_type": "plain_text",
+                        "metadata": {"dataset": "fiqa", "benchmark": True},
+                    },
+                    dataset="fiqa",
+                ),
+            ]
+        )
+
+        persisted_documents = [
+            runtime.stores.metadata_repo.get_document(item.document.doc_id)  # type: ignore[arg-type]
+            for item in result.results
+        ]
+    finally:
+        runtime.close()
+
+    assert result.success_count == 2
+    assert all(item.document.is_indexed is True for item in result.results)
+    assert all(item.document.index_ready is True for item in result.results)
+    assert all(document is not None for document in persisted_documents)
+    assert all(document.is_indexed is True for document in persisted_documents if document is not None)
+    assert all(document.index_ready is True for document in persisted_documents if document is not None)
+
+
 def test_compute_doc_ranking_metrics_uses_document_level_relevance() -> None:
     metrics = compute_doc_ranking_metrics(
         predicted_doc_ids=["doc-x", "doc-b", "doc-a"],

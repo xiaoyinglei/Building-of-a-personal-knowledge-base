@@ -21,6 +21,13 @@ class FileObjectStore:
     def read_bytes(self, key: str) -> bytes:
         return (self._root / key).read_bytes()
 
+    def read_byte_range(self, key: str, start: int, end: int) -> bytes:
+        if end <= start:
+            return b""
+        with (self._root / key).open("rb") as handle:
+            handle.seek(max(start, 0))
+            return handle.read(max(end - start, 0))
+
     def exists(self, key: str) -> bool:
         return (self._root / key).exists()
 

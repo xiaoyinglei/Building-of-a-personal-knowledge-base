@@ -14,6 +14,7 @@ from rag.runtime import _RUNTIME_CONTRACT_KEY, _RUNTIME_CONTRACT_NAMESPACE
 from rag.schema.core import SourceType
 from rag.schema.runtime import DocumentProcessingStatus, DocumentStatusRecord
 from rag.storage import StorageBundle
+from rag.storage.index_sync_service import IndexSyncService
 from rag.workbench.models import (
     WorkbenchEvidenceItem,
     WorkbenchFileEntry,
@@ -61,6 +62,12 @@ class WorkbenchService:
         sync_messages: list[str] = []
         if sync:
             sync_messages = self.sync_workspace(active_profile_id=active_profile_id)
+            processed = self._process_pending_index_sync(active_profile_id=active_profile_id)
+            if processed:
+                sync_messages.append(f"Processed {processed} pending index sync task(s)")
+            lifecycle_processed = self._process_pending_storage_lifecycle(active_profile_id=active_profile_id)
+            if lifecycle_processed:
+                sync_messages.append(f"Processed {lifecycle_processed} storage lifecycle task(s)")
         with self._stores() as stores:
             runtime_contract = self._runtime_contract(stores)
             profiles = self._model_profiles(runtime_contract=runtime_contract)
@@ -96,7 +103,7 @@ class WorkbenchService:
                 Literal["bypass", "naive", "local", "global", "hybrid", "mix"],
                 mode if mode in {"bypass", "naive", "local", "global", "hybrid", "mix"} else "mix",
             )
-            result = runtime.query(
+            result = runtime.query_public(
                 query_text,
                 options=QueryOptions(
                     mode=normalized_mode,
@@ -105,8 +112,8 @@ class WorkbenchService:
             )
         finally:
             runtime.close()
-        diagnostics = result.retrieval.diagnostics.model_dump(mode="json")
-        understanding = diagnostics.get("query_understanding")
+        diagnostics = result.retrieval_diagnostics.model_dump(mode="json")
+        understanding = diagnostics.get("query_understanding") or diagnostics.get("query_understanding_debug")
         return WorkbenchQueryResult(
             query=result.query,
             mode=result.mode,
@@ -115,13 +122,13 @@ class WorkbenchService:
             insufficient_evidence=result.answer.insufficient_evidence_flag,
             generation_provider=result.generation_provider,
             generation_model=result.generation_model,
-            rerank_provider=result.retrieval.diagnostics.rerank_provider,
-            mode_executor=result.retrieval.diagnostics.mode_executor,
+            rerank_provider=result.retrieval_diagnostics.rerank_provider,
+            mode_executor=result.retrieval_diagnostics.mode_executor,
             token_budget=result.context.token_budget,
             token_count=result.context.token_count,
             truncated_count=result.context.truncated_count,
             diagnostics=diagnostics,
-            routing_decision=result.retrieval.decision.model_dump(mode="json"),
+            routing_decision=result.routing_decision,
             query_understanding=cast("dict[str, object] | None", understanding),
             evidence=[
                 WorkbenchEvidenceItem.model_validate(item.model_dump(mode="json"))
@@ -399,8 +406,8 @@ class WorkbenchService:
             status=None if status_record is None else status_record.status.value,
             stage=None if status_record is None else str(status_record.stage),
             error_message=None if status_record is None else status_record.error_message,
-            doc_id=None if latest_document is None else latest_document.doc_id,
-            source_id=None if latest_source is None else latest_source.source_id,
+            doc_id=None if latest_document is None else str(latest_document.doc_id),
+            source_id=None if latest_source is None else str(latest_source.source_id),
             chunk_count=chunk_count,
             ingest_version=None if latest_source is None else latest_source.ingest_version,
             size_bytes=stat.st_size,
@@ -429,8 +436,23 @@ class WorkbenchService:
             graph_nodes=len(stores.graph.list_nodes()),
             graph_edges=len(stores.graph.list_edges()),
             statuses=statuses,
+            sync_monitor=self._sync_monitor(stores),
             runtime_contract=runtime_contract,
         )
+
+    @staticmethod
+    def _sync_monitor(stores: StorageBundle) -> dict[str, object]:
+        service = IndexSyncService(stores.metadata_repo)
+        snapshot = service.monitor_snapshot()
+        return {
+            "pending": snapshot.pending,
+            "processing": snapshot.processing,
+            "failed": snapshot.failed,
+            "completed": snapshot.completed,
+            "retry_backlog": snapshot.retry_backlog,
+            "oldest_pending_age_seconds": snapshot.oldest_pending_age_seconds,
+            "alert_level": snapshot.alert_level,
+        }
 
     def _runtime_contract(self, stores: StorageBundle) -> dict[str, str | int | bool | None]:
         entry = stores.cache.get(_RUNTIME_CONTRACT_KEY, namespace=_RUNTIME_CONTRACT_NAMESPACE)
@@ -442,6 +464,20 @@ class WorkbenchService:
     def _load_runtime_contract_payload(self) -> dict[str, str | int | bool | None]:
         with self._stores() as stores:
             return self._runtime_contract(stores)
+
+    def _process_pending_index_sync(self, *, active_profile_id: str | None) -> int:
+        runtime = self._build_runtime(profile_id=active_profile_id, require_chat=False)
+        try:
+            return runtime.process_pending_index_sync(max_tasks=4)
+        finally:
+            runtime.close()
+
+    def _process_pending_storage_lifecycle(self, *, active_profile_id: str | None) -> int:
+        runtime = self._build_runtime(profile_id=active_profile_id, require_chat=False)
+        try:
+            return runtime.process_pending_storage_lifecycle(max_tasks=2)
+        finally:
+            runtime.close()
 
     @staticmethod
     def _latest_status_by_location(stores: StorageBundle) -> dict[str, DocumentStatusRecord]:

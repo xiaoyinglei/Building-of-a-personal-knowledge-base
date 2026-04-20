@@ -142,6 +142,7 @@ class EvidenceTruncator:
                     source_type=item.source_type,
                     retrieval_channels=list(item.retrieval_channels),
                     retrieval_family=self._evidence_family(item),
+                    grounding_target=item.grounding_target,
                     token_count=original_token_count,
                     selected_token_count=selected_token_count,
                     truncated=was_truncated,

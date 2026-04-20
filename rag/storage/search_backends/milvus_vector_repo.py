@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections import defaultdict
@@ -38,6 +39,7 @@ class MilvusVectorRepo:
         self._collections: dict[str, Any] = {}
         self._dirty_collections: set[str] = set()
         self._pending_upserts: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
+        self._async_client: Any | None = None
         self._connect()
 
     def upsert(
@@ -223,6 +225,7 @@ class MilvusVectorRepo:
         from pymilvus import connections  # type: ignore[import-untyped]
 
         self._flush_dirty_collections()
+        self._close_async_client()
         for collection in self._collections.values():
             release = getattr(collection, "release", None)
             if callable(release):
@@ -264,7 +267,7 @@ class MilvusVectorRepo:
 
     def _collection(self, *, item_kind: str, embedding_space: str, dimension: int | None = None) -> Any:
         self._validate_item_kind(item_kind)
-        from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, utility
+        from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, Function, FunctionType, utility
 
         name = self._collection_name(item_kind=item_kind, embedding_space=embedding_space)
         cached = self._collections.get(name)
@@ -274,7 +277,13 @@ class MilvusVectorRepo:
             if dimension is None:
                 raise RuntimeError(f"Milvus collection {name} does not exist and no vector dimension was provided")
             schema = CollectionSchema(
-                fields=self._collection_fields(item_kind=item_kind, dimension=dimension, DataType=DataType, FieldSchema=FieldSchema),
+                fields=self._collection_fields(
+                    item_kind=item_kind,
+                    dimension=dimension,
+                    DataType=DataType,
+                    FieldSchema=FieldSchema,
+                ),
+                functions=self._collection_functions(Function=Function, FunctionType=FunctionType),
                 description=f"Summary index for {item_kind}",
                 enable_dynamic_field=False,
             )
@@ -305,8 +314,10 @@ class MilvusVectorRepo:
             FieldSchema(name="auth_tag", dtype=DataType.VARCHAR, max_length=128),
             FieldSchema(name="embedding_model_id", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="partition_key", dtype=DataType.VARCHAR, max_length=16),
+            FieldSchema(name="bm25_text", dtype=DataType.VARCHAR, max_length=65535, enable_match=True, enable_analyzer=True),
             FieldSchema(name="metadata_json", dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dimension),
+            FieldSchema(name="sparse_embedding", dtype=DataType.SPARSE_FLOAT_VECTOR),
         ]
         if item_kind == "doc_summary":
             return common + [
@@ -333,6 +344,17 @@ class MilvusVectorRepo:
             FieldSchema(name="summary_text", dtype=DataType.VARCHAR, max_length=65535),
         ]
 
+    @staticmethod
+    def _collection_functions(*, Function: Any, FunctionType: Any) -> list[Any]:
+        return [
+            Function(
+                name="bm25_summary_text",
+                function_type=FunctionType.BM25,
+                input_field_names=["bm25_text"],
+                output_field_names=["sparse_embedding"],
+            )
+        ]
+
     def _ensure_partitions(self, collection: Any) -> None:
         for partition_name in self._PARTITIONS:
             try:
@@ -356,6 +378,11 @@ class MilvusVectorRepo:
         self._safe_create_index(collection, "auth_tag", {"index_type": "INVERTED"})
         self._safe_create_index(collection, "embedding_model_id", {"index_type": "INVERTED"})
         self._safe_create_index(collection, "partition_key", {"index_type": "INVERTED"})
+        self._safe_create_index(
+            collection,
+            "sparse_embedding",
+            {"index_type": "SPARSE_INVERTED_INDEX", "metric_type": "BM25", "params": {}},
+        )
 
     def _safe_create_index(self, collection: Any, field_name: str, index_params: dict[str, Any]) -> None:
         try:
@@ -459,6 +486,7 @@ class MilvusVectorRepo:
             "auth_tag": self._text(record.get("auth_tag"), limit=128),
             "embedding_model_id": self._text(record.get("embedding_model_id", "default"), limit=64),
             "partition_key": partition_name,
+            "bm25_text": self._text(self._bm25_text(record, item_kind=item_kind), limit=65535),
             "metadata_json": json.dumps(self._serialize_metadata(record), ensure_ascii=True, sort_keys=True),
             "embedding": [float(value) for value in vector],
         }
@@ -494,6 +522,17 @@ class MilvusVectorRepo:
                 }
             )
         return row, partition_name
+
+    @staticmethod
+    def _bm25_text(record: dict[str, Any], *, item_kind: str) -> str:
+        if item_kind == "doc_summary":
+            parts = [str(record.get("title") or "").strip(), str(record.get("summary_text") or "").strip()]
+        elif item_kind == "asset_summary":
+            parts = [str(record.get("caption") or "").strip(), str(record.get("summary_text") or "").strip()]
+        else:
+            toc_path = " / ".join(cast(list[str], record.get("toc_path", [])))
+            parts = [toc_path.strip(), str(record.get("summary_text") or "").strip()]
+        return "\n".join(part for part in parts if part)
 
     def _search_collection(
         self,
@@ -636,6 +675,188 @@ class MilvusVectorRepo:
             doc_id=str(entity.get("doc_id", "")),
             source_id=str(entity.get("source_id", metadata.get("source_id", ""))),
             segment_id=str(entity.get("section_id") or entity.get("item_id", "")),
+            text=cls._entry_text(entity, item_kind=item_kind),
+            metadata=metadata,
+        )
+
+    async def hybrid_search_async(
+        self,
+        *,
+        query_vector: Iterable[float],
+        sparse_query: str,
+        sparse_query_vector: dict[int, float] | None = None,
+        limit: int = 10,
+        doc_ids: list[str] | None = None,
+        expr: str | None = None,
+        embedding_space: str = "default",
+        item_kind: str = "section_summary",
+        fusion_strategy: str = "rrf",
+        alpha: float | None = None,
+    ) -> list[VectorSearchResult]:
+        self._validate_item_kind(item_kind)
+        dense_vector = [float(value) for value in query_vector]
+        if not dense_vector or (not sparse_query.strip() and not sparse_query_vector):
+            return []
+        self._flush_dirty_collections()
+        if not self._has_collection(item_kind=item_kind, embedding_space=embedding_space):
+            return []
+        collection = self._collection(item_kind=item_kind, embedding_space=embedding_space)
+        if not self._supports_hybrid_schema(collection):
+            return self.search(
+                dense_vector,
+                limit=limit,
+                doc_ids=doc_ids,
+                expr=expr,
+                embedding_space=embedding_space,
+                item_kind=item_kind,
+            )
+        final_expr = self._search_expr(doc_ids=doc_ids, user_expr=expr)
+        output_fields = self._output_fields(item_kind=item_kind, include_embedding=False)
+        async_client = self._get_async_client()
+        from pymilvus import AnnSearchRequest, RRFRanker
+
+        dense_request = AnnSearchRequest(
+            data=[dense_vector],
+            anns_field="embedding",
+            param={"metric_type": "COSINE", "params": {}},
+            limit=limit,
+            expr=final_expr,
+        )
+        sparse_request = AnnSearchRequest(
+            data=[sparse_query_vector or sparse_query],
+            anns_field="sparse_embedding",
+            param=self._sparse_search_params(sparse_query_vector is not None),
+            limit=limit,
+            expr=final_expr,
+        )
+        ranker = self._hybrid_ranker(
+            fusion_strategy=fusion_strategy,
+            alpha=alpha,
+            RRFRanker=RRFRanker,
+        )
+        hits = await async_client.hybrid_search(
+            collection_name=collection.name,
+            reqs=[dense_request, sparse_request],
+            ranker=ranker,
+            limit=limit,
+            output_fields=output_fields,
+            partition_names=["hot"],
+            consistency_level=self._consistency_level,
+        )
+        if not hits:
+            hits = await async_client.hybrid_search(
+                collection_name=collection.name,
+                reqs=[dense_request, sparse_request],
+                ranker=ranker,
+                limit=limit,
+                output_fields=output_fields,
+                partition_names=None,
+                consistency_level=self._consistency_level,
+            )
+        results = [self._vector_result_from_client_hit(hit, item_kind=item_kind) for hit in (hits[0] if hits else [])]
+        results.sort(key=lambda item: (-item.score, item.item_id))
+        return results[:limit]
+
+    def supports_hybrid_search(self) -> bool:
+        return True
+
+    @staticmethod
+    def _hybrid_ranker(
+        *,
+        fusion_strategy: str,
+        alpha: float | None,
+        RRFRanker: Any,
+    ) -> object:
+        normalized_alpha = 0.5 if alpha is None else max(0.0, min(float(alpha), 1.0))
+        if fusion_strategy == "weighted_rrf":
+            try:
+                from pymilvus import WeightedRanker  # type: ignore[import-untyped]
+
+                dense_weight = round(normalized_alpha, 6)
+                sparse_weight = round(1.0 - normalized_alpha, 6)
+                return WeightedRanker(dense_weight, sparse_weight)
+            except Exception:
+                return RRFRanker()
+        return RRFRanker()
+
+    @staticmethod
+    def _sparse_search_params(use_sparse_vector: bool) -> dict[str, Any]:
+        if use_sparse_vector:
+            return {"metric_type": "IP", "params": {}}
+        return {"metric_type": "BM25", "params": {}}
+
+    def _get_async_client(self) -> Any:
+        if self._async_client is not None:
+            return self._async_client
+        from pymilvus import AsyncMilvusClient
+
+        kwargs: dict[str, object] = {"uri": self._uri}
+        if self._token:
+            kwargs["token"] = self._token
+        if self._db_name:
+            kwargs["db_name"] = self._db_name
+        self._async_client = AsyncMilvusClient(**kwargs)
+        return self._async_client
+
+    def _close_async_client(self) -> None:
+        if self._async_client is None:
+            return
+        close = getattr(self._async_client, "close", None)
+        if callable(close):
+            try:
+                asyncio.run(close())
+            except RuntimeError:
+                pass
+        self._async_client = None
+
+    @staticmethod
+    def _supports_hybrid_schema(collection: Any) -> bool:
+        schema = getattr(collection, "schema", None)
+        fields = getattr(schema, "fields", None)
+        if not isinstance(fields, list):
+            return False
+        field_names = {getattr(field, "name", None) for field in fields}
+        return {"bm25_text", "sparse_embedding", "embedding"} <= field_names
+
+    @classmethod
+    def _vector_result_from_client_hit(cls, hit: dict[str, Any], *, item_kind: str) -> VectorSearchResult:
+        entity = cast(dict[str, Any], hit.get("entity") if isinstance(hit.get("entity"), dict) else hit)
+        metadata = cls._load_metadata(entity.get("metadata_json", "{}"))
+        for field_name in (
+            "source_id",
+            "version_group_id",
+            "version_no",
+            "doc_status",
+            "is_active",
+            "index_ready",
+            "tenant_id",
+            "department_id",
+            "auth_tag",
+            "embedding_model_id",
+            "section_id",
+            "page_start",
+            "page_end",
+            "section_kind",
+            "toc_path_text",
+            "title",
+            "source_type",
+            "summary_text",
+            "asset_id",
+            "asset_type",
+            "page_no",
+            "caption",
+        ):
+            if field_name in entity and entity[field_name] is not None:
+                metadata.setdefault(field_name, str(entity[field_name]))
+        item_id = entity.get("item_id", hit.get("id", ""))
+        score = hit.get("distance", hit.get("score", 0.0))
+        return VectorSearchResult(
+            item_id=str(item_id),
+            score=float(score or 0.0),
+            item_kind=item_kind,
+            doc_id=str(entity.get("doc_id", "")),
+            source_id=str(entity.get("source_id", metadata.get("source_id", ""))),
+            segment_id=str(entity.get("section_id") or item_id),
             text=cls._entry_text(entity, item_kind=item_kind),
             metadata=metadata,
         )

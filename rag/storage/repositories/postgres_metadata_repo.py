@@ -13,6 +13,7 @@ from rag.schema.core import (
     LayoutMetaCacheRecord,
     ProcessingStateRecord,
     SectionRecord,
+    StorageTier,
     Source,
 )
 from rag.schema.runtime import AccessPolicy
@@ -319,6 +320,7 @@ class PostgresMetadataRepo:
         source_id: int | None = None,
         active_only: bool = False,
         version_group_id: int | None = None,
+        storage_tier: StorageTier | None = None,
     ) -> list[Document]:
         clauses: list[str] = []
         params: list[object] = []
@@ -330,6 +332,9 @@ class PostgresMetadataRepo:
         if version_group_id is not None:
             clauses.append("version_group_id = %s")
             params.append(version_group_id)
+        if storage_tier is not None:
+            clauses.append("storage_tier = %s")
+            params.append(storage_tier.value)
         where_sql = "" if not clauses else f" WHERE {' AND '.join(clauses)}"
         rows = self._fetchall(
             f"""
@@ -448,6 +453,22 @@ class PostgresMetadataRepo:
             RETURNING *
             """,
             (amount, datetime.now(UTC), doc_id),
+        )
+        self._conn.commit()
+        if row is None:
+            raise KeyError(f"document {doc_id} not found")
+        return self._document_from_row(row)
+
+    def set_document_storage_tier(self, doc_id: int, *, storage_tier: StorageTier) -> Document:
+        row = self._fetchone(
+            f"""
+            UPDATE {self._schema}.documents
+            SET storage_tier = %s,
+                updated_at = %s
+            WHERE doc_id = %s
+            RETURNING *
+            """,
+            (storage_tier.value, datetime.now(UTC), doc_id),
         )
         self._conn.commit()
         if row is None:

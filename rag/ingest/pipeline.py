@@ -31,6 +31,7 @@ from rag.ingest.parser import (
     ImageParserRepo,
     MarkdownParserRepo,
     ParsedDocument,
+    ParsedSection,
     PDFParserRepo,
     PlainTextParserRepo,
     WebParserRepo,
@@ -39,12 +40,15 @@ from rag.ingest.parser import (
 from rag.ingest.parsers.util import normalize_whitespace
 from rag.ingest.policy import PolicyResolutionService
 from rag.schema.core import (
+    AssetRecord,
     Chunk,
     ChunkRole,
     Document,
     DocumentProcessingPackage,
     GraphEdge,
     GraphNode,
+    LayoutMetaCacheRecord,
+    SectionRecord,
     Segment,
     Source,
     SourceType,
@@ -69,6 +73,7 @@ from rag.storage import StorageConfig
 from rag.storage.cache import CacheStore
 from rag.storage.graph import GraphStore
 from rag.storage.metadata import ChunkStore, DocumentStore, StatusStore
+from rag.storage.v1_data_contract_service import V1DataContractService
 from rag.storage.vector import VectorStore
 
 _BENCHMARK_METADATA_KEYS = (
@@ -134,7 +139,7 @@ class IngestPipelineResult:
 
     @property
     def document_id(self) -> str:
-        return self.document.doc_id
+        return str(self.document.doc_id)
 
     @property
     def chunk_count(self) -> int:
@@ -200,6 +205,7 @@ class IngestPipeline:
     document_processing_service: DocumentProcessingService
     embedding_capabilities: tuple[EmbeddingCapabilityBinding, ...] = ()
     chat_capabilities: tuple[ChatCapabilityBinding, ...] = ()
+    data_contract_service: V1DataContractService | None = None
     extractor: EntityRelationExtractor | None = None
     merger: EntityRelationMerger | None = None
 
@@ -299,8 +305,16 @@ class IngestPipeline:
                     document=item.document,
                     chunks=item.indexed_chunks,
                 )
+                ready_document = self.documents.save_document(
+                    item.document.model_copy(
+                        update={
+                            "is_indexed": True,
+                            "index_ready": True,
+                        }
+                    )
+                )
                 final_status = self._save_status(
-                    doc_id=item.document.doc_id,
+                    doc_id=ready_document.doc_id,
                     source_id=item.source.source_id,
                     location=item.location,
                     content_hash=item.content_hash,
@@ -309,7 +323,7 @@ class IngestPipeline:
                 )
                 results_by_index[item.index] = IngestPipelineResult(
                     source=item.source,
-                    document=item.document,
+                    document=ready_document,
                     segments=item.segments,
                     chunks=item.indexed_chunks,
                     is_duplicate=False,
@@ -418,38 +432,25 @@ class IngestPipeline:
                 status=final_status.status.value,
             )
 
-        latest_source = self.documents.get_latest_source_for_location(location)
-        ingest_version = 1 if latest_source is None else latest_source.ingest_version + 1
-        source_id = self._deterministic_id(location, content_hash, "source")
-        source_metadata = {"source_type": parsed.source_type.value}
-        if self.object_store is not None:
-            object_key = self.object_store.put_bytes(raw_bytes, suffix=self._suffix_for(parsed.source_type))
-            source_metadata["object_key"] = object_key
-        source = Source(
-            source_id=source_id,
-            source_type=parsed.source_type,
+        source, document = self._build_source_and_document(
             location=location,
+            raw_bytes=raw_bytes,
+            parsed=parsed,
             owner=owner,
+            access_policy=normalized_policy,
             content_hash=content_hash,
-            effective_access_policy=normalized_policy,
-            ingest_version=ingest_version,
-            metadata=source_metadata,
         )
-        self.documents.save_source(source)
+        if self.data_contract_service is not None:
+            return self._ingest_with_data_contract(
+                source=source,
+                document=document,
+                raw_bytes=raw_bytes,
+                parsed=parsed,
+                content_hash=content_hash,
+            )
+        source = self.documents.save_source(source)
         self.documents.deactivate_documents_for_location(location)
-
-        document = Document(
-            doc_id=self._deterministic_id(source_id, parsed.title, "document"),
-            source_id=source.source_id,
-            doc_type=parsed.doc_type,
-            title=parsed.title,
-            authors=list(parsed.authors or [owner]),
-            created_at=datetime.now(UTC),
-            language=parsed.language,
-            effective_access_policy=normalized_policy,
-            metadata={**parsed.metadata, "location": location, "content_hash": content_hash},
-        )
-        self.documents.save_document(document, location=location, content_hash=content_hash)
+        document = self.documents.save_document(document.model_copy(update={"source_id": source.source_id}))
         stage = DocumentPipelineStage.PARSE
         self._save_status(
             doc_id=document.doc_id,
@@ -505,6 +506,14 @@ class IngestPipeline:
                 source=source,
                 document=document,
                 chunks=indexed_chunks,
+            )
+            document = self.documents.save_document(
+                document.model_copy(
+                    update={
+                        "is_indexed": True,
+                        "index_ready": True,
+                    }
+                )
             )
 
             stage = DocumentPipelineStage.INDEX
@@ -566,38 +575,25 @@ class IngestPipeline:
             )
 
         normalized_policy = request.access_policy or AccessPolicy.default()
-        latest_source = self.documents.get_latest_source_for_location(request.location)
-        ingest_version = 1 if latest_source is None else latest_source.ingest_version + 1
-        source_id = self._deterministic_id(request.location, content_hash, "source")
-        source_metadata = {"source_type": parsed.source_type.value}
-        if self.object_store is not None:
-            object_key = self.object_store.put_bytes(raw_bytes, suffix=self._suffix_for(parsed.source_type))
-            source_metadata["object_key"] = object_key
-        source = Source(
-            source_id=source_id,
-            source_type=parsed.source_type,
+        source, document = self._build_source_and_document(
             location=request.location,
+            raw_bytes=raw_bytes,
+            parsed=parsed,
             owner=request.owner,
+            access_policy=normalized_policy,
             content_hash=content_hash,
-            effective_access_policy=normalized_policy,
-            ingest_version=ingest_version,
-            metadata=source_metadata,
         )
-        self.documents.save_source(source)
+        if self.data_contract_service is not None:
+            return self._ingest_with_data_contract(
+                source=source,
+                document=document,
+                raw_bytes=raw_bytes,
+                parsed=parsed,
+                content_hash=content_hash,
+            )
+        source = self.documents.save_source(source)
         self.documents.deactivate_documents_for_location(request.location)
-
-        document = Document(
-            doc_id=self._deterministic_id(source.source_id, parsed.title, "document"),
-            source_id=source.source_id,
-            doc_type=parsed.doc_type,
-            title=parsed.title,
-            authors=list(parsed.authors or [request.owner]),
-            created_at=datetime.now(UTC),
-            language=parsed.language,
-            effective_access_policy=normalized_policy,
-            metadata={**parsed.metadata, "location": request.location, "content_hash": content_hash},
-        )
-        self.documents.save_document(document, location=request.location, content_hash=content_hash)
+        document = self.documents.save_document(document.model_copy(update={"source_id": source.source_id}))
         self._save_status(
             doc_id=document.doc_id,
             source_id=source.source_id,
@@ -678,13 +674,309 @@ class IngestPipeline:
                     chunk.chunk_id,
                     vector,
                     metadata={
-                        "doc_id": document.doc_id,
+                        "doc_id": str(document.doc_id),
                         "segment_id": segment.segment_id,
                         "text": chunk.text,
                         **_benchmark_metadata(chunk.metadata),
                     },
                     embedding_space=binding.space,
                 )
+
+    def _build_source_and_document(
+        self,
+        *,
+        location: str,
+        raw_bytes: bytes,
+        parsed: ParsedDocument,
+        owner: str,
+        access_policy: AccessPolicy,
+        content_hash: str,
+    ) -> tuple[Source, Document]:
+        latest_source = self.documents.get_latest_source_for_location(location)
+        ingest_version = 1 if latest_source is None else latest_source.ingest_version + 1
+        object_key: str | None = None
+        bucket: str | None = None
+        if self.object_store is not None:
+            object_key = self.object_store.put_bytes(raw_bytes, suffix=self._suffix_for(parsed.source_type))
+            bucket = getattr(self.object_store, "bucket", None)
+        source_id = 0 if self.data_contract_service is not None else self._deterministic_numeric_id(location, content_hash, "source")
+        doc_id = 0 if self.data_contract_service is not None else self._deterministic_numeric_id(str(source_id), parsed.title, "document")
+        source = Source(
+            source_id=source_id,
+            source_type=parsed.source_type,
+            location=location,
+            original_file_name=Path(location).name or None,
+            bucket=bucket,
+            object_key=object_key,
+            content_hash=content_hash,
+            file_size_bytes=len(raw_bytes),
+            owner_id=owner,
+            effective_access_policy=access_policy,
+            ingest_version=ingest_version,
+            metadata_json={"source_type": parsed.source_type.value},
+        )
+        document = Document(
+            doc_id=doc_id,
+            source_id=source.source_id,
+            title=parsed.title,
+            doc_type=parsed.doc_type,
+            language=parsed.language or None,
+            authors=list(parsed.authors or [owner]),
+            file_hash=content_hash,
+            version_group_id=doc_id,
+            page_count=parsed.page_count,
+            effective_access_policy=access_policy,
+            metadata_json={**parsed.metadata, "location": location, "content_hash": content_hash},
+        )
+        return source, document
+
+    def _ingest_with_data_contract(
+        self,
+        *,
+        source: Source,
+        document: Document,
+        raw_bytes: bytes,
+        parsed: ParsedDocument,
+        content_hash: str,
+    ) -> IngestPipelineResult:
+        service = self.data_contract_service
+        if service is None:
+            raise RuntimeError("data contract service is required for V1 ingest path")
+        registration = service.register_document(source=source, document=document, file_bytes=raw_bytes)
+        saved_document = registration.document
+        saved_source = registration.source
+        if registration.is_duplicate:
+            if callable(getattr(self.documents, "get_source", None)):
+                existing_source = self.documents.get_source(saved_document.source_id)
+            else:
+                existing_source = None
+            if existing_source is None:
+                raise RuntimeError("duplicate V1 document exists without a source record")
+            return IngestPipelineResult(
+                source=existing_source,
+                document=saved_document,
+                segments=[],
+                chunks=[],
+                is_duplicate=True,
+                content_hash=content_hash,
+                visible_text=parsed.visible_text,
+                visual_semantics=parsed.visual_semantics,
+                processing=None,
+                entity_count=0,
+                relation_count=0,
+                status=DocumentProcessingStatus.READY.value,
+            )
+        if saved_source is None:
+            raise RuntimeError("V1 document registration returned no source")
+        self.documents.deactivate_documents_for_location(saved_source.location)
+        self.documents.set_active(saved_document.doc_id, active=True)
+        summary_text = self._summary_text(parsed.title, parsed.visible_text)
+        saved_document = self.documents.save_document(
+            saved_document.model_copy(
+                update={
+                    "metadata_json": {**saved_document.metadata_json, "summary_text": summary_text},
+                    "page_count": parsed.page_count,
+                }
+            )
+        )
+        self._save_layout_meta_cache(source=saved_source, document=saved_document, parsed=parsed)
+        service.save_doc_summary(saved_document, source_type=saved_source.source_type, summary_text=summary_text)
+        self._persist_v1_sections(source=saved_source, document=saved_document, parsed=parsed)
+        self._persist_v1_assets(source=saved_source, document=saved_document, parsed=parsed)
+        return IngestPipelineResult(
+            source=saved_source,
+            document=saved_document,
+            segments=[],
+            chunks=[],
+            is_duplicate=False,
+            content_hash=content_hash,
+            visible_text=parsed.visible_text,
+            visual_semantics=parsed.visual_semantics,
+            processing=None,
+            entity_count=0,
+            relation_count=0,
+            status=DocumentProcessingStatus.READY.value,
+        )
+
+    def _persist_v1_sections(
+        self,
+        *,
+        source: Source,
+        document: Document,
+        parsed: ParsedDocument,
+    ) -> list[SectionRecord]:
+        service = self.data_contract_service
+        if service is None:
+            return []
+        byte_ranges = self._section_byte_ranges(parsed.visible_text, parsed.sections)
+        saved_sections: list[SectionRecord] = []
+        parent_by_path: dict[tuple[str, ...], int] = {}
+        object_key = source.object_key or source.location
+        for index, section in enumerate(parsed.sections):
+            normalized_path = self.toc_service.normalize_path(section.toc_path)
+            parent_path = tuple(normalized_path[:-1])
+            page_start = None if section.page_range is None else section.page_range[0]
+            page_end = None if section.page_range is None else section.page_range[1]
+            byte_start, byte_end = byte_ranges[index]
+            section_record = SectionRecord(
+                doc_id=document.doc_id,
+                source_id=source.source_id,
+                parent_section_id=parent_by_path.get(parent_path),
+                toc_path=list(normalized_path),
+                heading_level=section.heading_level,
+                order_index=section.order_index,
+                anchor=self.toc_service.stable_anchor(
+                    source.location,
+                    normalized_path,
+                    section.order_index,
+                    page_range=section.page_range,
+                    anchor_hint=section.anchor_hint,
+                ),
+                page_start=page_start,
+                page_end=page_end,
+                raw_locator={
+                    "location": source.location,
+                    "anchor": section.anchor_hint or "",
+                    "page_start": page_start,
+                    "page_end": page_end,
+                },
+                byte_range_start=byte_start,
+                byte_range_end=byte_end,
+                visible_text_key=object_key,
+                section_kind=section.metadata.get("section_kind", "text"),
+                content_hash=sha256(section.text.encode("utf-8")).hexdigest(),
+                has_table=any(element.kind == "table" and tuple(element.toc_path) == tuple(section.toc_path) for element in parsed.elements),
+                has_figure=any(element.kind in {"figure", "image"} and tuple(element.toc_path) == tuple(section.toc_path) for element in parsed.elements),
+                neighbor_asset_count=sum(
+                    1
+                    for element in parsed.elements
+                    if element.kind in {"table", "figure", "image", "chart"} and tuple(element.toc_path) == tuple(section.toc_path)
+                ),
+                metadata_json={**section.metadata, "summary_text": self._summary_text(" / ".join(normalized_path), section.text)},
+            )
+            saved_section = service.save_section(
+                document,
+                section_record,
+                source_type=source.source_type,
+                summary_text=str(section_record.metadata_json["summary_text"]),
+            )
+            saved_sections.append(saved_section)
+            parent_by_path[tuple(normalized_path)] = saved_section.section_id
+        return saved_sections
+
+    def _persist_v1_assets(
+        self,
+        *,
+        source: Source,
+        document: Document,
+        parsed: ParsedDocument,
+    ) -> list[AssetRecord]:
+        service = self.data_contract_service
+        if service is None:
+            return []
+        list_sections = getattr(self.documents.metadata_repo, "list_sections", None)
+        stored_sections = list_sections(doc_id=document.doc_id) if callable(list_sections) else []
+        section_ids = {tuple(section.toc_path): section.section_id for section in stored_sections}
+        saved_assets: list[AssetRecord] = []
+        object_key = source.object_key or source.location
+        for element in parsed.elements:
+            if element.kind not in {"table", "figure", "image", "chart"}:
+                continue
+            caption = normalize_whitespace(element.metadata.get("caption") or element.text or "")
+            asset = AssetRecord(
+                doc_id=document.doc_id,
+                source_id=source.source_id,
+                section_id=section_ids.get(tuple(element.toc_path)),
+                asset_type=element.kind,
+                element_ref=element.element_id,
+                page_no=element.page_no or 1,
+                bbox={} if element.bbox is None else {"x1": element.bbox[0], "y1": element.bbox[1], "x2": element.bbox[2], "y2": element.bbox[3]},
+                caption=caption or None,
+                raw_locator={"location": source.location, "page_no": element.page_no, "element_ref": element.element_id},
+                neighbor_section_id=section_ids.get(tuple(element.toc_path)),
+                content_hash=sha256(f"{element.kind}:{element.element_id}:{element.text}".encode("utf-8")).hexdigest(),
+                storage_key=object_key,
+                metadata_json={**element.metadata, "summary_text": self._summary_text(caption or element.kind, element.text)},
+            )
+            saved_assets.append(service.save_asset(document, asset, summary_text=str(asset.metadata_json["summary_text"])))
+        return saved_assets
+
+    def _save_layout_meta_cache(
+        self,
+        *,
+        source: Source,
+        document: Document,
+        parsed: ParsedDocument,
+    ) -> None:
+        save_layout = getattr(self.documents.metadata_repo, "save_layout_meta_cache", None)
+        if not callable(save_layout):
+            return
+        layout_json = {
+            "sections": [
+                {
+                    "toc_path": list(section.toc_path),
+                    "heading_level": section.heading_level,
+                    "page_range": None if section.page_range is None else [section.page_range[0], section.page_range[1]],
+                    "order_index": section.order_index,
+                }
+                for section in parsed.sections
+            ],
+            "elements": [
+                {
+                    "element_id": element.element_id,
+                    "kind": element.kind,
+                    "toc_path": list(element.toc_path),
+                    "page_no": element.page_no,
+                    "bbox": None if element.bbox is None else list(element.bbox),
+                    "parent_ref": element.parent_ref,
+                }
+                for element in parsed.elements
+            ],
+        }
+        save_layout(
+            LayoutMetaCacheRecord(
+                source_id=source.source_id,
+                doc_id=document.doc_id,
+                content_hash=source.content_hash,
+                object_key=source.object_key,
+                layout_json=layout_json,
+                page_count=parsed.page_count,
+            )
+        )
+
+    @staticmethod
+    def _summary_text(title: str | None, text: str | None, *, limit: int = 480) -> str:
+        prefix = normalize_whitespace(title or "")
+        body = normalize_whitespace(text or "")
+        if prefix and body:
+            summary = f"{prefix}. {body}"
+        else:
+            summary = prefix or body
+        if len(summary) <= limit:
+            return summary
+        return summary[: max(limit - 3, 1)].rstrip() + "..."
+
+    @staticmethod
+    def _section_byte_ranges(visible_text: str, sections: Sequence[ParsedSection]) -> list[tuple[int | None, int | None]]:
+        ranges: list[tuple[int | None, int | None]] = []
+        cursor = 0
+        for section in sections:
+            text = section.text.strip()
+            if not text:
+                ranges.append((None, None))
+                continue
+            char_start = visible_text.find(text, cursor)
+            if char_start < 0:
+                char_start = visible_text.find(text)
+            if char_start < 0:
+                ranges.append((None, None))
+                continue
+            char_end = char_start + len(text)
+            byte_start = len(visible_text[:char_start].encode("utf-8"))
+            byte_end = len(visible_text[:char_end].encode("utf-8"))
+            ranges.append((byte_start, byte_end))
+            cursor = char_end
+        return ranges
 
     def _prepare_chunks(
         self,
@@ -721,7 +1013,7 @@ class IngestPipeline:
             )
             segment = Segment(
                 segment_id=self._deterministic_id(source.source_id, anchor, "segment"),
-                doc_id=document.doc_id,
+                doc_id=str(document.doc_id),
                 parent_segment_id=parent_segment_id,
                 toc_path=list(normalized_path),
                 heading_level=section.heading_level,
@@ -730,20 +1022,20 @@ class IngestPipeline:
                 anchor=anchor,
                 visible_text=section.text or None,
                 visual_semantics=section.metadata.get("visual_semantics"),
-                metadata=section.metadata | _benchmark_metadata(document.metadata) | {"location": location},
+                metadata=section.metadata | _benchmark_metadata(document.metadata_json) | {"location": location},
             )
             segments.append(segment)
             path_to_segment_id[tuple(normalized_path)] = segment.segment_id
             chunk_list = self.chunking_service.chunk_section(
                 location=location,
-                doc_id=document.doc_id,
+                doc_id=str(document.doc_id),
                 segment=segment,
                 text=section.text,
                 access_policy=self.policy_resolution_service.resolve_effective_access_policy(
                     source_policy=access_policy,
                     chunk_policy=access_policy,
                 ),
-                document_metadata=_benchmark_metadata(document.metadata),
+                document_metadata=_benchmark_metadata(document.metadata_json),
             )
             indexed_chunks.extend(chunk_list)
 
@@ -794,7 +1086,7 @@ class IngestPipeline:
                 node_id=entity.node_id,
                 node_type="entity",
                 label=entity.label,
-                metadata=entity.metadata | {"source_id": source.source_id},
+                metadata=entity.metadata | {"source_id": str(source.source_id)},
             )
             self.graph.save_node(node, evidence_chunk_ids=entity.evidence_chunk_ids)
         for relation in merged.relations:
@@ -805,7 +1097,7 @@ class IngestPipeline:
                 relation_type=relation.relation_type,
                 confidence=relation.confidence,
                 evidence_chunk_ids=relation.evidence_chunk_ids,
-                metadata=relation.metadata | {"source_id": source.source_id},
+                metadata=relation.metadata | {"source_id": str(source.source_id)},
             )
             self.graph.save_edge(edge)
 
@@ -859,8 +1151,8 @@ class IngestPipeline:
                 node_type=chunk.special_chunk_type or "multimodal",
                 label=label,
                 metadata={
-                    "doc_id": document.doc_id,
-                    "source_id": source.source_id,
+                    "doc_id": str(document.doc_id),
+                    "source_id": str(source.source_id),
                     "segment_id": chunk.segment_id,
                     "chunk_id": chunk.chunk_id,
                     "special_chunk_type": chunk.special_chunk_type or "special",
@@ -876,7 +1168,7 @@ class IngestPipeline:
                     relation_type="contains_special",
                     confidence=1.0,
                     evidence_chunk_ids=[chunk.chunk_id],
-                    metadata={"doc_id": document.doc_id, "source_id": source.source_id},
+                    metadata={"doc_id": str(document.doc_id), "source_id": str(source.source_id)},
                 )
             )
 
@@ -898,8 +1190,8 @@ class IngestPipeline:
                         confidence=1.0,
                         evidence_chunk_ids=[chunk.chunk_id],
                         metadata={
-                            "doc_id": document.doc_id,
-                            "source_id": source.source_id,
+                            "doc_id": str(document.doc_id),
+                            "source_id": str(source.source_id),
                             "from_label": entity.label,
                             "to_label": label,
                             "association_basis": (
@@ -966,7 +1258,7 @@ class IngestPipeline:
                 aliases=alias_values,
                 entity_key=resolved_key,
                 entity_type=entity_type,
-                doc_id=document.doc_id,
+                doc_id=str(document.doc_id),
             )
             resolved_entities[resolved_node_id] = MergedEntity(
                 node_id=resolved_node_id,
@@ -1000,7 +1292,7 @@ class IngestPipeline:
                 incoming=relation.metadata,
                 from_label=relation.metadata.get("from_label") if from_entity is None else from_entity.label,
                 to_label=relation.metadata.get("to_label") if to_entity is None else to_entity.label,
-                doc_id=document.doc_id,
+                doc_id=str(document.doc_id),
             )
             resolved_relations[relation_key] = MergedRelation(
                 edge_id=self._canonical_relation_edge_id(from_node_id, to_node_id, relation.relation_type),
@@ -1277,16 +1569,16 @@ class IngestPipeline:
         chunks: list[Chunk],
     ) -> None:
         document_node = GraphNode(
-            node_id=document.doc_id,
+            node_id=str(document.doc_id),
             node_type="document",
             label=document.title,
-            metadata={"source_id": document.source_id},
+            metadata={"source_id": str(document.source_id)},
         )
         section_node = GraphNode(
             node_id=segment.segment_id,
             node_type="section",
             label=" > ".join(segment.toc_path),
-            metadata={"doc_id": document.doc_id},
+            metadata={"doc_id": str(document.doc_id)},
         )
         evidence_chunk_ids = [chunk.chunk_id for chunk in chunks if chunk.segment_id == segment.segment_id]
         self.graph.save_node(document_node, evidence_chunk_ids=evidence_chunk_ids)
@@ -1295,12 +1587,12 @@ class IngestPipeline:
             return
         edge = GraphEdge(
             edge_id=self._deterministic_id(document.doc_id, segment.segment_id, "edge"),
-            from_node_id=document.doc_id,
+            from_node_id=str(document.doc_id),
             to_node_id=segment.segment_id,
             relation_type="contains",
             confidence=1.0,
             evidence_chunk_ids=evidence_chunk_ids,
-            metadata={"doc_id": document.doc_id, "source_id": source.source_id},
+            metadata={"doc_id": str(document.doc_id), "source_id": str(source.source_id)},
         )
         self.graph.save_edge(edge)
 
@@ -1486,21 +1778,23 @@ class IngestPipeline:
     def _save_status(
         self,
         *,
-        doc_id: str,
-        source_id: str,
+        doc_id: int | str,
+        source_id: int | str,
         location: str,
         content_hash: str,
         status: DocumentProcessingStatus,
         stage: DocumentPipelineStage,
         error_message: str | None = None,
     ) -> DocumentStatusRecord:
-        existing = self.status.get(doc_id)
+        doc_key = str(doc_id)
+        source_key = str(source_id)
+        existing = self.status.get(doc_key)
         attempts = (
             1 if existing is None else existing.attempts + (1 if status is DocumentProcessingStatus.FAILED else 0)
         )
         record = DocumentStatusRecord(
-            doc_id=doc_id,
-            source_id=source_id,
+            doc_id=doc_key,
+            source_id=source_key,
             location=location,
             content_hash=content_hash,
             status=status,
@@ -1564,10 +1858,10 @@ class IngestPipeline:
             for container in (existing or {}, incoming):
                 scalar_value = container.get(scalar_key)
                 if scalar_value:
-                    values.append(scalar_value)
+                    values.append(str(scalar_value))
                 plural_value = container.get(plural_key)
                 if plural_value:
-                    values.extend(item.strip() for item in plural_value.split(",") if item.strip())
+                    values.extend(item.strip() for item in str(plural_value).split(",") if item.strip())
             if values:
                 merged[plural_key] = ",".join(sorted(dict.fromkeys(values)))
         existing_count = 0 if existing is None else int(existing.get("merge_count", "1"))
@@ -1652,12 +1946,12 @@ class IngestPipeline:
         return merged
 
     @staticmethod
-    def _merge_csv_values(*values: str) -> str:
+    def _merge_csv_values(*values: object) -> str:
         items: list[str] = []
         for value in values:
             if not value:
                 continue
-            items.extend(item.strip() for item in value.split(",") if item.strip())
+            items.extend(item.strip() for item in str(value).split(",") if item.strip())
         return ",".join(sorted(dict.fromkeys(items)))
 
     @staticmethod
@@ -1742,8 +2036,16 @@ class IngestPipeline:
 
     @staticmethod
     def _deterministic_id(*parts: str) -> str:
-        digest = sha256("\0".join(parts).encode("utf-8")).hexdigest()
-        return f"{parts[-1]}-{digest[:12]}"
+        normalized = [str(part) for part in parts]
+        digest = sha256("\0".join(normalized).encode("utf-8")).hexdigest()
+        return f"{normalized[-1]}-{digest[:12]}"
+
+    @staticmethod
+    def _deterministic_numeric_id(*parts: str | int | None) -> int:
+        normalized = [str(part or "") for part in parts]
+        digest = sha256("\0".join(normalized).encode("utf-8")).hexdigest()
+        value = int(digest[:15], 16)
+        return value or 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -1977,12 +2279,7 @@ class RebuildPipeline:
                 raw_bytes=raw_bytes,
             )
             rebuilt_document = self._rebuilt_document(target.document, parsed)
-            self.documents.save_document(
-                rebuilt_document,
-                location=target.source.location,
-                content_hash=target.source.content_hash,
-                active=False,
-            )
+            rebuilt_document = self.documents.save_document(rebuilt_document.model_copy(update={"is_active": False}))
             self.delete_pipeline.purge_document_artifacts(target, delete_chunk_records=True)
 
             stage = DocumentPipelineStage.CHUNK
@@ -2035,11 +2332,8 @@ class RebuildPipeline:
                 document=rebuilt_document,
                 chunks=indexed_chunks,
             )
-            self.documents.save_document(
-                rebuilt_document,
-                location=target.source.location,
-                content_hash=target.source.content_hash,
-                active=True,
+            rebuilt_document = self.documents.save_document(
+                rebuilt_document.model_copy(update={"is_active": True})
             )
             final_status = self.ingest_pipeline._save_status(
                 doc_id=rebuilt_document.doc_id,
@@ -2087,7 +2381,7 @@ class RebuildPipeline:
     def _build_ingest_request(self, target: ResolvedLifecycleTarget) -> tuple[IngestRequest, bytes]:
         source = target.source
         source_type = SourceType(source.source_type)
-        object_key = source.metadata.get("object_key")
+        object_key = source.object_key
         file_path: Path | None = None
         raw_bytes: bytes | None = None
         if object_key and self.object_store is not None and self.object_store.exists(object_key):
@@ -2114,7 +2408,7 @@ class RebuildPipeline:
             IngestRequest(
                 location=source.location,
                 source_type=source_type,
-                owner=source.owner,
+                owner=source.owner_id or "user",
                 title=target.document.title,
                 content_text=content_text,
                 raw_bytes=raw_bytes,
@@ -2131,10 +2425,10 @@ class RebuildPipeline:
                 "title": parsed.title or document.title,
                 "authors": list(parsed.authors or document.authors),
                 "language": parsed.language or document.language,
-                "metadata": {
+                "metadata_json": {
                     **parsed.metadata,
-                    "location": document.metadata.get("location", ""),
-                    "content_hash": document.metadata.get("content_hash", ""),
+                    "location": document.metadata_json.get("location", ""),
+                    "content_hash": document.metadata_json.get("content_hash", ""),
                 },
             }
         )
@@ -2648,16 +2942,16 @@ class IngestService:
         chunks: list[Chunk],
     ) -> None:
         document_node = GraphNode(
-            node_id=document.doc_id,
+            node_id=str(document.doc_id),
             node_type="document",
             label=document.title,
-            metadata={"source_id": document.source_id},
+            metadata={"source_id": str(document.source_id)},
         )
         section_node = GraphNode(
             node_id=segment.segment_id,
             node_type="section",
             label=" > ".join(segment.toc_path),
-            metadata={"doc_id": document.doc_id},
+            metadata={"doc_id": str(document.doc_id)},
         )
         self.graph_repo.save_node(document_node)
         self.graph_repo.save_node(section_node)
@@ -2665,7 +2959,7 @@ class IngestService:
             return
         edge = GraphEdge(
             edge_id=self._deterministic_id(document.doc_id, segment.segment_id, "edge"),
-            from_node_id=document.doc_id,
+            from_node_id=str(document.doc_id),
             to_node_id=segment.segment_id,
             relation_type="contains",
             confidence=1.0,

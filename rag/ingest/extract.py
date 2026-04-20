@@ -641,8 +641,8 @@ class EntityRelationMerger:
                 description=description,
                 evidence_chunk_ids=evidence_chunk_ids,
                 metadata={
-                    "doc_id": document.doc_id,
-                    "doc_ids": document.doc_id,
+                    "doc_id": str(document.doc_id),
+                    "doc_ids": str(document.doc_id),
                     "entity_key": entity_key,
                     "evidence_count": str(len(evidence_chunk_ids)),
                     "aliases": "||".join(sorted(dict.fromkeys(alias for alias in aliases if alias))),
@@ -690,8 +690,8 @@ class EntityRelationMerger:
                 ),
                 evidence_chunk_ids=evidence_chunk_ids,
                 metadata={
-                    "doc_id": document.doc_id,
-                    "doc_ids": document.doc_id,
+                    "doc_id": str(document.doc_id),
+                    "doc_ids": str(document.doc_id),
                     "from_label": source.label,
                     "to_label": target.label,
                     "evidence_count": str(len(evidence_chunk_ids)),

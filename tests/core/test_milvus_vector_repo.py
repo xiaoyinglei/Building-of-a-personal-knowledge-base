@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from datetime import UTC, datetime
@@ -138,5 +139,214 @@ def test_milvus_vector_repo_search_injects_system_guardrail(monkeypatch: pytest.
     try:
         results = repo.search([0.1, 0.2], doc_ids=["42"], expr='tenant_id == "tenant-a"')
         assert results == []
+    finally:
+        repo.close()
+
+
+def test_milvus_vector_repo_hybrid_search_passes_expr_to_every_ann_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MilvusVectorRepo, "_connect", lambda self: setattr(self, "_connected", True))
+
+    class _Connections:
+        def disconnect(self, alias: str) -> None:
+            return None
+
+    class _AnnSearchRequest:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class _RRFRanker:
+        pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pymilvus",
+        types.SimpleNamespace(
+            connections=_Connections(),
+            AnnSearchRequest=_AnnSearchRequest,
+            RRFRanker=_RRFRanker,
+        ),
+    )
+
+    class _FakeCollection:
+        name = "summary_index__section_summary__default"
+
+        def release(self) -> None:
+            return None
+
+    class _FakeAsyncClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def hybrid_search(self, **kwargs):
+            self.calls.append(kwargs)
+            reqs = kwargs["reqs"]
+            assert [request.kwargs["expr"] for request in reqs] == [
+                '(is_active == true and index_ready == true) and (doc_id in [42]) and (tenant_id == "tenant-a")',
+                '(is_active == true and index_ready == true) and (doc_id in [42]) and (tenant_id == "tenant-a")',
+            ]
+            if kwargs["partition_names"] == ["hot"]:
+                return []
+            return [
+                [
+                    {
+                        "id": 7,
+                        "distance": 0.91,
+                        "entity": {
+                            "item_id": 7,
+                            "doc_id": 42,
+                            "source_id": 9,
+                            "section_id": 7,
+                            "summary_text": "Section summary",
+                            "metadata_json": "{}",
+                        },
+                    }
+                ]
+            ]
+
+    repo = MilvusVectorRepo("http://127.0.0.1:19530")
+    fake_collection = _FakeCollection()
+    fake_async_client = _FakeAsyncClient()
+    monkeypatch.setattr(repo, "_has_collection", lambda **kwargs: True)
+    monkeypatch.setattr(repo, "_collection", lambda **kwargs: fake_collection)
+    monkeypatch.setattr(repo, "_supports_hybrid_schema", lambda collection: True)
+    monkeypatch.setattr(repo, "_get_async_client", lambda: fake_async_client)
+    repo._collections[fake_collection.name] = fake_collection
+    try:
+        results = asyncio.run(
+            repo.hybrid_search_async(
+                query_vector=[0.1, 0.2],
+                sparse_query="alpha policy",
+                doc_ids=["42"],
+                expr='tenant_id == "tenant-a"',
+            )
+        )
+        assert [result.item_id for result in results] == ["7"]
+        assert len(fake_async_client.calls) == 2
+    finally:
+        repo.close()
+
+
+def test_milvus_vector_repo_weighted_hybrid_ranker_uses_alpha_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MilvusVectorRepo, "_connect", lambda self: setattr(self, "_connected", True))
+
+    class _Connections:
+        def disconnect(self, alias: str) -> None:
+            return None
+
+    class _AnnSearchRequest:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class _RRFRanker:
+        pass
+
+    class _WeightedRanker:
+        def __init__(self, dense_weight: float, sparse_weight: float) -> None:
+            self.weights = (dense_weight, sparse_weight)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pymilvus",
+        types.SimpleNamespace(
+            connections=_Connections(),
+            AnnSearchRequest=_AnnSearchRequest,
+            RRFRanker=_RRFRanker,
+            WeightedRanker=_WeightedRanker,
+        ),
+    )
+
+    class _FakeCollection:
+        name = "summary_index__section_summary__default"
+
+        def release(self) -> None:
+            return None
+
+    class _FakeAsyncClient:
+        async def hybrid_search(self, **kwargs):
+            ranker = kwargs["ranker"]
+            assert isinstance(ranker, _WeightedRanker)
+            assert ranker.weights == (0.7, 0.3)
+            return []
+
+    repo = MilvusVectorRepo("http://127.0.0.1:19530")
+    fake_collection = _FakeCollection()
+    monkeypatch.setattr(repo, "_has_collection", lambda **kwargs: True)
+    monkeypatch.setattr(repo, "_collection", lambda **kwargs: fake_collection)
+    monkeypatch.setattr(repo, "_supports_hybrid_schema", lambda collection: True)
+    monkeypatch.setattr(repo, "_get_async_client", lambda: _FakeAsyncClient())
+    repo._collections[fake_collection.name] = fake_collection
+    try:
+        asyncio.run(
+            repo.hybrid_search_async(
+                query_vector=[0.1, 0.2],
+                sparse_query="alpha policy",
+                doc_ids=["42"],
+                fusion_strategy="weighted_rrf",
+                alpha=0.7,
+            )
+        )
+    finally:
+        repo.close()
+
+
+def test_milvus_vector_repo_accepts_sparse_query_vector_for_dual_mode_sparse_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(MilvusVectorRepo, "_connect", lambda self: setattr(self, "_connected", True))
+
+    class _Connections:
+        def disconnect(self, alias: str) -> None:
+            return None
+
+    class _AnnSearchRequest:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class _RRFRanker:
+        pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pymilvus",
+        types.SimpleNamespace(
+            connections=_Connections(),
+            AnnSearchRequest=_AnnSearchRequest,
+            RRFRanker=_RRFRanker,
+        ),
+    )
+
+    class _FakeCollection:
+        name = "summary_index__section_summary__default"
+
+        def release(self) -> None:
+            return None
+
+    class _FakeAsyncClient:
+        async def hybrid_search(self, **kwargs):
+            sparse_request = kwargs["reqs"][1]
+            assert sparse_request.kwargs["data"] == [{1: 0.4, 7: 0.9}]
+            assert sparse_request.kwargs["param"] == {"metric_type": "IP", "params": {}}
+            return []
+
+    repo = MilvusVectorRepo("http://127.0.0.1:19530")
+    fake_collection = _FakeCollection()
+    monkeypatch.setattr(repo, "_has_collection", lambda **kwargs: True)
+    monkeypatch.setattr(repo, "_collection", lambda **kwargs: fake_collection)
+    monkeypatch.setattr(repo, "_supports_hybrid_schema", lambda collection: True)
+    monkeypatch.setattr(repo, "_get_async_client", lambda: _FakeAsyncClient())
+    repo._collections[fake_collection.name] = fake_collection
+    try:
+        asyncio.run(
+            repo.hybrid_search_async(
+                query_vector=[0.1, 0.2],
+                sparse_query="alpha policy",
+                sparse_query_vector={1: 0.4, 7: 0.9},
+                doc_ids=["42"],
+            )
+        )
     finally:
         repo.close()

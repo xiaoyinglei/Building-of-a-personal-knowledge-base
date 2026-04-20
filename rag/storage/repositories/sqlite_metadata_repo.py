@@ -136,7 +136,7 @@ class SQLiteMetadataRepo:
     def _load(model_type: type[TModel], payload: str) -> TModel:
         return model_type.model_validate(json.loads(payload))
 
-    def save_source(self, source: Source) -> None:
+    def save_source(self, source: Source) -> Source:
         self._conn.execute(
             """
             INSERT INTO sources (
@@ -165,8 +165,9 @@ class SQLiteMetadataRepo:
             ),
         )
         self._conn.commit()
+        return source
 
-    def get_source(self, source_id: str) -> Source | None:
+    def get_source(self, source_id: int) -> Source | None:
         row = self._conn.execute(
             "SELECT payload FROM sources WHERE source_id = ?",
             (source_id,),
@@ -228,14 +229,10 @@ class SQLiteMetadataRepo:
             ).fetchall()
         return [self._load(Source, row["payload"]) for row in rows]
 
-    def save_document(
-        self,
-        document: Document,
-        *,
-        location: str,
-        content_hash: str,
-        active: bool = True,
-    ) -> None:
+    def save_document(self, document: Document) -> Document:
+        location = str(document.metadata_json.get("location", "") or document.title or document.doc_id)
+        content_hash = str(document.metadata_json.get("content_hash", "") or document.file_hash or document.doc_id)
+        active = bool(document.is_active)
         self._conn.execute(
             """
             INSERT INTO documents (
@@ -267,6 +264,7 @@ class SQLiteMetadataRepo:
             ),
         )
         self._conn.commit()
+        return document
 
     def save_document_bundle(
         self,
@@ -274,22 +272,20 @@ class SQLiteMetadataRepo:
         segments: list[Segment],
         chunks: list[Chunk],
     ) -> None:
-        location = document.metadata.get("location", document.title)
-        content_hash = document.metadata.get("content_hash", document.doc_id)
-        self.save_document(document, location=location, content_hash=content_hash)
+        self.save_document(document)
         for segment in segments:
             self.save_segment(segment)
         for chunk in chunks:
             self.save_chunk(chunk)
 
-    def get_document(self, doc_id: str) -> Document | None:
+    def get_document(self, doc_id: int) -> Document | None:
         row = self._conn.execute(
             "SELECT payload FROM documents WHERE doc_id = ?",
             (doc_id,),
         ).fetchone()
         return None if row is None else self._load(Document, row["payload"])
 
-    def is_document_active(self, doc_id: str) -> bool:
+    def is_document_active(self, doc_id: int) -> bool:
         row = self._conn.execute(
             "SELECT active FROM documents WHERE doc_id = ?",
             (doc_id,),
@@ -298,9 +294,10 @@ class SQLiteMetadataRepo:
 
     def list_documents(
         self,
-        source_id: str | None = None,
+        source_id: int | None = None,
         *,
         active_only: bool = False,
+        version_group_id: int | None = None,
     ) -> list[Document]:
         clauses = []
         params: list[object] = []
@@ -314,7 +311,13 @@ class SQLiteMetadataRepo:
             f"SELECT payload FROM documents {where_sql} ORDER BY saved_at, doc_id",
             tuple(params),
         ).fetchall()
-        return [self._load(Document, row["payload"]) for row in rows]
+        documents = [self._load(Document, row["payload"]) for row in rows]
+        if version_group_id is not None:
+            documents = [document for document in documents if document.version_group_id == version_group_id]
+        if active_only:
+            documents = [document for document in documents if document.is_active]
+        documents.sort(key=lambda item: (item.version_group_id, -item.version_no, item.updated_at), reverse=False)
+        return documents
 
     def get_active_document_by_location_and_hash(
         self,
@@ -347,18 +350,19 @@ class SQLiteMetadataRepo:
         return None if row is None else self._load(Document, row["payload"])
 
     def deactivate_documents_for_location(self, location: str) -> None:
-        self._conn.execute(
-            "UPDATE documents SET active = 0 WHERE location = ?",
+        rows = self._conn.execute(
+            "SELECT payload FROM documents WHERE location = ?",
             (location,),
-        )
-        self._conn.commit()
+        ).fetchall()
+        for row in rows:
+            document = self._load(Document, row["payload"])
+            self.save_document(document.model_copy(update={"is_active": False}))
 
-    def set_document_active(self, doc_id: str, *, active: bool) -> None:
-        self._conn.execute(
-            "UPDATE documents SET active = ? WHERE doc_id = ?",
-            (1 if active else 0, doc_id),
-        )
-        self._conn.commit()
+    def set_document_active(self, doc_id: int, *, active: bool) -> None:
+        document = self.get_document(doc_id)
+        if document is None:
+            return
+        self.save_document(document.model_copy(update={"is_active": active}))
 
     def save_segment(self, segment: Segment) -> None:
         self._conn.execute(

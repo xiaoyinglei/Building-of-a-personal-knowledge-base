@@ -49,6 +49,7 @@ from rag.ingest.policy import PolicyResolutionService
 from rag.providers.generation import AnswerGenerationService, AnswerGenerator
 from rag.providers.rerank import ModelBackedRerankService
 from rag.retrieval.analysis import QueryUnderstandingService, RoutingService
+from rag.retrieval.authorization_service import AuthorizationService
 from rag.retrieval.context import (
     ContextPromptBuilder,
     ContextPromptBuildResult,
@@ -57,12 +58,22 @@ from rag.retrieval.context import (
 )
 from rag.retrieval.evidence import ArtifactService, CandidateLike, ContextEvidenceMerger, EvidenceService
 from rag.retrieval.graph import GraphExpansionService, SearchBackedRetrievalFactory
-from rag.retrieval.models import BuiltContext, QueryMode, QueryOptions, RAGQueryResult, normalize_query_mode
+from rag.retrieval.grounding_service import GroundingService
+from rag.retrieval.models import BuiltContext, PublicQueryResult, QueryMode, QueryOptions, RAGQueryResult, normalize_query_mode
 from rag.retrieval.orchestrator import RetrievalService
+from rag.retrieval.planning_graph import PlanningGraph
+from rag.retrieval.runtime_coordinator import build_retrieval_diagnostics, inflate_legacy_retrieval_result
+from rag.retrieval.synthesis_service import SynthesisService
 from rag.schema.core import GraphEdge, GraphNode
 from rag.schema.query import EvidenceItem
 from rag.schema.runtime import AccessPolicy, CacheEntry, ProviderAttempt, VisualDescriptionRepo
 from rag.storage import StorageBundle, StorageConfig
+from rag.storage.index_sync_worker import IndexSyncWorker
+from rag.storage.repositories.postgres_metadata_repo import PostgresMetadataRepo
+from rag.storage.search_backends.milvus_vector_repo import MilvusVectorRepo
+from rag.storage.storage_lifecycle_service import StorageLifecycleService
+from rag.storage.storage_lifecycle_worker import StorageLifecycleWorker
+from rag.storage.v1_data_contract_service import V1DataContractService
 from rag.utils.telemetry import TelemetryService
 
 _RUNTIME_CONTRACT_NAMESPACE = "rag_runtime"
@@ -108,9 +119,12 @@ class _InstrumentedReranker:
 class _QueryPipeline:
     retrieval: RetrievalService
     context_merger: ContextEvidenceMerger
+    grounding_service: GroundingService | object
     truncator: EvidenceTruncator
     prompt_builder: ContextPromptBuilder
     answer_generator: AnswerGenerator
+    synthesis_service: SynthesisService | object | None = None
+    authorization_service: AuthorizationService | object | None = None
 
     def run(
         self,
@@ -118,13 +132,24 @@ class _QueryPipeline:
         *,
         options: QueryOptions,
     ) -> RAGQueryResult:
-        retrieval = self.retrieval.retrieve(
-            query,
-            access_policy=options.access_policy,
-            source_scope=options.source_scope,
-            execution_location_preference=options.execution_location_preference,
-            query_mode=options.mode,
-            query_options=options,
+        access_policy, source_scope = self._resolve_query_scope(options)
+        retrieval_payload = self._retrieve_payload(
+            query=query,
+            access_policy=access_policy,
+            source_scope=source_scope,
+            options=options,
+        )
+        retrieval = (
+            inflate_legacy_retrieval_result(retrieval_payload)
+            if retrieval_payload is not None
+            else self.retrieval.retrieve(
+                query,
+                access_policy=access_policy,
+                source_scope=source_scope,
+                execution_location_preference=options.execution_location_preference,
+                query_mode=options.mode,
+                query_options=options,
+            )
         )
         if normalize_query_mode(options.mode) is QueryMode.BYPASS:
             prompt = self.prompt_builder.answer_generation_service.build_direct_prompt(
@@ -136,7 +161,7 @@ class _QueryPipeline:
             generated = self.answer_generator.generate_direct(
                 query=query,
                 prompt=prompt,
-                access_policy=options.access_policy,
+                access_policy=access_policy,
                 execution_location_preference=options.execution_location_preference,
             )
             return RAGQueryResult(
@@ -157,6 +182,18 @@ class _QueryPipeline:
                 generation_attempts=generated.attempts,
             )
         merged_evidence = self.context_merger.merge(retrieval)
+        grounding_service = getattr(self, "grounding_service", None)
+        if grounding_service is not None and callable(getattr(grounding_service, "ground", None)):
+            merged_evidence = list(grounding_service.ground(query=query, evidence=merged_evidence))
+        synthesis_service = getattr(self, "synthesis_service", None)
+        if synthesis_service is not None and callable(getattr(synthesis_service, "filter_evidence", None)):
+            merged_evidence = list(
+                synthesis_service.filter_evidence(
+                    evidence=merged_evidence,
+                    access_policy=access_policy,
+                    user_id=options.user_id,
+                )
+            )
         total_budget = max(options.max_context_tokens, 1)
         evidence_budget = self.truncator.token_accounting.prompt_budget(total_budget)
         truncated, prompt_build = self._build_bounded_context(
@@ -174,7 +211,7 @@ class _QueryPipeline:
             evidence_pack=context_evidence_items,
             grounded_candidate=prompt_build.grounded_candidate,
             runtime_mode=retrieval.decision.runtime_mode,
-            access_policy=options.access_policy,
+            access_policy=access_policy,
             execution_location_preference=options.execution_location_preference,
         )
         return RAGQueryResult(
@@ -193,6 +230,161 @@ class _QueryPipeline:
             generation_provider=generated.provider,
             generation_model=generated.model,
             generation_attempts=generated.attempts,
+        )
+
+    def run_public(
+        self,
+        query: str,
+        *,
+        options: QueryOptions,
+    ) -> PublicQueryResult:
+        access_policy, source_scope = self._resolve_query_scope(options)
+        retrieval_payload = self._retrieve_payload(
+            query=query,
+            access_policy=access_policy,
+            source_scope=source_scope,
+            options=options,
+        )
+        retrieval = (
+            inflate_legacy_retrieval_result(retrieval_payload)
+            if retrieval_payload is not None
+            else self.retrieval.retrieve(
+                query,
+                access_policy=access_policy,
+                source_scope=source_scope,
+                execution_location_preference=options.execution_location_preference,
+                query_mode=options.mode,
+                query_options=options,
+            )
+        )
+        if normalize_query_mode(options.mode) is QueryMode.BYPASS:
+            prompt = self.prompt_builder.answer_generation_service.build_direct_prompt(
+                query=query,
+                response_type=options.response_type,
+                user_prompt=options.user_prompt,
+                conversation_history=options.conversation_history,
+            )
+            generated = self.answer_generator.generate_direct(
+                query=query,
+                prompt=prompt,
+                access_policy=access_policy,
+                execution_location_preference=options.execution_location_preference,
+            )
+            return PublicQueryResult(
+                query=query,
+                mode=str(options.mode),
+                answer=generated.answer,
+                context=BuiltContext(
+                    evidence=[],
+                    token_budget=options.max_context_tokens,
+                    token_count=self.prompt_builder.token_accounting.count(prompt),
+                    truncated_count=0,
+                    grounded_candidate="Bypass mode does not use retrieved evidence.",
+                    prompt=prompt,
+                ),
+                routing_decision=retrieval.decision.model_dump(mode="json"),
+                retrieval_diagnostics=(
+                    build_retrieval_diagnostics(retrieval_payload)
+                    if retrieval_payload is not None
+                    else retrieval.diagnostics
+                ),
+                retrieval_self_check=retrieval.self_check.model_dump(mode="json"),
+                preservation_suggestion=retrieval.preservation_suggestion,
+                generation_provider=generated.provider,
+                generation_model=generated.model,
+                generation_attempts=generated.attempts,
+            )
+
+        merged_evidence = self.context_merger.merge(retrieval_payload or retrieval)
+        grounding_service = getattr(self, "grounding_service", None)
+        if grounding_service is not None and callable(getattr(grounding_service, "ground", None)):
+            merged_evidence = list(grounding_service.ground(query=query, evidence=merged_evidence))
+        synthesis_service = getattr(self, "synthesis_service", None)
+        if synthesis_service is not None and callable(getattr(synthesis_service, "filter_evidence", None)):
+            merged_evidence = list(
+                synthesis_service.filter_evidence(
+                    evidence=merged_evidence,
+                    access_policy=access_policy,
+                    user_id=options.user_id,
+                )
+            )
+        total_budget = max(options.max_context_tokens, 1)
+        evidence_budget = self.truncator.token_accounting.prompt_budget(total_budget)
+        truncated, prompt_build = self._build_bounded_context(
+            query=query,
+            options=options,
+            retrieval=retrieval,
+            merged_evidence=merged_evidence,
+            total_budget=total_budget,
+            evidence_budget=evidence_budget,
+        )
+        context_evidence_items = [item.as_evidence_item() for item in truncated.evidence]
+        generated = self.answer_generator.generate(
+            query=query,
+            prompt=prompt_build.prompt,
+            evidence_pack=context_evidence_items,
+            grounded_candidate=prompt_build.grounded_candidate,
+            runtime_mode=retrieval.decision.runtime_mode,
+            access_policy=access_policy,
+            execution_location_preference=options.execution_location_preference,
+        )
+        return PublicQueryResult(
+            query=query,
+            mode=str(options.mode),
+            answer=generated.answer,
+            context=BuiltContext(
+                evidence=truncated.evidence,
+                token_budget=total_budget,
+                token_count=prompt_build.token_count,
+                truncated_count=truncated.truncated_count,
+                grounded_candidate=prompt_build.grounded_candidate,
+                prompt=prompt_build.prompt,
+            ),
+            routing_decision=retrieval.decision.model_dump(mode="json"),
+            retrieval_diagnostics=(
+                build_retrieval_diagnostics(retrieval_payload)
+                if retrieval_payload is not None
+                else retrieval.diagnostics
+            ),
+            retrieval_self_check=retrieval.self_check.model_dump(mode="json"),
+            preservation_suggestion=retrieval.preservation_suggestion,
+            generation_provider=generated.provider,
+            generation_model=generated.model,
+            generation_attempts=generated.attempts,
+        )
+
+    def _resolve_query_scope(self, options: QueryOptions) -> tuple[AccessPolicy, tuple[str, ...]]:
+        access_policy = options.access_policy
+        source_scope = options.source_scope
+        authorization_service = getattr(self, "authorization_service", None)
+        if authorization_service is not None and callable(getattr(authorization_service, "resolve_query", None)):
+            auth_context = authorization_service.resolve_query(
+                user_id=options.user_id,
+                access_policy=options.access_policy,
+                source_scope=options.source_scope,
+            )
+            access_policy = auth_context.access_policy
+            source_scope = auth_context.source_scope
+        return access_policy, source_scope
+
+    def _retrieve_payload(
+        self,
+        *,
+        query: str,
+        access_policy: AccessPolicy,
+        source_scope: tuple[str, ...],
+        options: QueryOptions,
+    ) -> object | None:
+        retrieve_payload = getattr(self.retrieval, "retrieve_payload", None)
+        if not callable(retrieve_payload):
+            return None
+        return retrieve_payload(
+            query,
+            access_policy=access_policy,
+            source_scope=source_scope,
+            execution_location_preference=options.execution_location_preference,
+            query_mode=options.mode,
+            query_options=options,
         )
 
     def _build_bounded_context(
@@ -370,6 +562,8 @@ class RAGRuntime:
     retrieval_service: RetrievalService = field(init=False, repr=False)
     agent_service: AnalysisAgentService = field(init=False, repr=False)
     query_pipeline: _QueryPipeline = field(init=False, repr=False)
+    index_sync_worker: IndexSyncWorker | None = field(init=False, default=None, repr=False)
+    storage_lifecycle_worker: StorageLifecycleWorker | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.capability_bundle = self.assembly_service.assemble_request(self.request)
@@ -474,7 +668,10 @@ class RAGRuntime:
 
     def insert(self, request: IngestRequest | None = None, /, **kwargs: Any) -> IngestPipelineResult:
         self._register_or_validate_runtime_contract()
-        return self.ingest_pipeline.run(self._coerce_ingest_request(request, **kwargs))
+        result = self.ingest_pipeline.run(self._coerce_ingest_request(request, **kwargs))
+        self.process_pending_index_sync(max_tasks=1)
+        self.process_pending_storage_lifecycle(max_tasks=1)
+        return result
 
     def insert_many(
         self,
@@ -483,7 +680,10 @@ class RAGRuntime:
         continue_on_error: bool = False,
     ) -> BatchIngestResult:
         self._register_or_validate_runtime_contract()
-        return self.ingest_pipeline.run_many(requests, continue_on_error=continue_on_error)
+        result = self.ingest_pipeline.run_many(requests, continue_on_error=continue_on_error)
+        self.process_pending_index_sync(max_tasks=max(1, min(len(requests), 4)))
+        self.process_pending_storage_lifecycle(max_tasks=max(1, min(len(requests), 2)))
+        return result
 
     def insert_content_list(
         self,
@@ -492,7 +692,10 @@ class RAGRuntime:
         continue_on_error: bool = False,
     ) -> BatchIngestResult:
         self._register_or_validate_runtime_contract()
-        return self.ingest_pipeline.run_content_list(items, continue_on_error=continue_on_error)
+        result = self.ingest_pipeline.run_content_list(items, continue_on_error=continue_on_error)
+        self.process_pending_index_sync(max_tasks=max(1, min(len(items), 4)))
+        self.process_pending_storage_lifecycle(max_tasks=max(1, min(len(items), 2)))
+        return result
 
     def query(
         self,
@@ -502,7 +705,21 @@ class RAGRuntime:
     ) -> RAGQueryResult:
         query_text = self._coerce_query_text(*args, **kwargs)
         self._register_or_validate_runtime_contract()
+        self.process_pending_index_sync(max_tasks=2)
+        self.process_pending_storage_lifecycle(max_tasks=1)
         return self.query_pipeline.run(query_text, options=self._normalize_query_options(options))
+
+    def query_public(
+        self,
+        *args: Any,
+        options: QueryOptions | None = None,
+        **kwargs: Any,
+    ) -> PublicQueryResult:
+        query_text = self._coerce_query_text(*args, **kwargs)
+        self._register_or_validate_runtime_contract()
+        self.process_pending_index_sync(max_tasks=2)
+        self.process_pending_storage_lifecycle(max_tasks=1)
+        return self.query_pipeline.run_public(query_text, options=self._normalize_query_options(options))
 
     def analyze_task(
         self,
@@ -527,12 +744,33 @@ class RAGRuntime:
 
     def delete(self, *args: Any, **kwargs: Any) -> DeletePipelineResult:
         request = self._coerce_delete_request(*args, **kwargs)
-        return self.delete_pipeline.run(request)
+        result = self.delete_pipeline.run(request)
+        self.process_pending_index_sync(max_tasks=1)
+        self.process_pending_storage_lifecycle(max_tasks=1)
+        return result
 
     def rebuild(self, *args: Any, **kwargs: Any) -> RebuildPipelineResult:
         self._register_or_validate_runtime_contract()
         request = self._coerce_rebuild_request(*args, **kwargs)
-        return self.rebuild_pipeline.run(request)
+        result = self.rebuild_pipeline.run(request)
+        self.process_pending_index_sync(max_tasks=2)
+        self.process_pending_storage_lifecycle(max_tasks=2)
+        return result
+
+    def process_pending_index_sync(self, *, max_tasks: int = 1, lease_seconds: int = 60) -> int:
+        worker = self.index_sync_worker
+        if worker is None or max_tasks <= 0:
+            return 0
+        processed = worker.run_until_idle(max_tasks=max_tasks, lease_seconds=lease_seconds)
+        return len(processed)
+
+    def process_pending_storage_lifecycle(self, *, max_tasks: int = 1, lease_seconds: int = 60) -> int:
+        worker = self.storage_lifecycle_worker
+        if worker is None or max_tasks <= 0:
+            return 0
+        worker.service.enqueue_due_documents(limit=max_tasks)
+        processed = worker.run_until_idle(max_tasks=max_tasks, lease_seconds=lease_seconds)
+        return len(processed)
 
     def upsert_node(self, node: GraphNode, *, evidence_chunk_ids: list[str] | None = None) -> GraphNode:
         self.stores.graph.save_node(node, evidence_chunk_ids=evidence_chunk_ids)
@@ -580,6 +818,9 @@ class RAGRuntime:
 
     def _build_pipelines(self) -> None:
         ocr_repo = create_default_ocr_repo()
+        data_contract_service = self._build_data_contract_service()
+        self.index_sync_worker = self._build_index_sync_worker(data_contract_service)
+        self.storage_lifecycle_worker = self._build_storage_lifecycle_worker(data_contract_service)
         self.ingest_pipeline = IngestPipeline(
             documents=self.stores.documents,
             chunks=self.stores.chunks,
@@ -606,6 +847,7 @@ class RAGRuntime:
             ),
             embedding_capabilities=self.capability_bundle.embedding_bindings,
             chat_capabilities=self.capability_bundle.chat_bindings,
+            data_contract_service=data_contract_service,
         )
         self.delete_pipeline = DeletePipeline(
             documents=self.stores.documents,
@@ -627,6 +869,16 @@ class RAGRuntime:
         self.query_pipeline = _QueryPipeline(
             retrieval=self.retrieval_service,
             context_merger=ContextEvidenceMerger(),
+            grounding_service=GroundingService(
+                metadata_repo=self.stores.metadata_repo,
+                object_store=self.stores.object_store,
+                token_accounting=self.token_accounting,
+                rerank_binding=(self.capability_bundle.rerank_bindings[0] if self.capability_bundle.rerank_bindings else None),
+            ),
+            synthesis_service=SynthesisService(
+                metadata_repo=self.stores.metadata_repo,
+                authorization_service=AuthorizationService(resolver=self.stores.metadata_repo),
+            ),
             truncator=EvidenceTruncator(token_accounting=self.token_accounting),
             prompt_builder=ContextPromptBuilder(
                 answer_generation_service=answer_generation_service,
@@ -636,6 +888,43 @@ class RAGRuntime:
                 answer_generation_service=answer_generation_service,
                 chat_bindings=self.capability_bundle.chat_bindings,
             ),
+            authorization_service=AuthorizationService(resolver=self.stores.metadata_repo),
+        )
+
+    def _build_data_contract_service(self) -> V1DataContractService | None:
+        if not isinstance(self.stores.metadata_repo, PostgresMetadataRepo):
+            return None
+        if not isinstance(self.stores.vector_repo, MilvusVectorRepo):
+            return None
+        embedder = self.capability_bundle.embedding_bindings[0] if self.capability_bundle.embedding_bindings else None
+        return V1DataContractService(
+            metadata_repo=self.stores.metadata_repo,
+            milvus_repo=self.stores.vector_repo,
+            embedder=embedder,
+        )
+
+    @staticmethod
+    def _build_index_sync_worker(data_contract_service: V1DataContractService | None) -> IndexSyncWorker | None:
+        if data_contract_service is None or data_contract_service.index_sync_service is None:
+            return None
+        return IndexSyncWorker(
+            index_sync_service=data_contract_service.index_sync_service,
+            data_contract_service=data_contract_service,
+        )
+
+    def _build_storage_lifecycle_worker(
+        self,
+        data_contract_service: V1DataContractService | None,
+    ) -> StorageLifecycleWorker | None:
+        if data_contract_service is None:
+            return None
+        if not isinstance(self.stores.metadata_repo, PostgresMetadataRepo):
+            return None
+        return StorageLifecycleWorker(
+            service=StorageLifecycleService(
+                metadata_repo=self.stores.metadata_repo,
+                data_contract_service=data_contract_service,
+            )
         )
 
     def _build_retrieval_service(self) -> RetrievalService:
@@ -645,6 +934,15 @@ class RAGRuntime:
             metadata_repo=self.stores.metadata_repo,
             fts_repo=self.stores.fts_repo,
             graph_repo=self.stores.graph_repo,
+        )
+        supports_summary_hybrid = bool(
+            callable(getattr(self.stores.vector_repo, "supports_hybrid_search", None))
+            and self.stores.vector_repo.supports_hybrid_search()
+            and callable(getattr(self.stores.vector_repo, "hybrid_search_async", None))
+        )
+        planning_graph = PlanningGraph(
+            metadata_scope_resolver=self.stores.metadata_repo,
+            use_summary_hybrid_paths=supports_summary_hybrid,
         )
         reranker_service = (
             ModelBackedRerankService(
@@ -661,13 +959,21 @@ class RAGRuntime:
                 self.stores.vector_repo,
                 bundle.embedding_bindings,
             ),
-            local_retriever=retrieval_factory.local_retriever_from_repo(
-                self.stores.vector_repo,
-                bundle.embedding_bindings,
+            local_retriever=(
+                (lambda _query, _scope, _understanding: [])
+                if supports_summary_hybrid
+                else retrieval_factory.local_retriever_from_repo(
+                    self.stores.vector_repo,
+                    bundle.embedding_bindings,
+                )
             ),
-            global_retriever=retrieval_factory.global_retriever_from_repo(
-                self.stores.vector_repo,
-                bundle.embedding_bindings,
+            global_retriever=(
+                (lambda _query, _scope, _understanding: [])
+                if supports_summary_hybrid
+                else retrieval_factory.global_retriever_from_repo(
+                    self.stores.vector_repo,
+                    bundle.embedding_bindings,
+                )
             ),
             section_retriever=retrieval_factory.section_retriever,
             special_retriever=retrieval_factory.special_retriever_from_repo(
@@ -684,6 +990,8 @@ class RAGRuntime:
             graph_expansion_service=GraphExpansionService(),
             artifact_service=ArtifactService(),
             telemetry_service=self.telemetry_service,
+            metadata_scope_resolver=self.stores.metadata_repo,
+            planning_graph=planning_graph,
         )
 
     def _build_agent_service(self, *, answer_generation_service: AnswerGenerationService) -> AnalysisAgentService:

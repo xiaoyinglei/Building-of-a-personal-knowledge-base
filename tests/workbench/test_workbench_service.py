@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from pytest import MonkeyPatch
 
+from rag.retrieval.models import BuiltContext, PublicQueryResult
+from rag.schema.query import GroundedAnswer
+from rag.schema.runtime import RetrievalDiagnostics
 from rag.workbench.models import WorkbenchFileEntry
 from rag.workbench.service import WorkbenchService
 
@@ -114,3 +118,83 @@ def test_workbench_delete_removes_disk_file_and_index(tmp_path: Path, monkeypatc
     assert not created.exists()
     assert delete_result.state is not None
     assert _find_file(delete_result.state.files, "notes/delete-me.md") is None
+
+
+def test_workbench_state_processes_pending_index_sync_via_runtime(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    _isolate_model_env(monkeypatch)
+    workspace_root = tmp_path / "docs"
+    workspace_root.mkdir()
+    (workspace_root / "alpha.md").write_text("# Alpha\n\nAlpha Engine handles ingestion.\n", encoding="utf-8")
+    calls: list[int] = []
+
+    class _FakeRuntime:
+        def process_pending_index_sync(self, *, max_tasks: int = 1, lease_seconds: int = 60) -> int:
+            del lease_seconds
+            calls.append(max_tasks)
+            return 2
+
+        def process_pending_storage_lifecycle(self, *, max_tasks: int = 1, lease_seconds: int = 60) -> int:
+            del max_tasks, lease_seconds
+            return 0
+
+        def close(self) -> None:
+            return None
+
+    service = WorkbenchService(storage_root=tmp_path / ".rag", workspace_root=workspace_root)
+    monkeypatch.setattr(service, "sync_workspace", lambda **kwargs: [])
+    monkeypatch.setattr(service, "_build_runtime", lambda **kwargs: _FakeRuntime())
+
+    state = service.get_state(sync=True)
+
+    assert calls == [4]
+    assert any("Processed 2 pending index sync task(s)" in message for message in state.sync_messages)
+
+
+def test_workbench_query_uses_public_query_contract(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    _isolate_model_env(monkeypatch)
+    workspace_root = tmp_path / "docs"
+    workspace_root.mkdir()
+    service = WorkbenchService(storage_root=tmp_path / ".rag", workspace_root=workspace_root)
+    calls: list[str] = []
+
+    class _FakeRuntime:
+        def query(self, *_args, **_kwargs):
+            raise AssertionError("workbench query should not use runtime.query")
+
+        def query_public(self, query_text: str, *, options=None) -> PublicQueryResult:
+            del options
+            calls.append(query_text)
+            return PublicQueryResult(
+                query=query_text,
+                mode="mix",
+                answer=GroundedAnswer(
+                    answer_text="Alpha answer",
+                    groundedness_flag=True,
+                    insufficient_evidence_flag=False,
+                ),
+                context=BuiltContext(
+                    evidence=[],
+                    token_budget=1200,
+                    token_count=12,
+                    grounded_candidate="alpha",
+                    prompt="prompt",
+                ),
+                routing_decision={"runtime_mode": "fast"},
+                retrieval_diagnostics=RetrievalDiagnostics(
+                    query_understanding_debug={"task_type": "lookup"},
+                ),
+                generation_provider="fake",
+                generation_model="fake-model",
+            )
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(service, "_build_runtime", lambda **kwargs: _FakeRuntime())
+
+    result = service.query(query_text="What does Alpha Engine do?", mode="mix")
+
+    assert result.answer_text == "Alpha answer"
+    assert result.routing_decision["runtime_mode"] == "fast"
+    assert result.query_understanding == {"task_type": "lookup"}
+    assert calls == ["What does Alpha Engine do?"]

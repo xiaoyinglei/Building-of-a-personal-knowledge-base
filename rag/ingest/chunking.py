@@ -42,7 +42,7 @@ _BENCHMARK_METADATA_KEYS = (
 
 
 def _document_benchmark_metadata(document: Document) -> dict[str, str]:
-    metadata = document.metadata or {}
+    metadata = document.metadata_json or {}
     propagated = {key: metadata[key] for key in _BENCHMARK_METADATA_KEYS if key in metadata and metadata[key]}
     benchmark_dataset = propagated.get("benchmark_dataset") or propagated.get("dataset")
     benchmark_doc_id = propagated.get("benchmark_doc_id") or propagated.get("parent_doc_id")
@@ -661,7 +661,7 @@ class DocumentProcessingService:
             )
             segment = Segment(
                 segment_id=self._deterministic_id(document.doc_id, anchor, "segment"),
-                doc_id=document.doc_id,
+                doc_id=str(document.doc_id),
                 parent_segment_id=path_to_segment_id.get(parent_path),
                 toc_path=toc_path,
                 heading_level=max(len(toc_path) - 1, 1),
@@ -722,7 +722,7 @@ class DocumentProcessingService:
             )
             segment = Segment(
                 segment_id=self._deterministic_id(document.doc_id, anchor, "segment"),
-                doc_id=document.doc_id,
+                doc_id=str(document.doc_id),
                 parent_segment_id=None,
                 toc_path=list(section.toc_path),
                 heading_level=section.heading_level,
@@ -773,7 +773,7 @@ class DocumentProcessingService:
         )
         segment = Segment(
             segment_id=self._deterministic_id(document.doc_id, anchor, "segment"),
-            doc_id=document.doc_id,
+            doc_id=str(document.doc_id),
             parent_segment_id=None,
             toc_path=[parsed.title],
             heading_level=1,
@@ -921,7 +921,7 @@ class DocumentProcessingService:
         return Chunk(
             chunk_id=chunk_id,
             segment_id=segment.segment_id,
-            doc_id=document.doc_id,
+            doc_id=str(document.doc_id),
             text=normalized,
             token_count=self._count_tokens(normalized),
             citation_anchor=segment.anchor or segment.segment_id,
@@ -1037,9 +1037,10 @@ class DocumentProcessingService:
         return headings
 
     @staticmethod
-    def _deterministic_id(*parts: str) -> str:
-        digest = sha256("\0".join(parts).encode("utf-8")).hexdigest()
-        return f"{parts[-1]}-{digest[:12]}"
+    def _deterministic_id(*parts: str | int) -> str:
+        normalized = [str(part) for part in parts]
+        digest = sha256("\0".join(normalized).encode("utf-8")).hexdigest()
+        return f"{normalized[-1]}-{digest[:12]}"
 
 
 __all__ = [
