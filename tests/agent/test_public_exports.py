@@ -7,6 +7,9 @@ def test_agent_package_exports_new_contract_surface_only() -> None:
     assert hasattr(agent, "AgentDefinition")
     assert hasattr(agent, "AgentRegistry")
     assert hasattr(agent, "AgentRunConfig")
+    assert hasattr(agent, "AgentRunRequest")
+    assert hasattr(agent, "AgentRunResult")
+    assert hasattr(agent, "AgentService")
     assert hasattr(agent, "AgentState")
     assert hasattr(agent, "AgentToolSpec")
     assert hasattr(agent, "ToolRegistry")
@@ -16,10 +19,12 @@ def test_agent_package_exports_new_contract_surface_only() -> None:
 
 
 def test_root_package_exports_new_agent_contract_surface() -> None:
-    from rag import AgentDefinition, AgentRunConfig, AgentState, ToolRegistry, ToolSpec
+    from rag import AgentDefinition, AgentRunConfig, AgentRunRequest, AgentService, AgentState, ToolRegistry, ToolSpec
 
     assert AgentDefinition is not None
     assert AgentRunConfig is not None
+    assert AgentRunRequest is not None
+    assert AgentService is not None
     assert AgentState is not None
     assert ToolRegistry is not None
     assert ToolSpec is not None

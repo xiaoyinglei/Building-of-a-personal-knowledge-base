@@ -5,6 +5,7 @@ from rag.agent.core.compiler import AgentGraphCompiler
 from rag.agent.core.context import AgentRunConfig, BudgetLedger, RuntimeRegistry
 from rag.agent.core.definition import AgentDefinition, ModelPolicy, ToolPolicy
 from rag.agent.core.registry import AgentRegistry
+from rag.agent.service import AgentRunRequest, AgentRunResult, AgentService
 from rag.agent.state import (
     AgentState,
     ContextBudgetSnapshot,
@@ -21,6 +22,9 @@ __all__ = [
     "AgentGraphCompiler",
     "AgentRegistry",
     "AgentRunConfig",
+    "AgentRunRequest",
+    "AgentRunResult",
+    "AgentService",
     "AgentState",
     "AgentToolSpec",
     "BudgetLedger",

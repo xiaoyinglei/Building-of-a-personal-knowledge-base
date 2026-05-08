@@ -7,6 +7,8 @@ from importlib import import_module
 __all__ = [
     "AgentDefinition",
     "AgentRunConfig",
+    "AgentRunRequest",
+    "AgentService",
     "AgentState",
     "ToolRegistry",
     "ToolSpec",
@@ -25,6 +27,8 @@ __all__ = [
 _EXPORTS = {
     "AgentDefinition": ("rag.agent", "AgentDefinition"),
     "AgentRunConfig": ("rag.agent", "AgentRunConfig"),
+    "AgentRunRequest": ("rag.agent", "AgentRunRequest"),
+    "AgentService": ("rag.agent", "AgentService"),
     "AgentState": ("rag.agent", "AgentState"),
     "ToolRegistry": ("rag.agent", "ToolRegistry"),
     "ToolSpec": ("rag.agent", "ToolSpec"),
