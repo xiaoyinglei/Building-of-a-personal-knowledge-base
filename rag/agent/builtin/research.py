@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from rag.agent.core.definition import AgentDefinition, ModelPolicy, ToolPolicy
+from rag.agent.service import AgentService
+from rag.agent.tools.builtin_registry import create_builtin_tool_registry
+from rag.agent.tools.registry import ToolRunner
 
 
 RESEARCH_AGENT_SYSTEM_PROMPT = """You are the ResearchAgent for deep single-topic research.
@@ -34,3 +39,15 @@ RESEARCH_AGENT = AgentDefinition(
     max_depth=2,
     tool_policy=ToolPolicy(max_parallel_calls=4),
 )
+
+
+def create_research_agent_service(
+    *,
+    runners: Mapping[str, ToolRunner] | None = None,
+    query_understanding_service: object | None = None,
+) -> AgentService:
+    return AgentService(
+        definition=RESEARCH_AGENT,
+        tool_registry=create_builtin_tool_registry(runners=runners),
+        query_understanding_service=query_understanding_service,
+    )

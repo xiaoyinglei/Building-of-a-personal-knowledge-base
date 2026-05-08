@@ -17,6 +17,9 @@ class QueryUnderstandingLike(Protocol):
 
 
 def route_node(state: AgentState, *, query_understanding_service: QueryUnderstandingLike) -> dict:
+    if state.get("pending_tool_calls"):
+        return {"status": "direct", "route_reason": "pending_tool_calls"}
+
     understanding = query_understanding_service.analyze(
         state.get("task", ""),
         access_policy=state["run_config"].access_policy,
