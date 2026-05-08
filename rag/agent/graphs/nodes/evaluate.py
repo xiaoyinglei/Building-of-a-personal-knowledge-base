@@ -7,14 +7,14 @@ from rag.agent.state import AgentState
 async def evaluate_node(state: AgentState, *, definition: AgentDefinition) -> dict:
     iteration = state.get("iteration", 0)
 
-    try:
-        from rag.agent.core.context import RuntimeRegistry
+    from rag.agent.core.context import RuntimeRegistry
 
+    try:
         handles = RuntimeRegistry.get(state["run_config"].run_id)
-        if await handles.budget_ledger.remaining() <= 0:
-            return {"status": "failed", "stop_reason": "budget_exhausted"}
     except KeyError:
-        pass
+        return {"status": "failed", "stop_reason": "runtime_handles_missing"}
+    if await handles.budget_ledger.remaining() <= 0:
+        return {"status": "failed", "stop_reason": "budget_exhausted"}
 
     pending = state.get("pending_tool_calls", [])
     executed_batch = bool(state.get("tool_results"))

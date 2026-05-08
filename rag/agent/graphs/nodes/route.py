@@ -1,32 +1,38 @@
 from __future__ import annotations
 
+from typing import Protocol
+
 from rag.agent.state import AgentState
+from rag.schema.query import QueryUnderstanding, TaskType
 
 
-def route_node(state: AgentState) -> dict:
-    task = state.get("task", "")
-    complexity = _classify_complexity(task)
-    if complexity == "simple":
+class QueryUnderstandingLike(Protocol):
+    def analyze(
+        self,
+        query: str,
+        *,
+        access_policy: object | None = None,
+        execution_location_preference: object | None = None,
+    ) -> QueryUnderstanding: ...
+
+
+def route_node(state: AgentState, *, query_understanding_service: QueryUnderstandingLike) -> dict:
+    understanding = query_understanding_service.analyze(
+        state.get("task", ""),
+        access_policy=state["run_config"].access_policy,
+        execution_location_preference=state["run_config"].execution_location_preference,
+    )
+    task_type = understanding.task_type
+    if task_type in {TaskType.LOOKUP, TaskType.SINGLE_DOC_QA}:
         return {"status": "fast_path", "route_reason": "simple_lookup"}
-    if complexity == "decompose":
+    if task_type in {TaskType.COMPARISON, TaskType.SYNTHESIS, TaskType.TIMELINE}:
         return {"status": "decompose", "route_reason": "multi_hop_or_compare"}
     return {"status": "direct", "route_reason": "single_agent_research"}
 
 
-def _classify_complexity(task: str) -> str:
-    normalized = task.lower()
-    compare_keywords = ("compare", "对比", "diff", "区别", "vs", "versus")
-    multi_hop_keywords = ("timeline", "时间线", "history", "how did", "why did", "为什么")
-    if any(keyword in normalized for keyword in compare_keywords):
-        return "decompose"
-    if any(keyword in normalized for keyword in multi_hop_keywords):
-        return "decompose"
-    if len(normalized.split()) <= 3:
-        return "simple"
-    return "direct"
-
-
 def route_after_route(state: AgentState) -> str:
     if state.get("status") == "fast_path":
+        return "synthesize"
+    if state.get("status") == "failed":
         return "synthesize"
     return "execute"

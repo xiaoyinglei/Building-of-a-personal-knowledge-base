@@ -8,10 +8,15 @@ from pydantic import ValidationError
 
 from rag.agent.state import AgentState, ToolCallPlan
 from rag.agent.tools.registry import ToolRegistry
-from rag.agent.tools.spec import ToolError, ToolResult
+from rag.agent.tools.spec import ToolError, ToolResult, ToolSpec
 
 
-async def execute_node(state: AgentState, *, tool_registry: ToolRegistry) -> dict:
+async def execute_node(
+    state: AgentState,
+    *,
+    tool_registry: ToolRegistry,
+    allowed_tools: frozenset[str],
+) -> dict:
     pending = state.get("pending_tool_calls", [])
     if not pending:
         return {}
@@ -19,6 +24,7 @@ async def execute_node(state: AgentState, *, tool_registry: ToolRegistry) -> dic
     tool_policy = state["run_config"].tool_policy
     results: list[ToolResult] = []
     rest: list[ToolCallPlan] = []
+    specs_by_name: dict[str, ToolSpec] = {}
 
     for call in pending:
         if call.tool_name in tool_policy.deny_tools:
@@ -35,31 +41,58 @@ async def execute_node(state: AgentState, *, tool_registry: ToolRegistry) -> dic
                     latency_ms=0,
                 )
             )
-        else:
-            rest.append(call)
-
-    confirmed = state.get("confirmed_tool_call_ids", set())
-    needs_confirmation = [
-        call
-        for call in rest
-        if call.tool_name in tool_policy.require_confirmation_for and call.tool_call_id not in confirmed
-    ]
-    if needs_confirmation:
-        for call in needs_confirmation:
+            continue
+        try:
+            specs_by_name[call.tool_name] = tool_registry.get(call.tool_name)
+        except KeyError:
             results.append(
                 ToolResult(
                     tool_call_id=call.tool_call_id,
                     tool_name=call.tool_name,
                     status="error",
                     error=ToolError(
-                        code="confirmation_required",
-                        message=f"{call.tool_name} requires confirmation before execution",
+                        code="tool_not_registered",
+                        message=f"{call.tool_name} is not registered",
                         retryable=False,
                     ),
                     latency_ms=0,
                 )
             )
-        rest = [call for call in rest if call not in needs_confirmation]
+            continue
+        if call.tool_name not in allowed_tools:
+            results.append(
+                ToolResult(
+                    tool_call_id=call.tool_call_id,
+                    tool_name=call.tool_name,
+                    status="error",
+                    error=ToolError(
+                        code="tool_not_allowed",
+                        message=f"{call.tool_name} is not allowed for this agent",
+                        retryable=False,
+                    ),
+                    latency_ms=0,
+                )
+            )
+            continue
+        rest.append(call)
+
+    confirmed = state.get("confirmed_tool_call_ids", set())
+    needs_confirmation = [
+        call
+        for call in rest
+        if (
+            call.tool_name in tool_policy.require_confirmation_for
+            or specs_by_name[call.tool_name].requires_confirmation
+        )
+        and call.tool_call_id not in confirmed
+    ]
+    if needs_confirmation:
+        return {
+            "status": "paused",
+            "needs_user_input": f"Confirm tool execution: {[call.tool_name for call in needs_confirmation]}",
+            "pending_tool_calls": needs_confirmation,
+            "tool_results": results,
+        }
 
     executables = rest[: tool_policy.max_parallel_calls]
     excess = rest[tool_policy.max_parallel_calls :]
