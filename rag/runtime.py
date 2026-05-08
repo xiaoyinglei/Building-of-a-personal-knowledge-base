@@ -59,7 +59,7 @@ from rag.retrieval.rerank_service import ModelBackedRerankService
 from rag.retrieval.synthesis_service import SynthesisService
 from rag.schema.core import Document, ProcessingStateRecord, Source, SourceType, StorageTier
 from rag.schema.graph import GraphEdge, GraphNode
-from rag.schema.runtime import AccessPolicy, CacheEntry, ProviderAttempt, VisualDescriptionRepo
+from rag.schema.runtime import CacheEntry, ProviderAttempt, VisualDescriptionRepo
 from rag.storage import StorageBundle, StorageConfig
 from rag.storage.data_contract_service import DataContractService
 from rag.storage.index_sync_worker import IndexSyncWorker
@@ -487,21 +487,9 @@ class RAGRuntime:
         /,
         **kwargs: Any,
     ) -> object:
-        self._register_or_validate_runtime_contract()
-        agent_task_request_cls = self._agent_task_request_class()
-        if isinstance(task, agent_task_request_cls):
-            if kwargs:
-                unexpected = ", ".join(sorted(kwargs))
-                raise TypeError(f"analyze_task request was provided both positionally and by keyword: {unexpected}")
-            request = task
-        else:
-            if not isinstance(task, str) or not task.strip():
-                raise TypeError("analyze_task requires a non-empty task string or AgentTaskRequest")
-            request = agent_task_request_cls(user_query=task, **kwargs)
-        agent_service = self._ensure_agent_service()
-        return agent_service.run_task(
-            request,
-            access_policy=AccessPolicy.default(),
+        del task, kwargs
+        raise NotImplementedError(
+            "RAGRuntime.analyze_task is not wired to the new LangGraph agent runtime in Phase 1-3"
         )
 
     def delete(
@@ -817,45 +805,15 @@ class RAGRuntime:
         )
 
     def _build_agent_service(self, *, answer_generation_service: AnswerGenerationService) -> object:
-        from rag.agent import AnalysisAgentService
-        from rag.agent.critic import EvidenceCritic
-        from rag.agent.executor import AgentExecutor
-        from rag.agent.planner import AgentPlanner
-        from rag.agent.synthesizer import AgentSynthesizer
-        from rag.agent.understanding import TaskUnderstandingService
-
-        bundle = self.capability_bundle
-        task_understanding_service = TaskUnderstandingService(
-            chat_bindings=bundle.chat_bindings,
-            query_understanding_service=self.retrieval_service.query_understanding_service,
-        )
-        return AnalysisAgentService(
-            task_understanding_service=task_understanding_service,
-            planner=AgentPlanner(enable_llm=False),
-            executor=AgentExecutor(
-                retrieval_service=self.retrieval_service,
-                critic=EvidenceCritic(),
-            ),
-            synthesizer=AgentSynthesizer(
-                answer_generator=AnswerGenerator(
-                    answer_generation_service=answer_generation_service,
-                    chat_bindings=self.capability_bundle.chat_bindings,
-                ),
-            ),
-        )
+        del answer_generation_service
+        raise NotImplementedError("Legacy agent service wiring was removed")
 
     def _ensure_agent_service(self) -> object:
-        agent_service = self.agent_service
-        if agent_service is None:
-            agent_service = self._build_agent_service(answer_generation_service=AnswerGenerationService())
-            self.agent_service = agent_service
-        return agent_service
+        raise NotImplementedError("Legacy agent service wiring was removed")
 
     @staticmethod
     def _agent_task_request_class() -> type[object]:
-        from rag.agent import AgentTaskRequest
-
-        return AgentTaskRequest
+        raise NotImplementedError("Legacy agent task request wiring was removed")
 
     def _register_or_validate_runtime_contract(self) -> None:
         payload = dict(self.capability_bundle.runtime_contract_payload)

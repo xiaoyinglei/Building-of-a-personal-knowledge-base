@@ -23,3 +23,17 @@ def test_root_package_exports_new_agent_contract_surface() -> None:
     assert AgentState is not None
     assert ToolRegistry is not None
     assert ToolSpec is not None
+
+
+def test_legacy_agent_service_module_no_longer_exports_old_service() -> None:
+    import importlib
+
+    service = importlib.import_module("rag.agent.service")
+    assert not hasattr(service, "AnalysisAgentService")
+
+
+def test_legacy_synthesizer_module_no_longer_depends_on_old_run_state() -> None:
+    import importlib
+
+    synthesizer = importlib.import_module("rag.agent.synthesizer")
+    assert not hasattr(synthesizer, "AgentRunState")
