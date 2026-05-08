@@ -71,6 +71,9 @@ class AgentState(TypedDict):
     plan: object | None
     iteration: int
     status: str
+    route_reason: str | None
+    stop_reason: str | None
+    needs_user_input: str | None
     pending_tool_calls: list[ToolCallPlan]
     confirmed_tool_call_ids: set[str]
     user_decision: str | None

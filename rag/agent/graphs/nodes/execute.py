@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Any
+
+from pydantic import ValidationError
+
+from rag.agent.state import AgentState, ToolCallPlan
+from rag.agent.tools.registry import ToolRegistry
+from rag.agent.tools.spec import ToolError, ToolResult
+
+
+async def execute_node(state: AgentState, *, tool_registry: ToolRegistry) -> dict:
+    pending = state.get("pending_tool_calls", [])
+    if not pending:
+        return {}
+
+    tool_policy = state["run_config"].tool_policy
+    results: list[ToolResult] = []
+    rest: list[ToolCallPlan] = []
+
+    for call in pending:
+        if call.tool_name in tool_policy.deny_tools:
+            results.append(
+                ToolResult(
+                    tool_call_id=call.tool_call_id,
+                    tool_name=call.tool_name,
+                    status="error",
+                    error=ToolError(
+                        code="tool_denied",
+                        message=f"{call.tool_name} is denied by ToolPolicy",
+                        retryable=False,
+                    ),
+                    latency_ms=0,
+                )
+            )
+        else:
+            rest.append(call)
+
+    confirmed = state.get("confirmed_tool_call_ids", set())
+    needs_confirmation = [
+        call
+        for call in rest
+        if call.tool_name in tool_policy.require_confirmation_for and call.tool_call_id not in confirmed
+    ]
+    if needs_confirmation:
+        for call in needs_confirmation:
+            results.append(
+                ToolResult(
+                    tool_call_id=call.tool_call_id,
+                    tool_name=call.tool_name,
+                    status="error",
+                    error=ToolError(
+                        code="confirmation_required",
+                        message=f"{call.tool_name} requires confirmation before execution",
+                        retryable=False,
+                    ),
+                    latency_ms=0,
+                )
+            )
+        rest = [call for call in rest if call not in needs_confirmation]
+
+    executables = rest[: tool_policy.max_parallel_calls]
+    excess = rest[tool_policy.max_parallel_calls :]
+
+    gathered = await asyncio.gather(
+        *[_execute_one_tool(call, tool_registry=tool_registry) for call in executables],
+        return_exceptions=True,
+    )
+    for index, result_or_exc in enumerate(gathered):
+        if isinstance(result_or_exc, Exception):
+            results.append(
+                ToolResult(
+                    tool_call_id=executables[index].tool_call_id,
+                    tool_name=executables[index].tool_name,
+                    status="error",
+                    error=ToolError(code="internal", message=str(result_or_exc), retryable=True),
+                    latency_ms=0,
+                )
+            )
+        else:
+            results.append(result_or_exc)
+
+    return {"tool_results": results, "pending_tool_calls": excess}
+
+
+async def _execute_one_tool(call: ToolCallPlan, *, tool_registry: ToolRegistry) -> ToolResult:
+    started_at = time.perf_counter()
+    try:
+        spec = tool_registry.get(call.tool_name)
+    except KeyError:
+        return _error_result(
+            call,
+            code="tool_not_registered",
+            message=f"{call.tool_name} is not registered",
+            retryable=False,
+            started_at=started_at,
+        )
+
+    try:
+        spec.input_model.model_validate(call.arguments)
+    except ValidationError as exc:
+        return _error_result(
+            call,
+            code="invalid_arguments",
+            message=str(exc),
+            retryable=False,
+            started_at=started_at,
+            detail={"errors": exc.errors()},
+        )
+
+    return _error_result(
+        call,
+        code="tool_not_implemented",
+        message=f"{call.tool_name} has no registered callable runner",
+        retryable=False,
+        started_at=started_at,
+    )
+
+
+def _error_result(
+    call: ToolCallPlan,
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+    started_at: float,
+    detail: dict[str, Any] | None = None,
+) -> ToolResult:
+    return ToolResult(
+        tool_call_id=call.tool_call_id,
+        tool_name=call.tool_name,
+        status="error",
+        error=ToolError(code=code, message=message, retryable=retryable, detail=detail or {}),
+        latency_ms=(time.perf_counter() - started_at) * 1000,
+    )
