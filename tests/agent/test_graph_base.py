@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from rag.agent.core.context import AgentRunConfig, RuntimeRegistry
 from rag.agent.core.definition import AgentDefinition, ToolPolicy
 from rag.agent.graphs.base import build_agent_graph
+from rag.agent.memory.models import InjectedContext
 from rag.agent.state import AgentState, ThinkOutput, ToolCallPlan
 from rag.agent.tools.registry import ToolRegistry
 from rag.agent.tools.spec import ToolError, ToolPermissions, ToolSpec
@@ -209,8 +210,9 @@ class _ScriptedDecisionProvider:
         *,
         definition: AgentDefinition,
         budget_remaining: int,
+        context: InjectedContext,
     ) -> ThinkOutput:
-        del state, definition, budget_remaining
+        del state, definition, budget_remaining, context
         self.calls += 1
         return self._decisions.pop(0)
 

@@ -7,6 +7,8 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from rag.agent.core.definition import AgentDefinition
+from rag.agent.memory.injector import ContextInjector
+from rag.agent.memory.models import InjectedContext
 from rag.agent.state import AgentState, ThinkOutput
 
 
@@ -17,6 +19,7 @@ class EvaluateDecisionProvider(Protocol):
         *,
         definition: AgentDefinition,
         budget_remaining: int,
+        context: InjectedContext,
     ) -> ThinkOutput | dict[str, object] | Awaitable[ThinkOutput | dict[str, object]]: ...
 
 
@@ -48,14 +51,26 @@ async def evaluate_node(
         return {"status": "running", "iteration": next_iteration}
 
     if decision_provider is not None:
+        context = ContextInjector(
+            max_context_tokens=state["run_config"].budget_total,
+        ).assemble(definition=definition, state=state)
         decision = await _call_decision_provider(
             decision_provider,
             state,
             definition=definition,
             budget_remaining=budget_remaining,
+            context=context,
         )
         if decision is not None:
-            return _apply_decision(decision, next_iteration=next_iteration)
+            update = _apply_decision(decision, next_iteration=next_iteration)
+            update["context_budget"] = context.context_budget
+            return update
+        return {
+            "status": "done",
+            "stop_reason": "no_pending_tools",
+            "iteration": next_iteration,
+            "context_budget": context.context_budget,
+        }
 
     return {"status": "done", "stop_reason": "no_pending_tools", "iteration": next_iteration}
 
@@ -66,12 +81,14 @@ async def _call_decision_provider(
     *,
     definition: AgentDefinition,
     budget_remaining: int,
+    context: InjectedContext,
 ) -> ThinkOutput | None:
     try:
         raw_decision = decision_provider.decide(
             state,
             definition=definition,
             budget_remaining=budget_remaining,
+            context=context,
         )
         if isawaitable(raw_decision):
             raw_decision = await raw_decision
