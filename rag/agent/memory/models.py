@@ -1,7 +1,22 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from langgraph.graph.message import BaseMessage
 from pydantic import BaseModel, ConfigDict, Field
+
+
+ContextSectionName = Literal[
+    "system",
+    "policy_hints",
+    "task",
+    "evidence",
+    "working_memory",
+    "historical_hints",
+    "message_tail",
+    "tool_results",
+    "open_decisions",
+]
 
 
 class WorkingSummary(BaseModel):
@@ -28,6 +43,29 @@ class ContextBudgetSnapshot(BaseModel):
     recalled_memory_tokens: int = 0
     message_tail_tokens: int = 0
     tool_result_tokens: int = 0
+
+
+class ContextSection(BaseModel):
+    name: ContextSectionName
+    content: str
+    token_count: int = Field(ge=0)
+    required: bool = False
+
+
+class InjectedContext(BaseModel):
+    sections: list[ContextSection]
+    context_budget: ContextBudgetSnapshot
+
+    def section(self, name: ContextSectionName) -> ContextSection:
+        for section in self.sections:
+            if section.name == name:
+                return section
+        raise KeyError(f"context section not found: {name}")
+
+    def as_text(self) -> str:
+        return "\n\n".join(
+            f"[{section.name}]\n{section.content}" for section in self.sections
+        )
 
 
 class WorkingMemoryDehydration(BaseModel):
