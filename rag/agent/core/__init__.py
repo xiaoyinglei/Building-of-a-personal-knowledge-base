@@ -5,6 +5,7 @@ from rag.agent.core.compiler import AgentGraphCompiler
 from rag.agent.core.context import AgentRunConfig, BudgetLedger, RuntimeRegistry
 from rag.agent.core.definition import AgentDefinition, ModelPolicy, ToolPolicy
 from rag.agent.core.registry import AgentRegistry
+from rag.agent.core.task import SubTaskNode, TaskDAG, TaskEdge
 
 __all__ = [
     "AgentDefinition",
@@ -15,5 +16,8 @@ __all__ = [
     "BudgetLedger",
     "ModelPolicy",
     "RuntimeRegistry",
+    "SubTaskNode",
+    "TaskDAG",
+    "TaskEdge",
     "ToolPolicy",
 ]

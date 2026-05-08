@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from rag.agent.core.context import AgentRunConfig
+from rag.agent.core.task import TaskDAG
 from rag.agent.memory.models import ContextBudgetSnapshot, ExtractedFact, WorkingSummary
 
 
@@ -43,7 +44,7 @@ class AgentState(TypedDict):
     tool_results: Annotated[list, _merge_tool_results]
     task: str
     run_config: AgentRunConfig
-    plan: object | None
+    plan: TaskDAG | None
     iteration: int
     status: str
     route_reason: str | None
