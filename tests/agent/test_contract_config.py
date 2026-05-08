@@ -10,7 +10,7 @@ from rag.agent.core.context import (
     BudgetLedger,
     RuntimeRegistry,
 )
-from rag.agent.core.definition import ToolPolicy
+from rag.agent.core.definition import AgentDefinition, ModelPolicy, ToolPolicy
 from rag.schema.runtime import AccessPolicy, ExecutionLocationPreference
 
 
@@ -134,3 +134,55 @@ class TestRuntimeRegistry:
         RuntimeRegistry.remove("reg-test-3")
         h_new = RuntimeRegistry.get_or_create(cfg)
         assert h_new is not None
+
+
+class TestAgentDefinition:
+    def test_minimal_definition(self) -> None:
+        ad = AgentDefinition(
+            agent_type="research",
+            description="Deep research agent",
+            system_prompt="You are a research agent.",
+            allowed_tools=["vector_search", "grounding"],
+        )
+        assert ad.agent_type == "research"
+        assert ad.allowed_tools == ["vector_search", "grounding"]
+        assert ad.model_policy.model_alias == "opus"
+        assert ad.max_iterations == 10
+        assert ad.max_depth == 2
+        assert ad.estimated_token_budget == 8000
+
+    def test_definition_with_access_policy(self) -> None:
+        policy = AccessPolicy.default()
+        ad = AgentDefinition(
+            agent_type="compare",
+            description="Comparison agent",
+            system_prompt="You compare documents.",
+            allowed_tools=["vector_search", "llm_compare"],
+            access_policy=policy,
+            estimated_token_budget=12000,
+        )
+        assert ad.access_policy is policy
+        assert ad.estimated_token_budget == 12000
+
+    def test_tool_policy_defaults(self) -> None:
+        tp = ToolPolicy()
+        assert tp.max_parallel_calls == 4
+        assert len(tp.require_confirmation_for) == 0
+        assert len(tp.deny_tools) == 0
+
+    def test_tool_policy_custom(self) -> None:
+        tp = ToolPolicy(
+            max_parallel_calls=2,
+            require_confirmation_for=frozenset({"kg_upsert"}),
+            deny_tools=frozenset({"web_search"}),
+        )
+        assert "kg_upsert" in tp.require_confirmation_for
+        assert "web_search" in tp.deny_tools
+        assert tp.max_parallel_calls == 2
+
+    def test_model_policy_defaults(self) -> None:
+        mp = ModelPolicy()
+        assert mp.model_alias == "opus"
+        assert mp.fallback_model == "sonnet"
+        assert mp.thinking is True
+        assert mp.temperature == 0.0
