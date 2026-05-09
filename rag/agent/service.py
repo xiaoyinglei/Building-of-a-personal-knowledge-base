@@ -12,6 +12,7 @@ from rag.agent.graphs.nodes.evaluate import EvaluateDecisionProvider
 from rag.agent.state import AgentState, ToolCallPlan
 from rag.agent.tools.registry import ToolRegistry
 from rag.agent.tools.spec import ToolResult
+from rag.schema.query import AnswerCitation, EvidenceItem
 from rag.schema.runtime import AccessPolicy, ExecutionLocationPreference
 
 
@@ -49,6 +50,8 @@ class AgentRunResult(BaseModel):
     final_answer: str | None = None
     stop_reason: str | None = None
     tool_results: list[ToolResult] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    citations: list[AnswerCitation] = Field(default_factory=list)
     iteration: int = 0
     groundedness_flag: bool = False
     insufficient_evidence_flag: bool = False
@@ -63,6 +66,8 @@ class AgentRunResult(BaseModel):
             final_answer=state.get("final_answer"),
             stop_reason=state.get("stop_reason"),
             tool_results=list(state.get("tool_results", [])),
+            evidence=list(state.get("evidence", [])),
+            citations=list(state.get("citations", [])),
             iteration=state.get("iteration", 0),
             groundedness_flag=state.get("groundedness_flag", False),
             insufficient_evidence_flag=state.get("insufficient_evidence_flag", False),

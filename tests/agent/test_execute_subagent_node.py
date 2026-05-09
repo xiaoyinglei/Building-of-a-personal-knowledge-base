@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from pydantic import BaseModel
+import pytest
+
+from rag.agent.core.context import AgentRunConfig, RuntimeRegistry
+from rag.agent.core.task import SubTaskNode, SubTaskStatus
+from rag.agent.graphs.nodes.execute_subagent import execute_subagent_node
+from rag.agent.service import AgentRunResult
+from rag.agent.state import AgentState
+from rag.agent.tools.spec import ToolResult
+from rag.schema.query import AnswerCitation, EvidenceItem
+from rag.schema.runtime import AccessPolicy, ExecutionLocationPreference
+
+
+class SummaryOutput(BaseModel):
+    text: str
+
+
+def _subtask() -> SubTaskNode:
+    return SubTaskNode(
+        subtask_id="s1",
+        agent_type="research",
+        prompt="Research policy",
+        priority=1,
+        estimated_tokens=40,
+    )
+
+
+def _state(run_id: str, subtask: SubTaskNode) -> AgentState:
+    config = AgentRunConfig(
+        run_id=run_id,
+        thread_id=run_id,
+        budget_total=100,
+        max_depth=2,
+        access_policy=AccessPolicy.default(),
+        execution_location_preference=ExecutionLocationPreference.LOCAL_FIRST,
+    )
+    RuntimeRegistry.remove(run_id)
+    RuntimeRegistry.get_or_create(config)
+    return {
+        "messages": [],
+        "evidence": [],
+        "citations": [],
+        "tool_results": [],
+        "task": "Coordinate subtasks",
+        "run_config": config,
+        "plan": None,
+        "iteration": 0,
+        "status": "running",
+        "route_reason": None,
+        "stop_reason": None,
+        "needs_user_input": None,
+        "pending_tool_calls": [],
+        "confirmed_tool_call_ids": set(),
+        "user_decision": None,
+        "next_subtasks": None,
+        "working_summary": None,
+        "extracted_facts": [],
+        "context_budget": None,
+        "subtask_results": {},
+        "terminal_subtasks": set(),
+        "successful_subtasks": set(),
+        "final_answer": None,
+        "groundedness_flag": False,
+        "insufficient_evidence_flag": False,
+        "subtask": subtask,
+    }
+
+
+class _SuccessfulRunner:
+    async def run_subtask(self, *, subtask: SubTaskNode, parent_state: AgentState) -> AgentRunResult:
+        del parent_state
+        evidence = EvidenceItem(
+            evidence_id="ev1",
+            doc_id=1,
+            citation_anchor="doc#1",
+            text="Authoritative child evidence",
+            score=0.9,
+        )
+        citation = AnswerCitation(
+            citation_id="cit1",
+            evidence_id="ev1",
+            record_type="section",
+            citation_anchor="doc#1",
+        )
+        return AgentRunResult(
+            run_id=f"child-{subtask.subtask_id}",
+            thread_id=f"child-{subtask.subtask_id}",
+            status="done",
+            final_answer="Child finding",
+            tool_results=[
+                ToolResult(
+                    tool_call_id="tc1",
+                    tool_name="llm_summarize",
+                    status="ok",
+                    output=SummaryOutput(text="Child finding"),
+                    latency_ms=1,
+                    token_used=12,
+                )
+            ],
+            evidence=[evidence],
+            citations=[citation],
+        )
+
+
+class _FailingRunner:
+    async def run_subtask(self, *, subtask: SubTaskNode, parent_state: AgentState) -> AgentRunResult:
+        del subtask, parent_state
+        raise RuntimeError("child failed")
+
+
+@pytest.mark.anyio
+async def test_execute_subagent_success_commits_budget_and_marks_successful() -> None:
+    subtask = _subtask()
+    state = _state("subagent-success", subtask)
+    handles = RuntimeRegistry.get("subagent-success")
+    assert await handles.budget_ledger.reserve(subtask.subtask_id, subtask.estimated_tokens or 0)
+
+    update = await execute_subagent_node(state, subagent_runner=_SuccessfulRunner())
+
+    result = update["subtask_results"][subtask.subtask_id]
+    assert result.status is SubTaskStatus.COMPLETED
+    assert result.findings == ["Child finding"]
+    assert result.evidence[0].evidence_id == "ev1"
+    assert update["terminal_subtasks"] == {"s1"}
+    assert update["successful_subtasks"] == {"s1"}
+    assert update["evidence"][0].evidence_id == "ev1"
+    assert update["citations"][0].citation_id == "cit1"
+    assert await handles.budget_ledger.remaining() == 88
+    RuntimeRegistry.remove("subagent-success")
+
+
+@pytest.mark.anyio
+async def test_execute_subagent_failure_refunds_budget_and_does_not_mark_successful() -> None:
+    subtask = _subtask()
+    state = _state("subagent-failure", subtask)
+    handles = RuntimeRegistry.get("subagent-failure")
+    assert await handles.budget_ledger.reserve(subtask.subtask_id, subtask.estimated_tokens or 0)
+
+    update = await execute_subagent_node(state, subagent_runner=_FailingRunner())
+
+    result = update["subtask_results"][subtask.subtask_id]
+    assert result.status is SubTaskStatus.FAILED
+    assert result.error_message == "child failed"
+    assert update["terminal_subtasks"] == {"s1"}
+    assert "successful_subtasks" not in update
+    assert await handles.budget_ledger.remaining() == 100
+    RuntimeRegistry.remove("subagent-failure")
