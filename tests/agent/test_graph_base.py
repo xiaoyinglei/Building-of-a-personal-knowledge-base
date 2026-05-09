@@ -410,6 +410,7 @@ class TestBaseGraph:
 
         assert result["status"] == "failed"
         assert result["stop_reason"] == "plan_provider_missing"
+        assert result["final_answer"] == "Agent failed: plan_provider_missing."
 
     @pytest.mark.anyio
     async def test_registered_tool_without_runner_fails_closed(self) -> None:
@@ -548,6 +549,7 @@ class TestBaseGraph:
         )
         assert result["status"] == "failed"
         assert result["stop_reason"] == "runtime_handles_missing"
+        assert result["final_answer"] == "Agent failed: runtime_handles_missing."
 
     @pytest.mark.anyio
     async def test_max_parallel_calls_batches_pending_tools(self) -> None:

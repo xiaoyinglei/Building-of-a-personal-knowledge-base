@@ -16,7 +16,13 @@ def synthesize_node(state: AgentState) -> dict:
     final_status = "failed" if status == "failed" else "done"
     return {
         "status": final_status,
-        "final_answer": _final_answer(ok_results, error_results, subtask_results),
+        "final_answer": _final_answer(
+            ok_results,
+            error_results,
+            subtask_results,
+            status=status,
+            stop_reason=state.get("stop_reason"),
+        ),
         "groundedness_flag": bool(ok_results) or _has_subtask_evidence(subtask_results),
         "insufficient_evidence_flag": (
             state.get("insufficient_evidence_flag", False)
@@ -31,6 +37,9 @@ def _final_answer(
     ok_results: list[ToolResult],
     error_results: list[ToolResult],
     subtask_results: list[SubTaskResult],
+    *,
+    status: str | None,
+    stop_reason: str | None,
 ) -> str:
     answer_parts = [
         text
@@ -62,6 +71,8 @@ def _final_answer(
     ]
     if failed_subtasks:
         return f"No answer was generated because subtask execution failed: {', '.join(failed_subtasks)}."
+    if status == "failed" and stop_reason:
+        return f"Agent failed: {stop_reason}."
     return "No answer was generated because no tool results were available."
 
 
