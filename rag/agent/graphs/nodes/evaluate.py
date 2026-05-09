@@ -6,7 +6,9 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from rag.agent.core.context import AgentRuntimeHandles
 from rag.agent.core.definition import AgentDefinition
+from rag.agent.core.task import SubTaskNode, SubTaskResult, SubTaskStatus, TaskDAG
 from rag.agent.memory.injector import ContextInjector
 from rag.agent.memory.models import InjectedContext
 from rag.agent.state import AgentState, ThinkOutput
@@ -41,6 +43,15 @@ async def evaluate_node(
     if budget_remaining <= 0:
         return {"status": "failed", "stop_reason": "budget_exhausted"}
 
+    plan = state.get("plan")
+    if plan is not None:
+        return await _evaluate_task_dag(
+            state,
+            plan=plan,
+            definition=definition,
+            handles=handles,
+        )
+
     pending = state.get("pending_tool_calls", [])
     executed_batch = bool(state.get("tool_results"))
     next_iteration = iteration + 1 if executed_batch else iteration
@@ -73,6 +84,45 @@ async def evaluate_node(
         }
 
     return {"status": "done", "stop_reason": "no_pending_tools", "iteration": next_iteration}
+
+
+async def _evaluate_task_dag(
+    state: AgentState,
+    *,
+    plan: TaskDAG,
+    definition: AgentDefinition,
+    handles: AgentRuntimeHandles,
+) -> dict:
+    terminal = state.get("terminal_subtasks", set())
+    successful = state.get("successful_subtasks", set())
+    if all(subtask.subtask_id in terminal for subtask in plan.subtasks):
+        return {"status": "done", "stop_reason": "all_subtasks_terminal"}
+
+    ready = plan.ready_subtasks(successful=successful, terminal=terminal)
+    if not ready:
+        return {"status": "failed", "stop_reason": "deadlock_in_task_dag"}
+
+    schedulable: list[SubTaskNode] = []
+    budget_failed: dict[str, SubTaskResult] = {}
+    terminal_budget_failed: set[str] = set()
+    for subtask in ready:
+        estimated = subtask.estimated_tokens or definition.estimated_token_budget
+        if await handles.budget_ledger.reserve(subtask.subtask_id, estimated):
+            schedulable.append(subtask)
+            continue
+        terminal_budget_failed.add(subtask.subtask_id)
+        budget_failed[subtask.subtask_id] = SubTaskResult(
+            subtask=subtask,
+            status=SubTaskStatus.FAILED,
+            error_message=f"Insufficient budget to schedule subtask {subtask.subtask_id}",
+        )
+
+    return {
+        "status": "running",
+        "next_subtasks": schedulable,
+        "terminal_subtasks": terminal_budget_failed,
+        "subtask_results": budget_failed,
+    }
 
 
 async def _call_decision_provider(
