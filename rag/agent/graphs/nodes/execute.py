@@ -190,58 +190,89 @@ async def _execute_one_tool(
                 detail={"required": budget_cost},
             )
 
-    try:
-        output = await tool_registry.run(call.tool_name, call.arguments)
-    except ToolInputValidationError as exc:
-        if reserved_budget:
-            await RuntimeRegistry.get(run_config.run_id).budget_ledger.refund(call.tool_call_id)
-        return _error_result(
-            call,
-            code="invalid_arguments",
-            message=str(exc.validation_error),
-            retryable=False,
-            started_at=started_at,
-            detail={"errors": exc.errors()},
-        )
-    except ToolRunnerMissingError:
-        if reserved_budget:
-            await RuntimeRegistry.get(run_config.run_id).budget_ledger.refund(call.tool_call_id)
-        return _error_result(
-            call,
-            code="tool_not_implemented",
-            message=f"{call.tool_name} has no registered callable runner",
-            retryable=False,
-            started_at=started_at,
-        )
-    except ToolOutputValidationError as exc:
-        if reserved_budget:
-            await RuntimeRegistry.get(run_config.run_id).budget_ledger.commit(
-                call.tool_call_id,
-                budget_cost,
+    attempt = 0
+    while True:
+        try:
+            output = await asyncio.wait_for(
+                tool_registry.run(call.tool_name, call.arguments),
+                timeout=spec.timeout_seconds,
             )
-        return _error_result(
-            call,
-            code="invalid_output",
-            message=str(exc.validation_error),
-            retryable=False,
-            started_at=started_at,
-            detail={"errors": exc.errors()},
-            token_used=budget_cost,
-        )
-    except Exception as exc:
-        if reserved_budget:
-            await RuntimeRegistry.get(run_config.run_id).budget_ledger.commit(
-                call.tool_call_id,
-                budget_cost,
+            break
+        except ToolInputValidationError as exc:
+            if reserved_budget:
+                await RuntimeRegistry.get(run_config.run_id).budget_ledger.refund(call.tool_call_id)
+            return _error_result(
+                call,
+                code="invalid_arguments",
+                message=str(exc.validation_error),
+                retryable=False,
+                started_at=started_at,
+                detail={"errors": exc.errors()},
+                retry_count=attempt,
             )
-        return _error_result(
-            call,
-            code="internal",
-            message=str(exc),
-            retryable=True,
-            started_at=started_at,
-            token_used=budget_cost,
-        )
+        except ToolRunnerMissingError:
+            if reserved_budget:
+                await RuntimeRegistry.get(run_config.run_id).budget_ledger.refund(call.tool_call_id)
+            return _error_result(
+                call,
+                code="tool_not_implemented",
+                message=f"{call.tool_name} has no registered callable runner",
+                retryable=False,
+                started_at=started_at,
+                retry_count=attempt,
+            )
+        except ToolOutputValidationError as exc:
+            if reserved_budget:
+                await RuntimeRegistry.get(run_config.run_id).budget_ledger.commit(
+                    call.tool_call_id,
+                    budget_cost,
+                )
+            return _error_result(
+                call,
+                code="invalid_output",
+                message=str(exc.validation_error),
+                retryable=False,
+                started_at=started_at,
+                detail={"errors": exc.errors()},
+                token_used=budget_cost,
+                retry_count=attempt,
+            )
+        except TimeoutError:
+            if attempt < spec.max_retries:
+                attempt += 1
+                continue
+            if reserved_budget:
+                await RuntimeRegistry.get(run_config.run_id).budget_ledger.commit(
+                    call.tool_call_id,
+                    budget_cost,
+                )
+            return _error_result(
+                call,
+                code="timeout",
+                message=f"{call.tool_name} timed out after {spec.timeout_seconds}s",
+                retryable=True,
+                started_at=started_at,
+                token_used=budget_cost,
+                retry_count=attempt,
+            )
+        except Exception as exc:
+            if attempt < spec.max_retries:
+                attempt += 1
+                continue
+            if reserved_budget:
+                await RuntimeRegistry.get(run_config.run_id).budget_ledger.commit(
+                    call.tool_call_id,
+                    budget_cost,
+                )
+            return _error_result(
+                call,
+                code="internal",
+                message=str(exc),
+                retryable=True,
+                started_at=started_at,
+                token_used=budget_cost,
+                retry_count=attempt,
+            )
 
     if reserved_budget:
         await RuntimeRegistry.get(run_config.run_id).budget_ledger.commit(
@@ -255,6 +286,7 @@ async def _execute_one_tool(
         output=output,
         latency_ms=(time.perf_counter() - started_at) * 1000,
         token_used=budget_cost,
+        retry_count=attempt,
     )
 
 
@@ -267,6 +299,7 @@ def _error_result(
     started_at: float,
     detail: dict[str, Any] | None = None,
     token_used: int = 0,
+    retry_count: int = 0,
 ) -> ToolResult:
     return ToolResult(
         tool_call_id=call.tool_call_id,
@@ -275,4 +308,5 @@ def _error_result(
         error=ToolError(code=code, message=message, retryable=retryable, detail=detail or {}),
         latency_ms=(time.perf_counter() - started_at) * 1000,
         token_used=token_used,
+        retry_count=retry_count,
     )
