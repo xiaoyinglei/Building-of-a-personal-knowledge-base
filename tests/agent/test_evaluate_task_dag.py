@@ -5,7 +5,7 @@ import pytest
 from rag.agent.core.context import AgentRunConfig, RuntimeRegistry
 from rag.agent.core.definition import AgentDefinition
 from rag.agent.core.task import SubTaskNode, SubTaskStatus, TaskDAG, TaskEdge
-from rag.agent.graphs.nodes.evaluate import evaluate_node
+from rag.agent.graphs.nodes.evaluate import evaluate_node, route_after_evaluate
 from rag.agent.state import AgentState
 from rag.schema.runtime import AccessPolicy, ExecutionLocationPreference
 
@@ -147,3 +147,21 @@ async def test_evaluate_task_dag_completes_when_all_subtasks_terminal() -> None:
     assert result["status"] == "done"
     assert result["stop_reason"] == "all_subtasks_terminal"
     RuntimeRegistry.remove("dag-done")
+
+
+def test_route_after_evaluate_sends_ready_subtasks_to_execute_subagent() -> None:
+    subtask = _subtask("s1")
+    state = _state(
+        run_id="dag-route",
+        plan=TaskDAG(subtasks=[subtask]),
+    )
+    state["next_subtasks"] = [subtask]
+
+    route = route_after_evaluate(state)
+
+    assert isinstance(route, list)
+    [send] = route
+    assert send.node == "execute_subagent"
+    assert send.arg["subtask"] == subtask
+    assert send.arg["run_config"] == state["run_config"]
+    RuntimeRegistry.remove("dag-route")

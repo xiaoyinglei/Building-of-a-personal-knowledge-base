@@ -4,6 +4,7 @@ from collections.abc import Awaitable
 from inspect import isawaitable
 from typing import Protocol
 
+from langgraph.types import Send
 from pydantic import ValidationError
 
 from rag.agent.core.context import AgentRuntimeHandles
@@ -183,9 +184,17 @@ def _apply_decision(decision: ThinkOutput, *, next_iteration: int) -> dict:
     return {"status": "running", "iteration": next_iteration}
 
 
-def route_after_evaluate(state: AgentState) -> str:
+def route_after_evaluate(state: AgentState) -> str | list[Send]:
     if state.get("status") == "paused":
         return "pause"
     if state.get("status") in {"done", "failed"}:
         return "synthesize"
+    if next_subtasks := state.get("next_subtasks"):
+        return [
+            Send(
+                "execute_subagent",
+                {"subtask": subtask, "run_config": state["run_config"]},
+            )
+            for subtask in next_subtasks
+        ]
     return "execute"
